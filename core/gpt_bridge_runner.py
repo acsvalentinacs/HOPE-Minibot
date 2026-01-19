@@ -40,7 +40,7 @@ _STATE_DIR = _MINIBOT_DIR / "state"
 
 logger = logging.getLogger("gpt_bridge_runner")
 
-VERSION = "1.1.0"  # Fixed cursor handling to use timestamp-based format
+VERSION = "1.2.0"  # Added E2E-2 contract protocol (task_request → task → result)
 DEFAULT_POLL_INTERVAL = 30
 DEFAULT_MODEL = "gpt-4o"
 BRIDGE_BASE_URL = "http://127.0.0.1:8765"
@@ -126,18 +126,46 @@ def poll_inbox(config: Config, after: str = "") -> tuple[List[Dict[str, Any]], s
     return result.get("messages", []), result.get("next_after", after)
 
 
-def call_openai(config: Config, user_message: str, context: str = "") -> str:
+def call_openai(config: Config, user_message: str, context: str = "", is_task_request: bool = False) -> str:
     """
     Call OpenAI API with user message.
 
+    Args:
+        config: Configuration
+        user_message: User message text
+        context: Additional context
+        is_task_request: If True, generate structured task response
+
     Returns:
-        Assistant response text
+        Assistant response text (JSON for task_request)
     """
-    system_prompt = (
-        "You are GPT, an AI assistant collaborating with Claude in the HOPE trading system. "
-        "Respond concisely and professionally. Focus on actionable insights."
-    )
-    if context:
+    if is_task_request:
+        system_prompt = """You are GPT, the task coordinator in the HOPE trading system.
+When Claude sends a task_request, respond with a structured task in JSON format:
+
+{
+  "description": "Clear, actionable task description",
+  "acceptance_criteria": [
+    "Criterion 1: what must be true",
+    "Criterion 2: what must be true"
+  ],
+  "expected_artifacts": ["file1.py", "logs/output.log"],
+  "verification_commands": ["python -m py_compile file1.py", "pytest tests/"]
+}
+
+Guidelines:
+- Tasks should be specific and verifiable
+- acceptance_criteria must be objectively measurable
+- verification_commands must have exit_code=0 on success
+- Keep tasks focused (1 clear objective)
+
+Respond ONLY with valid JSON, no markdown or extra text."""
+    else:
+        system_prompt = (
+            "You are GPT, an AI assistant collaborating with Claude in the HOPE trading system. "
+            "Respond concisely and professionally. Focus on actionable insights."
+        )
+    if context and not is_task_request:
         system_prompt += f"\n\nContext: {context}"
 
     payload = {
@@ -146,8 +174,8 @@ def call_openai(config: Config, user_message: str, context: str = "") -> str:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        "max_tokens": 1000,
-        "temperature": 0.7,
+        "max_tokens": 1500 if is_task_request else 1000,
+        "temperature": 0.3 if is_task_request else 0.7,
     }
 
     headers = {
@@ -172,7 +200,7 @@ def call_openai(config: Config, user_message: str, context: str = "") -> str:
 
 def send_response(config: Config, message: str, reply_to: Optional[str] = None) -> bool:
     """
-    Send response to Claude via /send endpoint.
+    Send legacy response to Claude via /send endpoint.
 
     Returns:
         True if successful
@@ -203,50 +231,158 @@ def send_response(config: Config, message: str, reply_to: Optional[str] = None) 
     return result.get("ok", False)
 
 
+def send_structured_response(
+    config: Config,
+    msg_type: str,
+    payload_data: Dict[str, Any],
+    reply_to: Optional[str] = None,
+) -> bool:
+    """
+    Send structured response to Claude via /send endpoint.
+
+    Args:
+        config: Configuration
+        msg_type: Message type (task, response, ack)
+        payload_data: Structured payload dict
+        reply_to: Parent message ID
+
+    Returns:
+        True if successful
+    """
+    request_payload = {
+        "to": "claude",
+        "type": msg_type,
+        "payload": payload_data,
+    }
+    if reply_to:
+        request_payload["reply_to"] = reply_to
+
+    headers = {
+        "X-HOPE-Token": config.bridge_token,
+        "Content-Type": "application/json",
+    }
+
+    result = _http_request(
+        f"{BRIDGE_BASE_URL}/send",
+        method="POST",
+        headers=headers,
+        body=json.dumps(request_payload).encode("utf-8"),
+    )
+
+    return result.get("ok", False)
+
+
 def process_message(config: Config, msg: Dict[str, Any]) -> bool:
     """
     Process single message from inbox.
 
+    Handles different message types:
+    - task_request: Generate structured task with acceptance_criteria
+    - result: Log outcome, optionally validate
+    - (default): Legacy chat response
+
     Returns:
         True if processed successfully
     """
+    import uuid
+
     msg_id = msg.get("id", "unknown")
+    msg_type = msg.get("type", "").lower()
     payload = msg.get("payload", {})
 
     if isinstance(payload, str):
         user_text = payload
         context = ""
+        correlation_id = ""
     elif isinstance(payload, dict):
         user_text = payload.get("message", payload.get("text", str(payload)))
         context = payload.get("context", "")
+        correlation_id = payload.get("correlation_id", "")
     else:
         user_text = str(payload)
         context = ""
+        correlation_id = ""
 
-    if not user_text:
-        logger.warning("Empty message payload, skipping: %s", msg_id)
-        return False
-
-    logger.info("Processing message %s: %.50s...", msg_id, user_text)
+    logger.info("Processing [%s] message %s: %.50s...", msg_type or "legacy", msg_id, user_text)
 
     if config.dry_run:
         logger.info("[DRY-RUN] Would call OpenAI and send response")
         return True
 
-    response = call_openai(config, user_text, context)
+    # === Handle task_request: Generate structured task ===
+    if msg_type == "task_request":
+        response = call_openai(config, user_text, context, is_task_request=True)
 
-    if not response:
-        logger.error("Empty response from OpenAI for message %s", msg_id)
-        return False
+        if not response:
+            logger.error("Empty response from OpenAI for task_request %s", msg_id)
+            return False
 
-    success = send_response(config, response, reply_to=msg_id)
+        # Parse JSON response from GPT
+        try:
+            task_data = json.loads(response)
+        except json.JSONDecodeError:
+            # If GPT didn't return valid JSON, wrap it
+            logger.warning("GPT returned non-JSON for task_request, wrapping")
+            task_data = {
+                "description": response[:500],
+                "acceptance_criteria": ["Task completed successfully"],
+                "expected_artifacts": [],
+                "verification_commands": [],
+            }
 
-    if success:
-        logger.info("Sent response for %s: %.50s...", msg_id, response)
+        # Build task payload with correlation_id
+        task_payload = {
+            "correlation_id": correlation_id or str(uuid.uuid4()),
+            "description": task_data.get("description", "Task from GPT"),
+            "acceptance_criteria": task_data.get("acceptance_criteria", []),
+            "expected_artifacts": task_data.get("expected_artifacts", []),
+            "verification_commands": task_data.get("verification_commands", []),
+        }
+
+        success = send_structured_response(config, "task", task_payload, reply_to=msg_id)
+
+        if success:
+            logger.info("Sent task for %s: %s", msg_id, task_payload.get("description", "")[:50])
+        else:
+            logger.error("Failed to send task for %s", msg_id)
+
+        return success
+
+    # === Handle result: Log outcome ===
+    elif msg_type == "result":
+        outcome = payload.get("outcome", "unknown") if isinstance(payload, dict) else "unknown"
+        corr_id = payload.get("correlation_id", "") if isinstance(payload, dict) else ""
+        logger.info("Received result: correlation_id=%s, outcome=%s", corr_id, outcome)
+
+        # Optionally send acknowledgment
+        ack_payload = {
+            "correlation_id": corr_id,
+            "status": "received",
+            "outcome_logged": outcome,
+        }
+        success = send_structured_response(config, "ack", ack_payload, reply_to=msg_id)
+        return success
+
+    # === Default: Legacy chat response ===
     else:
-        logger.error("Failed to send response for %s", msg_id)
+        if not user_text:
+            logger.warning("Empty message payload, skipping: %s", msg_id)
+            return False
 
-    return success
+        response = call_openai(config, user_text, context)
+
+        if not response:
+            logger.error("Empty response from OpenAI for message %s", msg_id)
+            return False
+
+        success = send_response(config, response, reply_to=msg_id)
+
+        if success:
+            logger.info("Sent response for %s: %.50s...", msg_id, response)
+        else:
+            logger.error("Failed to send response for %s", msg_id)
+
+        return success
 
 
 def run_cycle(config: Config) -> None:
