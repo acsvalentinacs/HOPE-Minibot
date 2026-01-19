@@ -48,10 +48,12 @@ _IPC_DIR = _MINIBOT_DIR / "ipc"
 # Import from chat_dispatch (same package, no sys.path needed)
 from core.chat_dispatch import (
     send_chat_tracked,
+    send_structured_tracked,
     get_last_sent,
     get_ipc_status,
     MAX_MESSAGE_LEN,
     VALID_RECIPIENTS,
+    VALID_TYPES,
 )
 
 logger = logging.getLogger("friend_bridge")
@@ -59,7 +61,7 @@ logger = logging.getLogger("friend_bridge")
 # Configuration
 DEFAULT_PORT = 8765
 BIND_HOST = "127.0.0.1"  # Localhost only, no external access
-VERSION = "1.3.0"  # Bumped for timestamp-based cursor (fixes ordering bug)
+VERSION = "1.4.0"  # Added structured /send (type + payload) for E2E-2 contract cycle
 MAX_INBOX_LIMIT = 200
 
 
@@ -383,7 +385,7 @@ class FriendBridgeHandler(BaseHTTPRequestHandler):
         if path == "/send":
             # Read body
             content_length = int(self.headers.get("Content-Length", 0))
-            if content_length > 10000:
+            if content_length > 50000:  # Increased for structured payloads
                 self._send_json({"ok": False, "error": "Request too large"}, status=400)
                 return
 
@@ -395,11 +397,8 @@ class FriendBridgeHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": f"Invalid JSON: {e}"}, status=400)
                 return
 
-            # Validate fields
+            # Validate recipient (required)
             to = data.get("to", "").lower()
-            message = data.get("message", "")
-            context = data.get("context", "friend_chat")
-
             if to not in VALID_RECIPIENTS:
                 self._send_json(
                     {"ok": False, "error": f"'to' must be one of: {VALID_RECIPIENTS}"},
@@ -407,21 +406,53 @@ class FriendBridgeHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            if not message:
-                self._send_json({"ok": False, "error": "'message' is required"}, status=400)
-                return
+            # Check for structured mode (type + payload) vs legacy mode (message)
+            msg_type = data.get("type", "").lower()
+            payload = data.get("payload")
+            reply_to = data.get("reply_to")
+            message = data.get("message", "")
 
-            if len(message) > MAX_MESSAGE_LEN:
+            if msg_type and payload is not None:
+                # === STRUCTURED MODE (E2E-2 contract cycle) ===
+                if msg_type not in VALID_TYPES:
+                    self._send_json(
+                        {"ok": False, "error": f"'type' must be one of: {VALID_TYPES}"},
+                        status=400,
+                    )
+                    return
+
+                if not isinstance(payload, dict):
+                    self._send_json(
+                        {"ok": False, "error": "'payload' must be an object"},
+                        status=400,
+                    )
+                    return
+
+                # Send structured message
+                result = send_structured_tracked(to, msg_type, payload, reply_to)
+                status_code = 200 if result.ok else 400
+                self._send_json(result.to_dict(), status=status_code)
+
+            elif message:
+                # === LEGACY MODE (simple chat) ===
+                context = data.get("context", "friend_chat")
+
+                if len(message) > MAX_MESSAGE_LEN:
+                    self._send_json(
+                        {"ok": False, "error": f"Message too long (max {MAX_MESSAGE_LEN} chars)"},
+                        status=400,
+                    )
+                    return
+
+                result = send_chat_tracked(to, message, context)
+                status_code = 200 if result.ok else 400
+                self._send_json(result.to_dict(), status=status_code)
+
+            else:
                 self._send_json(
-                    {"ok": False, "error": f"Message too long (max {MAX_MESSAGE_LEN} chars)"},
+                    {"ok": False, "error": "Either 'message' or ('type' + 'payload') required"},
                     status=400,
                 )
-                return
-
-            # Send message (tracked for /last_sent)
-            result = send_chat_tracked(to, message, context)
-            status = 200 if result.ok else 400
-            self._send_json(result.to_dict(), status=status)
 
         else:
             self._send_json({"ok": False, "error": "Not found"}, status=404)

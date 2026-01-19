@@ -35,11 +35,25 @@ class Recipient(str, Enum):
 
 
 class MessageType(str, Enum):
-    """IPC message types."""
-    TASK = "task"
+    """IPC message types (Friend Chat protocol)."""
+    # Контрактный цикл (E2E-2)
+    TASK_REQUEST = "task_request"  # Claude → GPT: запрос задачи
+    TASK = "task"                   # GPT → Claude: задача с criteria
+    RESULT = "result"               # Claude → GPT: результат с артефактами
+    # Служебные
     RESPONSE = "response"
     ACK = "ack"
     ERROR = "error"
+
+
+# Valid top-level types for /send API
+VALID_TYPES = {
+    MessageType.TASK_REQUEST.value,
+    MessageType.TASK.value,
+    MessageType.RESULT.value,
+    MessageType.RESPONSE.value,
+    MessageType.ACK.value,
+}
 
 
 @dataclass
@@ -278,3 +292,111 @@ def get_last_sent() -> Optional[Dict[str, Any]]:
     if _last_sent is None:
         return None
     return _last_sent.to_dict()
+
+
+def send_structured(
+    to: str,
+    msg_type: str,
+    payload: Dict[str, Any],
+    reply_to: Optional[str] = None,
+) -> SendResult:
+    """
+    Send structured IPC message with custom type and payload.
+
+    This is the extended API for E2E-2 contract cycle:
+    - task_request: Claude → GPT (запрос задачи)
+    - task: GPT → Claude (задача с acceptance_criteria)
+    - result: Claude → GPT (результат с артефактами)
+
+    Args:
+        to: Recipient ("claude" or "gpt")
+        msg_type: Message type (task_request, task, result, response, ack)
+        payload: Structured payload dict
+        reply_to: Optional reference to parent message ID (sha256:...)
+
+    Returns:
+        SendResult with success status, ipc_id, stored_file path
+    """
+    # Validate recipient
+    to_lower = to.lower()
+    if to_lower not in VALID_RECIPIENTS:
+        return SendResult(
+            ok=False,
+            error=f"Invalid recipient: {to}. Must be one of: {VALID_RECIPIENTS}",
+        )
+
+    # Validate type
+    if msg_type not in VALID_TYPES:
+        return SendResult(
+            ok=False,
+            error=f"Invalid type: {msg_type}. Must be one of: {VALID_TYPES}",
+        )
+
+    # Validate payload
+    if not isinstance(payload, dict):
+        return SendResult(ok=False, error="Payload must be a dict")
+
+    # Ensure folders exist
+    _ensure_ipc_folders()
+
+    # Determine sender and inbox
+    if to_lower == Recipient.CLAUDE.value:
+        sender = SENDER_GPT
+        recipient = SENDER_CLAUDE
+        inbox = CLAUDE_INBOX
+    else:
+        sender = SENDER_CLAUDE
+        recipient = SENDER_GPT
+        inbox = GPT_INBOX
+
+    # Build message (IPC v2.1 format)
+    ts = time.time()
+    msg_data: Dict[str, Any] = {
+        "from": sender,
+        "to": recipient,
+        "timestamp": ts,
+        "type": msg_type,
+        "payload": payload,
+    }
+
+    # Add reply_to if provided
+    if reply_to:
+        msg_data["reply_to"] = reply_to
+
+    # Generate ID
+    msg_id = _generate_message_id(msg_data)
+    msg_data["id"] = msg_id
+
+    # Generate filename with timestamp prefix for monotonic cursor
+    filename = f"{ts:.6f}_{msg_id[7:23]}.json"
+    filepath = inbox / filename
+
+    # Write atomically
+    content = json.dumps(msg_data, ensure_ascii=False, sort_keys=True, indent=2)
+    _atomic_write(filepath, content)
+
+    return SendResult(
+        ok=True,
+        ipc_id=msg_id,
+        to=to_lower,
+        stored_file=str(filepath),
+        filename=filename,
+    )
+
+
+def send_structured_tracked(
+    to: str,
+    msg_type: str,
+    payload: Dict[str, Any],
+    reply_to: Optional[str] = None,
+) -> SendResult:
+    """
+    Send structured message and track it for /last_sent endpoint.
+
+    Same as send_structured() but also stores result in module-level cache.
+    """
+    global _last_sent
+    result = send_structured(to, msg_type, payload, reply_to)
+    if result.ok:
+        _last_sent = result
+    return result
