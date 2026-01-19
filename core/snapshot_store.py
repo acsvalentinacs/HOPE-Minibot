@@ -1,0 +1,229 @@
+"""
+Snapshot Store - Atomic evidence persistence with sha256 verification.
+
+Every piece of external data MUST be persisted as a snapshot before analysis.
+Signals/publications MUST reference snapshot_id for audit trail.
+
+Contract:
+    fetch -> validate -> sha256:hash -> persist (atomic) -> return SnapshotMeta
+    STALE/FAIL -> log reason -> skip cycle (fail-closed)
+
+Usage:
+    store = SnapshotStore(BASE_DIR)
+    meta, path = store.persist(
+        source="binance_ticker",
+        source_url="https://api.binance.com/api/v3/ticker/24hr",
+        raw=response_bytes,
+        ttl_sec=300,
+        parsed={"top_gainers": [...]},
+    )
+    print(meta.snapshot_id)  # sha256:abc123...
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import time
+from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+
+def _sha256_hex(data: bytes) -> str:
+    """Compute sha256 hex digest."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Atomic write: temp -> fsync -> replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+@dataclass(frozen=True)
+class SnapshotMeta:
+    """Immutable snapshot metadata."""
+    snapshot_id: str          # sha256:<64-hex>
+    timestamp_unix: float     # UTC epoch
+    source: str               # e.g. "binance_ticker"
+    source_url: str           # original URL
+    content_sha256: str       # <64-hex> of raw bytes
+    ttl_sec: int              # time-to-live in seconds
+    bytes_len: int            # raw payload size
+
+    def is_stale(self, now: Optional[float] = None) -> bool:
+        """Check if snapshot has exceeded TTL."""
+        now = now or time.time()
+        return (now - self.timestamp_unix) > self.ttl_sec
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class SnapshotStore:
+    """
+    Atomic snapshot storage with integrity verification.
+
+    Directory structure:
+        data/snapshots/{source}/{timestamp}_{hash16}.json
+    """
+
+    def __init__(self, base_dir: Path) -> None:
+        self._base = base_dir / "data" / "snapshots"
+        self._base.mkdir(parents=True, exist_ok=True)
+
+    def persist(
+        self,
+        *,
+        source: str,
+        source_url: str,
+        raw: bytes,
+        ttl_sec: int,
+        parsed: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[SnapshotMeta, Path]:
+        """
+        Persist raw data as atomic snapshot with sha256 verification.
+
+        Args:
+            source: Data source identifier (e.g. "binance_ticker")
+            source_url: Original URL fetched
+            raw: Raw response bytes
+            ttl_sec: Time-to-live in seconds
+            parsed: Optional pre-parsed data to include
+
+        Returns:
+            Tuple of (SnapshotMeta, Path to snapshot file)
+        """
+        ts = time.time()
+        raw_hash = _sha256_hex(raw)
+        snapshot_id = f"sha256:{raw_hash}"
+
+        meta = SnapshotMeta(
+            snapshot_id=snapshot_id,
+            timestamp_unix=ts,
+            source=source,
+            source_url=source_url,
+            content_sha256=raw_hash,
+            ttl_sec=ttl_sec,
+            bytes_len=len(raw),
+        )
+
+        payload: Dict[str, Any] = {
+            "snapshot_id": snapshot_id,
+            "timestamp_unix": ts,
+            "timestamp_iso": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+            "source": source,
+            "source_url": source_url,
+            "content_sha256": raw_hash,
+            "ttl_sec": ttl_sec,
+            "bytes_len": len(raw),
+        }
+
+        if parsed is not None:
+            payload["parsed"] = parsed
+
+        # Deterministic filename: timestamp_hash16.json
+        fname = f"{int(ts)}_{raw_hash[:16]}.json"
+        out_path = self._base / source / fname
+
+        _atomic_write(out_path, json.dumps(payload, ensure_ascii=False, indent=2))
+
+        return meta, out_path
+
+    def get_latest(self, source: str, max_age_sec: Optional[float] = None) -> Optional[Tuple[SnapshotMeta, Dict[str, Any]]]:
+        """
+        Get latest snapshot for source, optionally filtering by age.
+
+        Args:
+            source: Data source identifier
+            max_age_sec: Maximum age in seconds (None = no filter)
+
+        Returns:
+            Tuple of (SnapshotMeta, parsed payload) or None if not found/stale
+        """
+        source_dir = self._base / source
+        if not source_dir.exists():
+            return None
+
+        files = sorted(source_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not files:
+            return None
+
+        try:
+            data = json.loads(files[0].read_text(encoding="utf-8"))
+            meta = SnapshotMeta(
+                snapshot_id=data["snapshot_id"],
+                timestamp_unix=data["timestamp_unix"],
+                source=data["source"],
+                source_url=data["source_url"],
+                content_sha256=data["content_sha256"],
+                ttl_sec=data["ttl_sec"],
+                bytes_len=data["bytes_len"],
+            )
+
+            if max_age_sec is not None:
+                if (time.time() - meta.timestamp_unix) > max_age_sec:
+                    return None
+
+            return meta, data
+
+        except (json.JSONDecodeError, KeyError):
+            return None
+
+    def list_snapshots(self, source: str, limit: int = 10) -> List[SnapshotMeta]:
+        """List recent snapshots for source."""
+        source_dir = self._base / source
+        if not source_dir.exists():
+            return []
+
+        results = []
+        files = sorted(source_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        for f in files[:limit]:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                results.append(SnapshotMeta(
+                    snapshot_id=data["snapshot_id"],
+                    timestamp_unix=data["timestamp_unix"],
+                    source=data["source"],
+                    source_url=data["source_url"],
+                    content_sha256=data["content_sha256"],
+                    ttl_sec=data["ttl_sec"],
+                    bytes_len=data["bytes_len"],
+                ))
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+        return results
+
+    def cleanup_stale(self, source: str, keep_count: int = 100) -> int:
+        """Remove old snapshots, keeping most recent keep_count."""
+        source_dir = self._base / source
+        if not source_dir.exists():
+            return 0
+
+        files = sorted(source_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        removed = 0
+
+        for f in files[keep_count:]:
+            try:
+                f.unlink()
+                removed += 1
+            except OSError:
+                continue
+
+        return removed

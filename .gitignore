@@ -1,0 +1,109 @@
+# ===========================================
+# HOPE/NORE .gitignore
+# Fail-closed: ALL secrets/credentials MUST be external
+# ===========================================
+
+# === SECRETS / CREDENTIALS ===
+**/*.env
+**/.env
+**/*.env.*
+**/secrets*.json
+**/keys*.json
+**/tg_config.json
+**/live_api_keys.json
+**/*token*.json
+**/*token*.txt
+**/*credentials*.json
+**/*credentials*.yaml
+**/*.pem
+**/*.key
+**/*private_key*
+
+# === LOGS / DUMPS (may contain sensitive data) ===
+**/*.log
+logs/
+**/*.sqlite
+**/*.db
+**/*.bak
+**/*.old
+**/*.dump
+
+# === PYTHON ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === VIRTUAL ENVIRONMENTS ===
+.env/
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# === TESTING ===
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# === MYPY ===
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# === STATE FILES (may contain runtime secrets) ===
+state/*.flag
+state/STOP.flag
+state/STOP.json
+state/cache/
+state/*.txt
+state/*.jsonl
+
+# === IPC (runtime only, never commit) ===
+ipc/
+
+# === JUPYTER ===
+.ipynb_checkpoints/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === ARCHIVES ===
+*.zip
+*.tar.gz
+*.rar
+*.7z

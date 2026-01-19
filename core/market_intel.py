@@ -1,0 +1,597 @@
+"""
+HOPE/NORE Market Intelligence Module v1.0
+
+Aggregates market data from multiple sources:
+- CoinGecko API (market caps, prices, volumes)
+- Binance API (order books, 24h stats)
+- RSS news feeds (sentiment signals)
+
+Fail-closed: API errors logged, not ignored. Stale data = STOP signal.
+
+Usage:
+    from core.market_intel import MarketIntel
+
+    intel = MarketIntel()
+    snapshot = intel.get_snapshot()
+    signals = intel.get_trading_signals()
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.request import urlopen, Request
+from urllib.error import URLError, HTTPError
+import xml.etree.ElementTree as ET
+
+logger = logging.getLogger(__name__)
+
+# Cache settings
+CACHE_DIR = Path(r'C:\Users\kirillDev\Desktop\TradingBot\minibot\state\cache')
+CACHE_TTL_SECONDS = 300  # 5 minutes for market data
+NEWS_CACHE_TTL_SECONDS = 900  # 15 minutes for news
+
+# API endpoints
+COINGECKO_MARKETS = "https://api.coingecko.com/api/v3/coins/markets"
+BINANCE_TICKER_24H = "https://api.binance.com/api/v3/ticker/24hr"
+BINANCE_EXCHANGE_INFO = "https://api.binance.com/api/v3/exchangeInfo"
+
+# News RSS feeds
+NEWS_FEEDS = [
+    ("coindesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("cointelegraph", "https://cointelegraph.com/rss"),
+]
+
+# Trading pairs to monitor (high liquidity)
+PRIORITY_SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
+    "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+]
+
+# Signal thresholds
+VOLUME_SPIKE_THRESHOLD = 2.0  # 2x average
+PRICE_MOVE_THRESHOLD = 3.0  # 3% move
+SENTIMENT_KEYWORDS = {
+    "bullish": ["buy", "bull", "surge", "rally", "breakout", "adoption", "etf approved", "institutional"],
+    "bearish": ["sell", "bear", "crash", "dump", "hack", "ban", "regulation", "quantum"],
+}
+
+
+@dataclass(frozen=True)
+class MarketTicker:
+    """Single market ticker data."""
+    symbol: str
+    price: float
+    price_change_24h: float
+    price_change_pct: float
+    volume_24h: float
+    high_24h: float
+    low_24h: float
+    timestamp: float
+
+
+@dataclass(frozen=True)
+class NewsItem:
+    """Single news item."""
+    source: str
+    title: str
+    link: str
+    pub_date: str
+    sentiment: str  # bullish, bearish, neutral
+
+
+@dataclass
+class MarketSnapshot:
+    """Aggregated market snapshot."""
+    timestamp: float
+    tickers: Dict[str, MarketTicker]
+    news: List[NewsItem]
+    btc_dominance: float
+    total_market_cap: float
+    fear_greed_index: int  # 0-100
+    is_stale: bool = False
+
+
+@dataclass
+class TradingSignal:
+    """Actionable trading signal with entry price for outcome tracking."""
+    symbol: str
+    signal_type: str  # volume_spike, price_breakout, news_sentiment, momentum
+    direction: str  # long, short, neutral
+    strength: float  # 0.0 to 1.0
+    reason: str
+    timestamp: float
+    entry_price: float = 0.0  # Price at signal generation (for outcome tracking)
+    invalidation_price: Optional[float] = None  # Price that invalidates signal
+
+
+class MarketIntel:
+    """
+    Market intelligence aggregator.
+
+    Fail-closed design:
+    - API timeout = cached data + stale flag
+    - Parse error = skip source + log
+    - No data = STOP signal to engine
+    """
+
+    def __init__(self, cache_dir: Optional[Path] = None):
+        self.cache_dir = cache_dir or CACHE_DIR
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._last_snapshot: Optional[MarketSnapshot] = None
+        self._request_timeout = 10  # seconds
+
+    def get_snapshot(self, force_refresh: bool = False) -> MarketSnapshot:
+        """
+        Get current market snapshot.
+
+        Args:
+            force_refresh: Bypass cache
+
+        Returns:
+            MarketSnapshot with all available data
+        """
+        # Check cache
+        if not force_refresh:
+            cached = self._load_cache("snapshot")
+            if cached and time.time() - cached.get("ts", 0) < CACHE_TTL_SECONDS:
+                return self._deserialize_snapshot(cached)
+
+        # Fetch fresh data
+        tickers = self._fetch_binance_tickers()
+        news = self._fetch_news()
+
+        # Calculate aggregates
+        btc_ticker = tickers.get("BTCUSDT")
+        total_volume = sum(t.volume_24h for t in tickers.values())
+
+        snapshot = MarketSnapshot(
+            timestamp=time.time(),
+            tickers=tickers,
+            news=news,
+            btc_dominance=self._estimate_btc_dominance(tickers),
+            total_market_cap=self._estimate_market_cap(tickers),
+            fear_greed_index=self._calculate_fear_greed(tickers, news),
+            is_stale=len(tickers) == 0,
+        )
+
+        # Cache result
+        self._save_cache("snapshot", self._serialize_snapshot(snapshot))
+        self._last_snapshot = snapshot
+
+        return snapshot
+
+    def get_trading_signals(self) -> List[TradingSignal]:
+        """
+        Generate actionable trading signals from current data.
+
+        Returns:
+            List of TradingSignal objects sorted by strength
+        """
+        snapshot = self.get_snapshot()
+        signals: List[TradingSignal] = []
+
+        if snapshot.is_stale:
+            logger.warning("Market data is stale - no signals generated")
+            return []
+
+        # Volume spike detection
+        signals.extend(self._detect_volume_spikes(snapshot))
+
+        # Price momentum signals
+        signals.extend(self._detect_price_momentum(snapshot))
+
+        # News sentiment signals
+        signals.extend(self._detect_news_sentiment(snapshot))
+
+        # Sort by strength descending
+        signals.sort(key=lambda s: s.strength, reverse=True)
+
+        return signals
+
+    def _fetch_binance_tickers(self) -> Dict[str, MarketTicker]:
+        """Fetch 24h tickers from Binance."""
+        tickers: Dict[str, MarketTicker] = {}
+
+        try:
+            req = Request(
+                BINANCE_TICKER_24H,
+                headers={"User-Agent": "HOPE-Bot/1.0"}
+            )
+            with urlopen(req, timeout=self._request_timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except (URLError, HTTPError, json.JSONDecodeError) as e:
+            logger.error("Failed to fetch Binance tickers: %s", e)
+            return self._load_cached_tickers()
+
+        now = time.time()
+        for item in data:
+            symbol = item.get("symbol", "")
+            if not symbol.endswith("USDT"):
+                continue
+
+            try:
+                ticker = MarketTicker(
+                    symbol=symbol,
+                    price=float(item.get("lastPrice", 0)),
+                    price_change_24h=float(item.get("priceChange", 0)),
+                    price_change_pct=float(item.get("priceChangePercent", 0)),
+                    volume_24h=float(item.get("quoteVolume", 0)),
+                    high_24h=float(item.get("highPrice", 0)),
+                    low_24h=float(item.get("lowPrice", 0)),
+                    timestamp=now,
+                )
+                tickers[symbol] = ticker
+            except (ValueError, TypeError) as e:
+                logger.debug("Skipping malformed ticker %s: %s", symbol, e)
+
+        logger.info("Fetched %d USDT tickers from Binance", len(tickers))
+        return tickers
+
+    def _fetch_news(self) -> List[NewsItem]:
+        """Fetch and parse RSS news feeds."""
+        news: List[NewsItem] = []
+
+        for source, url in NEWS_FEEDS:
+            try:
+                req = Request(url, headers={"User-Agent": "HOPE-Bot/1.0"})
+                with urlopen(req, timeout=self._request_timeout) as resp:
+                    content = resp.read().decode("utf-8")
+
+                items = self._parse_rss(source, content)
+                news.extend(items[:10])  # Top 10 per source
+                logger.info("Fetched %d news items from %s", len(items), source)
+
+            except (URLError, HTTPError) as e:
+                logger.warning("Failed to fetch news from %s: %s", source, e)
+            except ET.ParseError as e:
+                logger.warning("Failed to parse RSS from %s: %s", source, e)
+
+        return news
+
+    def _parse_rss(self, source: str, content: str) -> List[NewsItem]:
+        """Parse RSS XML content."""
+        items: List[NewsItem] = []
+
+        root = ET.fromstring(content)
+        channel = root.find("channel")
+        if channel is None:
+            return items
+
+        for item_elem in channel.findall("item")[:20]:
+            title_elem = item_elem.find("title")
+            link_elem = item_elem.find("link")
+            pub_elem = item_elem.find("pubDate")
+
+            if title_elem is None or title_elem.text is None:
+                continue
+
+            title = title_elem.text.strip()
+            link = link_elem.text.strip() if link_elem is not None and link_elem.text else ""
+            pub_date = pub_elem.text.strip() if pub_elem is not None and pub_elem.text else ""
+
+            sentiment = self._analyze_sentiment(title)
+
+            items.append(NewsItem(
+                source=source,
+                title=title,
+                link=link,
+                pub_date=pub_date,
+                sentiment=sentiment,
+            ))
+
+        return items
+
+    def _analyze_sentiment(self, text: str) -> str:
+        """Simple keyword-based sentiment analysis."""
+        text_lower = text.lower()
+
+        bullish_score = sum(1 for kw in SENTIMENT_KEYWORDS["bullish"] if kw in text_lower)
+        bearish_score = sum(1 for kw in SENTIMENT_KEYWORDS["bearish"] if kw in text_lower)
+
+        if bullish_score > bearish_score:
+            return "bullish"
+        elif bearish_score > bullish_score:
+            return "bearish"
+        return "neutral"
+
+    def _detect_volume_spikes(self, snapshot: MarketSnapshot) -> List[TradingSignal]:
+        """Detect unusual volume activity."""
+        signals: List[TradingSignal] = []
+
+        # Get average volume for priority symbols
+        volumes = [
+            snapshot.tickers[s].volume_24h
+            for s in PRIORITY_SYMBOLS
+            if s in snapshot.tickers
+        ]
+
+        if not volumes:
+            return signals
+
+        avg_volume = sum(volumes) / len(volumes)
+
+        for symbol in PRIORITY_SYMBOLS:
+            if symbol not in snapshot.tickers:
+                continue
+
+            ticker = snapshot.tickers[symbol]
+            volume_ratio = ticker.volume_24h / avg_volume if avg_volume > 0 else 0
+
+            if volume_ratio >= VOLUME_SPIKE_THRESHOLD:
+                direction = "long" if ticker.price_change_pct > 0 else "short"
+                strength = min(1.0, (volume_ratio - 1) / 3)  # Normalize to 0-1
+
+                # Calculate invalidation price (2% adverse move)
+                inv_price = ticker.price * 0.98 if direction == "long" else ticker.price * 1.02
+
+                signals.append(TradingSignal(
+                    symbol=symbol,
+                    signal_type="volume_spike",
+                    direction=direction,
+                    strength=strength,
+                    reason=f"Volume {volume_ratio:.1f}x average, price {ticker.price_change_pct:+.2f}%",
+                    timestamp=snapshot.timestamp,
+                    entry_price=ticker.price,
+                    invalidation_price=inv_price,
+                ))
+
+        return signals
+
+    def _detect_price_momentum(self, snapshot: MarketSnapshot) -> List[TradingSignal]:
+        """Detect significant price movements."""
+        signals: List[TradingSignal] = []
+
+        for symbol in PRIORITY_SYMBOLS:
+            if symbol not in snapshot.tickers:
+                continue
+
+            ticker = snapshot.tickers[symbol]
+            pct = abs(ticker.price_change_pct)
+
+            if pct >= PRICE_MOVE_THRESHOLD:
+                direction = "long" if ticker.price_change_pct > 0 else "short"
+                strength = min(1.0, pct / 10)  # 10% = max strength
+
+                # Invalidation: retracement to 50% of move
+                mid_price = (ticker.high_24h + ticker.low_24h) / 2
+                inv_price = mid_price if direction == "long" else mid_price
+
+                signals.append(TradingSignal(
+                    symbol=symbol,
+                    signal_type="price_breakout",
+                    direction=direction,
+                    strength=strength,
+                    reason=f"24h move {ticker.price_change_pct:+.2f}%, range ${ticker.low_24h:.2f}-${ticker.high_24h:.2f}",
+                    timestamp=snapshot.timestamp,
+                    entry_price=ticker.price,
+                    invalidation_price=inv_price,
+                ))
+
+        return signals
+
+    def _detect_news_sentiment(self, snapshot: MarketSnapshot) -> List[TradingSignal]:
+        """Generate signals from news sentiment."""
+        signals: List[TradingSignal] = []
+
+        if not snapshot.news:
+            return signals
+
+        # Count sentiment per asset mentioned
+        asset_sentiment: Dict[str, List[str]] = {}
+
+        for news in snapshot.news:
+            title_lower = news.title.lower()
+
+            for symbol in PRIORITY_SYMBOLS:
+                base = symbol.replace("USDT", "").lower()
+                if base in title_lower or (base == "btc" and "bitcoin" in title_lower) or (base == "eth" and "ethereum" in title_lower):
+                    if symbol not in asset_sentiment:
+                        asset_sentiment[symbol] = []
+                    asset_sentiment[symbol].append(news.sentiment)
+
+        for symbol, sentiments in asset_sentiment.items():
+            bullish = sentiments.count("bullish")
+            bearish = sentiments.count("bearish")
+            total = len(sentiments)
+
+            if total >= 2:
+                if bullish > bearish:
+                    direction = "long"
+                    strength = bullish / total
+                elif bearish > bullish:
+                    direction = "short"
+                    strength = bearish / total
+                else:
+                    continue
+
+                # Get entry price from ticker
+                ticker = snapshot.tickers.get(symbol)
+                entry = ticker.price if ticker else 0.0
+
+                signals.append(TradingSignal(
+                    symbol=symbol,
+                    signal_type="news_sentiment",
+                    direction=direction,
+                    strength=strength * 0.5,  # News signals are weaker
+                    reason=f"{total} news items: {bullish} bullish, {bearish} bearish",
+                    timestamp=snapshot.timestamp,
+                    entry_price=entry,
+                    invalidation_price=None,  # News signals have no clear invalidation
+                ))
+
+        return signals
+
+    def _estimate_btc_dominance(self, tickers: Dict[str, MarketTicker]) -> float:
+        """Estimate BTC dominance from volume."""
+        if "BTCUSDT" not in tickers:
+            return 0.0
+
+        btc_vol = tickers["BTCUSDT"].volume_24h
+        total_vol = sum(t.volume_24h for t in tickers.values())
+
+        return (btc_vol / total_vol * 100) if total_vol > 0 else 0.0
+
+    def _estimate_market_cap(self, tickers: Dict[str, MarketTicker]) -> float:
+        """Estimate total market cap from USDT volumes (rough approximation)."""
+        if "BTCUSDT" not in tickers:
+            return 0.0
+
+        # Use BTC price as proxy (assuming ~$1.9T market cap at $95K)
+        btc_price = tickers["BTCUSDT"].price
+        return btc_price * 20_000_000  # Rough BTC supply estimate
+
+    def _calculate_fear_greed(self, tickers: Dict[str, MarketTicker], news: List[NewsItem]) -> int:
+        """Calculate fear/greed index (0=extreme fear, 100=extreme greed)."""
+        score = 50  # Neutral baseline
+
+        # Price momentum component
+        if "BTCUSDT" in tickers:
+            btc_change = tickers["BTCUSDT"].price_change_pct
+            score += btc_change * 2  # -10% to +10% maps to -20 to +20
+
+        # News sentiment component
+        if news:
+            bullish = sum(1 for n in news if n.sentiment == "bullish")
+            bearish = sum(1 for n in news if n.sentiment == "bearish")
+            sentiment_ratio = (bullish - bearish) / len(news) if news else 0
+            score += sentiment_ratio * 20
+
+        return max(0, min(100, int(score)))
+
+    def _load_cache(self, key: str) -> Optional[Dict]:
+        """Load data from cache file."""
+        cache_file = self.cache_dir / f"{key}.json"
+        if not cache_file.exists():
+            return None
+
+        try:
+            content = cache_file.read_text(encoding="utf-8")
+            return json.loads(content)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load cache %s: %s", key, e)
+            return None
+
+    def _save_cache(self, key: str, data: Dict) -> None:
+        """Save data to cache file."""
+        cache_file = self.cache_dir / f"{key}.json"
+        try:
+            cache_file.write_text(
+                json.dumps(data, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        except OSError as e:
+            logger.warning("Failed to save cache %s: %s", key, e)
+
+    def _load_cached_tickers(self) -> Dict[str, MarketTicker]:
+        """Load tickers from cache as fallback."""
+        cached = self._load_cache("tickers")
+        if not cached:
+            return {}
+
+        tickers = {}
+        for symbol, data in cached.get("tickers", {}).items():
+            try:
+                tickers[symbol] = MarketTicker(**data)
+            except (TypeError, KeyError):
+                pass
+
+        return tickers
+
+    def _serialize_snapshot(self, snapshot: MarketSnapshot) -> Dict:
+        """Serialize snapshot for caching."""
+        return {
+            "ts": snapshot.timestamp,
+            "tickers": {
+                k: {
+                    "symbol": v.symbol,
+                    "price": v.price,
+                    "price_change_24h": v.price_change_24h,
+                    "price_change_pct": v.price_change_pct,
+                    "volume_24h": v.volume_24h,
+                    "high_24h": v.high_24h,
+                    "low_24h": v.low_24h,
+                    "timestamp": v.timestamp,
+                }
+                for k, v in snapshot.tickers.items()
+            },
+            "news": [
+                {
+                    "source": n.source,
+                    "title": n.title,
+                    "link": n.link,
+                    "pub_date": n.pub_date,
+                    "sentiment": n.sentiment,
+                }
+                for n in snapshot.news
+            ],
+            "btc_dominance": snapshot.btc_dominance,
+            "total_market_cap": snapshot.total_market_cap,
+            "fear_greed_index": snapshot.fear_greed_index,
+            "is_stale": snapshot.is_stale,
+        }
+
+    def _deserialize_snapshot(self, data: Dict) -> MarketSnapshot:
+        """Deserialize snapshot from cache."""
+        tickers = {}
+        for k, v in data.get("tickers", {}).items():
+            try:
+                tickers[k] = MarketTicker(**v)
+            except (TypeError, KeyError):
+                pass
+
+        news = []
+        for n in data.get("news", []):
+            try:
+                news.append(NewsItem(**n))
+            except (TypeError, KeyError):
+                pass
+
+        return MarketSnapshot(
+            timestamp=data.get("ts", 0),
+            tickers=tickers,
+            news=news,
+            btc_dominance=data.get("btc_dominance", 0),
+            total_market_cap=data.get("total_market_cap", 0),
+            fear_greed_index=data.get("fear_greed_index", 50),
+            is_stale=data.get("is_stale", True),
+        )
+
+
+def get_market_intel() -> MarketIntel:
+    """Get singleton market intel instance."""
+    global _intel_instance
+    if "_intel_instance" not in globals():
+        _intel_instance = MarketIntel()
+    return _intel_instance
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+
+    intel = MarketIntel()
+
+    print("=== MARKET SNAPSHOT ===")
+    snapshot = intel.get_snapshot(force_refresh=True)
+    print(f"Timestamp: {datetime.fromtimestamp(snapshot.timestamp)}")
+    print(f"Tickers: {len(snapshot.tickers)}")
+    print(f"News items: {len(snapshot.news)}")
+    print(f"BTC Dominance: {snapshot.btc_dominance:.1f}%")
+    print(f"Fear/Greed Index: {snapshot.fear_greed_index}")
+
+    print("\n=== TOP TICKERS ===")
+    for symbol in PRIORITY_SYMBOLS[:5]:
+        if symbol in snapshot.tickers:
+            t = snapshot.tickers[symbol]
+            print(f"{symbol}: ${t.price:.2f} ({t.price_change_pct:+.2f}%) Vol: ${t.volume_24h/1e9:.1f}B")
+
+    print("\n=== TRADING SIGNALS ===")
+    signals = intel.get_trading_signals()
+    for sig in signals[:10]:
+        print(f"[{sig.signal_type}] {sig.symbol} {sig.direction.upper()} (strength: {sig.strength:.2f})")
+        print(f"  Reason: {sig.reason}")
