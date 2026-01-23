@@ -944,7 +944,22 @@ class HopeMiniBot:
                 side = j.get("side") or j.get("dir") or "—"
                 pnl = j.get("pnl_usd") or j.get("pnl") or "—"
                 status = j.get("status") or ("CLOSED" if j.get("closed") else "—")
-                out.append(f"• {sym} {side} {status} PnL={pnl}")
+                # Extended HUNTERS fields
+                verdict = j.get("hunters_verdict") or j.get("verdict") or "—"
+                score = j.get("hunters_final_score") or j.get("score") or "—"
+                risk = j.get("risk_usd") or "—"
+                profile = j.get("profile") or "—"
+                entry = j.get("entry_price") or "—"
+                exit_p = j.get("exit_price") or "—"
+                # Format: symbol SIDE verdict(score) PnL risk profile
+                line = f"• {sym} {side} {verdict}({score}) PnL={pnl}"
+                if risk != "—":
+                    line += f" R={risk}"
+                if profile != "—":
+                    line += f" [{profile}]"
+                if entry != "—" and exit_p != "—":
+                    line += f" ({entry}→{exit_p})"
+                out.append(line)
             except Exception:
                 out.append(f"• {ln[:120]}")
         await self._reply(
