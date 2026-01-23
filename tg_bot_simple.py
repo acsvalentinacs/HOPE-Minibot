@@ -3,17 +3,23 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-24 13:30:00 UTC
+# Modified at: 2026-01-24 14:00:00 UTC
 # === END SIGNATURE ===
 r"""
-HOPEminiBOT — tg_bot_simple (v2.0.0 — SSoT Key Contract)
+HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
+
+Changes in v2.1.0:
+- Valuation policy: fail-closed sanity checks (_is_price_sane)
+- Dust filter: exclude positions < 0.50$ (except stablecoins)
+- Ticker cache: 60s in-memory TTL to reduce API load
+- Degraded mode: if tickers fail, only count stablecoins
+- Excluded assets shown in response (excl: AUD, SLF)
+- Formatting: no trailing zeros (100.4$ not 100.40$)
 
 Changes in v2.0.0:
 - SSoT key contract: BINANCE_MAINNET_API_KEY/SECRET, BINANCE_TESTNET_API_KEY/SECRET
 - Env control: HOPE_BINANCE_ENV=mainnet|testnet|auto, HOPE_BINANCE_ACCOUNT=spot|usdm|coinm|auto
 - Fail-closed: explicit env requires explicit keys
-- USD valuation: fetches tickers for all assets, not just USDT/BUSD
-- Top-5 assets breakdown in /balance response
 - Legacy API_KEY/SECRET treated as TESTNET (never mainnet) for safety
 
 Changes in v1.4.0:
@@ -430,54 +436,98 @@ def _choose_account_attempts() -> tuple[str, ...]:
     return ("spot", "usdm", "coinm")
 
 
-# Delisted/dust tokens to exclude from balance calculation
+# === VALUATION POLICY (SSoT v2.1) ===
+
+# Stablecoins (always 1:1 USD, no ticker needed)
+_STABLE_ASSETS = frozenset({"USDT", "USDC", "BUSD", "FDUSD", "TUSD", "DAI"})
+
+# Manual exclusion list (secondary mechanism, use sparingly)
 _EXCLUDED_ASSETS = frozenset({
     "AUD", "SLF", "LEND", "NPXS", "MCO", "VEN", "BCN", "CHAT", "ICN",
     "TRIG", "GVT", "HSR", "RPX", "WINGS", "MOD", "QLC", "WPR", "CLOAK",
     "SUB", "STORM", "POA", "BCD", "CDT", "QSP", "OST", "TNT", "FUEL",
+    "LDUSDT", "WBETH",  # wrapped/staked variants
 })
+
+# Valuation thresholds (fail-closed: if outside -> exclude)
+_MIN_USD_PER_ASSET = 0.50  # dust filter
+_MIN_PRICE_USDT = 1e-12    # sanity: price too low
+_MAX_PRICE_USDT = 1e6      # sanity: price too high (impossible for legit assets)
+
+# Ticker cache (in-memory, process-local)
+_TICKER_CACHE: dict = {}
+_TICKER_CACHE_TS: float = 0.0
+_TICKER_CACHE_TTL: float = 60.0  # seconds
+
+
+# --- Formatting helpers (SSoT) ---
+
+def _fmt_usd(x: float) -> str:
+    """
+    Format USD value without trailing zeros.
+    100.40 -> 100.4
+    0.22   -> 0.22
+    0.00   -> 0
+    """
+    s = f"{x:.2f}".rstrip("0").rstrip(".")
+    return s if s else "0"
+
+
+def _fmt_qty(x: float) -> str:
+    """
+    Format quantity without noise.
+    Adaptive precision based on magnitude.
+    """
+    ax = abs(x)
+    if ax >= 100:
+        return f"{x:.2f}".rstrip("0").rstrip(".")
+    if ax >= 1:
+        return f"{x:.4f}".rstrip("0").rstrip(".")
+    if ax >= 0.01:
+        return f"{x:.6f}".rstrip("0").rstrip(".")
+    return f"{x:.8f}".rstrip("0").rstrip(".")
+
+
+def _is_price_sane(price_usdt: Optional[float]) -> bool:
+    """
+    Sanity check for price. Fail-closed: if doubtful -> False.
+    """
+    if price_usdt is None:
+        return False
+    if price_usdt <= 0:
+        return False
+    if price_usdt < _MIN_PRICE_USDT or price_usdt > _MAX_PRICE_USDT:
+        return False
+    return True
 
 
 def _price_usdt(asset: str, tickers: dict) -> Optional[float]:
     """
     Get USD price for an asset using available tickers.
 
-    Pricing chain:
+    Pricing chain (fail-closed: returns None if no reliable price):
       1. USDT = 1.0 (base)
-      2. Stablecoins (BUSD, USDC, etc.) ≈ 1.0
-      3. Direct: ASSET/USDT
+      2. Stablecoins (BUSD, USDC, etc.) = 1.0
+      3. Direct: ASSET/USDT ticker
       4. Via BTC: ASSET/BTC * BTC/USDT
       5. Via BUSD: ASSET/BUSD * BUSD/USDT
 
-    Returns None for excluded/delisted assets.
+    Does NOT check _EXCLUDED_ASSETS here (done in caller).
     """
     a = asset.upper()
 
-    # Skip excluded/delisted assets
-    if a in _EXCLUDED_ASSETS:
-        return None
-
     # Base stablecoin
-    if a == "USDT":
+    if a in _STABLE_ASSETS:
         return 1.0
-
-    # Other stablecoins (approximate 1:1)
-    if a in ("BUSD", "USDC", "TUSD", "FDUSD", "DAI"):
-        for sym in (f"{a}/USDT", f"{a}USDT"):
-            t = tickers.get(sym)
-            if t and t.get("last"):
-                try:
-                    return float(t["last"])
-                except Exception:
-                    pass
-        return 1.0  # Fallback: assume 1:1
 
     # Direct ASSET/USDT
     for sym in (f"{a}/USDT", f"{a}USDT"):
         t = tickers.get(sym)
         if t and t.get("last"):
             try:
-                return float(t["last"])
+                px = float(t["last"])
+                if _is_price_sane(px):
+                    return px
             except Exception:
                 pass
 
@@ -492,16 +542,18 @@ def _price_usdt(asset: str, tickers: dict) -> Optional[float]:
             except Exception:
                 pass
 
-    if btc_price:
+    if btc_price and _is_price_sane(btc_price):
         for sym in (f"{a}/BTC", f"{a}BTC"):
             t = tickers.get(sym)
             if t and t.get("last"):
                 try:
-                    return float(t["last"]) * btc_price
+                    px = float(t["last"]) * btc_price
+                    if _is_price_sane(px):
+                        return px
                 except Exception:
                     pass
 
-    # Via BUSD: ASSET/BUSD * BUSD/USDT
+    # Via BUSD (deprecated but still available)
     busd_price = None
     for sym in ("BUSD/USDT", "BUSDUSDT"):
         t = tickers.get(sym)
@@ -512,12 +564,14 @@ def _price_usdt(asset: str, tickers: dict) -> Optional[float]:
             except Exception:
                 pass
 
-    if busd_price:
+    if busd_price and _is_price_sane(busd_price):
         for sym in (f"{a}/BUSD", f"{a}BUSD"):
             t = tickers.get(sym)
             if t and t.get("last"):
                 try:
-                    return float(t["last"]) * busd_price
+                    px = float(t["last"]) * busd_price
+                    if _is_price_sane(px):
+                        return px
                 except Exception:
                     pass
 
@@ -543,9 +597,40 @@ def _iter_nonzero_balances(balances: dict) -> list[tuple[str, float, float]]:
     return result
 
 
+def _fetch_tickers_cached(exchange) -> tuple[dict, bool]:
+    """
+    Fetch tickers with 60-second in-memory cache.
+    Returns (tickers_dict, is_degraded).
+    """
+    global _TICKER_CACHE, _TICKER_CACHE_TS
+
+    log = logging.getLogger("tg_bot")
+    now = time.time()
+
+    # Check cache validity
+    if _TICKER_CACHE and (now - _TICKER_CACHE_TS) < _TICKER_CACHE_TTL:
+        log.info("[BALANCE] Using cached tickers (age=%.1fs)", now - _TICKER_CACHE_TS)
+        return _TICKER_CACHE, False
+
+    # Fetch fresh tickers
+    try:
+        tickers = exchange.fetch_tickers()
+        _TICKER_CACHE = tickers
+        _TICKER_CACHE_TS = now
+        log.info("[BALANCE] Fetched %d tickers (fresh)", len(tickers))
+        return tickers, False
+    except Exception as e:
+        log.warning("[BALANCE] Tickers fetch failed: %s", str(e)[:50])
+        # Return stale cache if available, else empty (degraded mode)
+        if _TICKER_CACHE:
+            log.info("[BALANCE] Using stale cache (degraded)")
+            return _TICKER_CACHE, True
+        return {}, True
+
+
 def _fetch_binance_balance_sync() -> BinanceBalanceResult:
     """
-    Sync Binance balance fetch with SSoT key contract.
+    Sync Binance balance fetch with SSoT key contract v2.1.
 
     Key contract (fail-closed):
       - HOPE_BINANCE_ENV=mainnet requires BINANCE_MAINNET_API_KEY/SECRET
@@ -553,10 +638,11 @@ def _fetch_binance_balance_sync() -> BinanceBalanceResult:
       - HOPE_BINANCE_ENV=auto tries mainnet first, fallback to testnet
       - Legacy API_KEY/SECRET are ALWAYS treated as testnet
 
-    USD valuation:
-      - Fetches tickers for all assets
-      - Calculates USD equivalent via USDT/BTC/BUSD pricing chains
-      - Reports top-5 assets by USD value
+    Valuation policy (fail-closed):
+      - Only includes assets with sane price (_is_price_sane)
+      - Excludes dust positions (< _MIN_USD_PER_ASSET)
+      - Excludes manually blacklisted assets (_EXCLUDED_ASSETS)
+      - Reports excluded assets in details
 
     Returns BinanceBalanceResult with success/error info and details.
     """
@@ -632,68 +718,85 @@ def _fetch_binance_balance_sync() -> BinanceBalanceResult:
                 # Fetch balances
                 balances = exchange.fetch_balance()
 
-                # Fetch tickers for USD valuation
-                tickers = {}
-                try:
-                    tickers = exchange.fetch_tickers()
-                    log.info("[BALANCE] Fetched %d tickers", len(tickers))
-                except Exception as e:
-                    log.warning("[BALANCE] Tickers fetch failed: %s", str(e)[:50])
-                    tickers = {}
+                # Fetch tickers with cache
+                tickers, valuation_degraded = _fetch_tickers_cached(exchange)
 
                 # Calculate USD value for all assets
                 total_usd = 0.0
                 free_usd = 0.0
                 ranked = []
+                excluded = []
 
                 for asset, t_amt, f_amt in _iter_nonzero_balances(balances):
-                    # Get USD price
-                    if tickers:
-                        px = _price_usdt(asset, tickers)
-                    else:
-                        # No tickers - only count stablecoins
-                        px = 1.0 if asset.upper() in ("USDT", "BUSD", "USDC", "FDUSD") else None
+                    a = asset.upper()
 
-                    if px is None:
-                        log.debug("[BALANCE] No price for %s, skipping", asset)
+                    # 1. Manual exclusion (secondary mechanism)
+                    if a in _EXCLUDED_ASSETS:
+                        excluded.append(a)
+                        log.debug("[BALANCE] %s excluded (manual)", a)
                         continue
 
-                    v_total = t_amt * px
-                    v_free = f_amt * px
+                    # 2. Get price
+                    if tickers:
+                        px = _price_usdt(a, tickers)
+                    else:
+                        # Degraded: only stablecoins
+                        px = 1.0 if a in _STABLE_ASSETS else None
+
+                    # 3. Sanity check (fail-closed)
+                    if not _is_price_sane(px):
+                        excluded.append(a)
+                        log.debug("[BALANCE] %s excluded (no sane price)", a)
+                        continue
+
+                    v_total = float(t_amt) * float(px)
+                    v_free = float(f_amt) * float(px)
+
+                    # 4. Dust filter (fail-closed: don't include garbage)
+                    if abs(v_total) < _MIN_USD_PER_ASSET and a not in _STABLE_ASSETS:
+                        excluded.append(a)
+                        log.debug("[BALANCE] %s excluded (dust: %.4f$)", a, v_total)
+                        continue
+
                     total_usd += v_total
                     free_usd += v_free
-                    ranked.append((abs(v_total), asset, v_total, v_free, t_amt))
+                    ranked.append((abs(v_total), a, v_total, v_free, float(t_amt)))
 
                 # Sort by USD value descending
                 ranked.sort(reverse=True)
                 top5 = ranked[:5]
 
-                # Build details string with proper formatting
-                def _fmt_asset(asset: str, usd_val: float, amount: float) -> str:
-                    """Format asset: USDT=100.38$ or BNB=0.17$(0.0003)"""
-                    if asset.upper() in ("USDT", "USDC", "BUSD", "FDUSD"):
-                        return f"{asset}={usd_val:.2f}$"
-                    elif amount < 0.01:
-                        return f"{asset}={usd_val:.2f}$({amount:.4f})"
-                    elif amount < 1:
-                        return f"{asset}={usd_val:.2f}$({amount:.3f})"
-                    else:
-                        return f"{asset}={usd_val:.2f}$({amount:.2f})"
+                # Build details string
+                def _fmt_asset_line(asset: str, usd_val: float, amount: float) -> str:
+                    """Format: USDT=100.4$ or BNB=0.17$(0.0003)"""
+                    if asset in _STABLE_ASSETS:
+                        return f"{asset}={_fmt_usd(usd_val)}$"
+                    return f"{asset}={_fmt_usd(usd_val)}$({_fmt_qty(amount)})"
 
                 if top5:
-                    top_str = ", ".join([_fmt_asset(a, vt, amt) for _, a, vt, _, amt in top5])
+                    top_str = ", ".join([_fmt_asset_line(a, vt, amt) for _, a, vt, _, amt in top5])
                 else:
                     top_str = "no valued assets"
 
-                log.info("[BALANCE] %s SUCCESS: total=%.2f, free=%.2f, top5=[%s]",
-                        source, total_usd, free_usd, top_str)
+                # Add excluded info
+                excluded_unique = sorted(set(excluded))[:5]
+                excluded_str = ", ".join(excluded_unique) if excluded_unique else ""
+
+                details = top_str
+                if excluded_str:
+                    details += f"; excl: {excluded_str}"
+                if valuation_degraded:
+                    details += " [degraded]"
+
+                log.info("[BALANCE] %s SUCCESS: total=%.2f, free=%.2f, excluded=%s",
+                        source, total_usd, free_usd, excluded_unique)
 
                 return BinanceBalanceResult(
                     success=True,
                     total_usd=float(total_usd),
                     free_usd=float(free_usd),
                     source=source,
-                    details=top_str
+                    details=details
                 )
 
             except ccxt.AuthenticationError as e:
@@ -777,7 +880,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v2.0.0-ssot-key-contract"
+    VERSION = "tgbot-v2.1.0-valuation-policy"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
