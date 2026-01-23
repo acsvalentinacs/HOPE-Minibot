@@ -450,7 +450,7 @@ _EXCLUDED_ASSETS = frozenset({
 })
 
 # Valuation thresholds (fail-closed: if outside -> exclude)
-_MIN_USD_PER_ASSET = 0.50  # dust filter
+_MIN_USD_PER_ASSET = 0.10  # dust filter (lowered to include BNB ~0.25$)
 _MIN_PRICE_USDT = 1e-12    # sanity: price too low
 _MAX_PRICE_USDT = 1e6      # sanity: price too high (impossible for legit assets)
 
