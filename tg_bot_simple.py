@@ -3,10 +3,18 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-24 10:00:00 UTC
+# Modified at: 2026-01-24 13:30:00 UTC
 # === END SIGNATURE ===
 r"""
-HOPEminiBOT — tg_bot_simple (v1.4.0 — Real Binance Balance)
+HOPEminiBOT — tg_bot_simple (v2.0.0 — SSoT Key Contract)
+
+Changes in v2.0.0:
+- SSoT key contract: BINANCE_MAINNET_API_KEY/SECRET, BINANCE_TESTNET_API_KEY/SECRET
+- Env control: HOPE_BINANCE_ENV=mainnet|testnet|auto, HOPE_BINANCE_ACCOUNT=spot|usdm|coinm|auto
+- Fail-closed: explicit env requires explicit keys
+- USD valuation: fetches tickers for all assets, not just USDT/BUSD
+- Top-5 assets breakdown in /balance response
+- Legacy API_KEY/SECRET treated as TESTNET (never mainnet) for safety
 
 Changes in v1.4.0:
 - /balance now fetches REAL Binance SPOT balance via ccxt
@@ -320,7 +328,7 @@ def _parse_float(x) -> Optional[float]:
         return None
 
 
-# --- Binance SPOT balance fetch (async wrapper) ---
+# --- Binance SPOT balance fetch (SSoT key contract v2.0) ---
 @dataclass
 class BinanceBalanceResult:
     """Result of Binance balance fetch."""
@@ -329,101 +337,385 @@ class BinanceBalanceResult:
     free_usd: Optional[float] = None
     error: Optional[str] = None
     source: str = "binance_api"
+    details: str = ""  # Top assets breakdown
+
+
+@dataclass(frozen=True)
+class _BinanceKeySet:
+    """Binance API key pair with environment label."""
+    env_name: str  # "mainnet" | "testnet"
+    api_key: str
+    api_secret: str
+
+
+def _get_env_str(name: str, default: str = "") -> str:
+    """Get env var as stripped string."""
+    return (os.getenv(name) or default).strip()
+
+
+def _load_binance_keys() -> dict[str, _BinanceKeySet]:
+    """
+    Load Binance API keys with strict SSoT contract.
+
+    Explicit keys (recommended):
+      BINANCE_MAINNET_API_KEY / BINANCE_MAINNET_API_SECRET
+      BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET
+
+    Legacy keys (deprecated, treated as TESTNET by default for safety):
+      BINANCE_API_KEY / BINANCE_API_SECRET
+      API_KEY / API_SECRET
+
+    This is fail-closed: legacy keys are NEVER treated as mainnet
+    to prevent accidental mainnet operations with testnet intent.
+    """
+    log = logging.getLogger("tg_bot")
+
+    # Explicit mainnet keys (highest priority)
+    main_k = _get_env_str("BINANCE_MAINNET_API_KEY")
+    main_s = _get_env_str("BINANCE_MAINNET_API_SECRET")
+
+    # Explicit testnet keys
+    test_k = _get_env_str("BINANCE_TESTNET_API_KEY")
+    test_s = _get_env_str("BINANCE_TESTNET_API_SECRET")
+
+    # Legacy ambiguous keys (treated as testnet for safety)
+    legacy_k = _get_env_str("BINANCE_API_KEY") or _get_env_str("API_KEY")
+    legacy_s = _get_env_str("BINANCE_API_SECRET") or _get_env_str("API_SECRET")
+
+    out: dict[str, _BinanceKeySet] = {}
+
+    if main_k and main_s:
+        out["mainnet"] = _BinanceKeySet("mainnet", main_k, main_s)
+        log.info("[KEYS] Loaded MAINNET keys (explicit)")
+
+    if test_k and test_s:
+        out["testnet"] = _BinanceKeySet("testnet", test_k, test_s)
+        log.info("[KEYS] Loaded TESTNET keys (explicit)")
+    elif legacy_k and legacy_s and "testnet" not in out:
+        # Fail-closed: legacy keys are TESTNET by default
+        out["testnet"] = _BinanceKeySet("testnet", legacy_k, legacy_s)
+        log.info("[KEYS] Loaded TESTNET keys (from legacy API_KEY/SECRET)")
+
+    return out
+
+
+def _choose_env_attempts() -> tuple[str, ...]:
+    """
+    Determine which environments to try based on HOPE_BINANCE_ENV.
+
+    Values:
+      mainnet - only mainnet (fail if keys missing)
+      testnet - only testnet (fail if keys missing)
+      auto    - try mainnet first, fallback to testnet (default)
+    """
+    pref = _get_env_str("HOPE_BINANCE_ENV", "auto").lower()
+    if pref in ("mainnet", "testnet"):
+        return (pref,)
+    return ("mainnet", "testnet")
+
+
+def _choose_account_attempts() -> tuple[str, ...]:
+    """
+    Determine which account types to try based on HOPE_BINANCE_ACCOUNT.
+
+    Values:
+      spot  - only SPOT account (default)
+      usdm  - only USDT-M Futures
+      coinm - only COIN-M Futures
+      auto  - try all (spot first)
+    """
+    pref = _get_env_str("HOPE_BINANCE_ACCOUNT", "spot").lower()
+    if pref in ("spot", "usdm", "coinm"):
+        return (pref,)
+    return ("spot", "usdm", "coinm")
+
+
+# Delisted/dust tokens to exclude from balance calculation
+_EXCLUDED_ASSETS = frozenset({
+    "AUD", "SLF", "LEND", "NPXS", "MCO", "VEN", "BCN", "CHAT", "ICN",
+    "TRIG", "GVT", "HSR", "RPX", "WINGS", "MOD", "QLC", "WPR", "CLOAK",
+    "SUB", "STORM", "POA", "BCD", "CDT", "QSP", "OST", "TNT", "FUEL",
+})
+
+
+def _price_usdt(asset: str, tickers: dict) -> Optional[float]:
+    """
+    Get USD price for an asset using available tickers.
+
+    Pricing chain:
+      1. USDT = 1.0 (base)
+      2. Stablecoins (BUSD, USDC, etc.) ≈ 1.0
+      3. Direct: ASSET/USDT
+      4. Via BTC: ASSET/BTC * BTC/USDT
+      5. Via BUSD: ASSET/BUSD * BUSD/USDT
+
+    Returns None for excluded/delisted assets.
+    """
+    a = asset.upper()
+
+    # Skip excluded/delisted assets
+    if a in _EXCLUDED_ASSETS:
+        return None
+
+    # Base stablecoin
+    if a == "USDT":
+        return 1.0
+
+    # Other stablecoins (approximate 1:1)
+    if a in ("BUSD", "USDC", "TUSD", "FDUSD", "DAI"):
+        for sym in (f"{a}/USDT", f"{a}USDT"):
+            t = tickers.get(sym)
+            if t and t.get("last"):
+                try:
+                    return float(t["last"])
+                except Exception:
+                    pass
+        return 1.0  # Fallback: assume 1:1
+
+    # Direct ASSET/USDT
+    for sym in (f"{a}/USDT", f"{a}USDT"):
+        t = tickers.get(sym)
+        if t and t.get("last"):
+            try:
+                return float(t["last"])
+            except Exception:
+                pass
+
+    # Via BTC: ASSET/BTC * BTC/USDT
+    btc_price = None
+    for sym in ("BTC/USDT", "BTCUSDT"):
+        t = tickers.get(sym)
+        if t and t.get("last"):
+            try:
+                btc_price = float(t["last"])
+                break
+            except Exception:
+                pass
+
+    if btc_price:
+        for sym in (f"{a}/BTC", f"{a}BTC"):
+            t = tickers.get(sym)
+            if t and t.get("last"):
+                try:
+                    return float(t["last"]) * btc_price
+                except Exception:
+                    pass
+
+    # Via BUSD: ASSET/BUSD * BUSD/USDT
+    busd_price = None
+    for sym in ("BUSD/USDT", "BUSDUSDT"):
+        t = tickers.get(sym)
+        if t and t.get("last"):
+            try:
+                busd_price = float(t["last"])
+                break
+            except Exception:
+                pass
+
+    if busd_price:
+        for sym in (f"{a}/BUSD", f"{a}BUSD"):
+            t = tickers.get(sym)
+            if t and t.get("last"):
+                try:
+                    return float(t["last"]) * busd_price
+                except Exception:
+                    pass
+
+    return None
+
+
+def _iter_nonzero_balances(balances: dict) -> list[tuple[str, float, float]]:
+    """Extract non-zero balances as (asset, total, free) tuples."""
+    total_dict = balances.get("total") or {}
+    free_dict = balances.get("free") or {}
+    result = []
+
+    for asset, amt in total_dict.items():
+        try:
+            t = float(amt or 0.0)
+            f = float(free_dict.get(asset) or 0.0)
+        except Exception:
+            continue
+        if abs(t) < 1e-12 and abs(f) < 1e-12:
+            continue
+        result.append((asset, t, f))
+
+    return result
 
 
 def _fetch_binance_balance_sync() -> BinanceBalanceResult:
     """
-    Sync Binance SPOT balance fetch via ccxt.
-    Supports both mainnet and testnet (sandbox mode).
-    Returns BinanceBalanceResult with success/error info.
+    Sync Binance balance fetch with SSoT key contract.
+
+    Key contract (fail-closed):
+      - HOPE_BINANCE_ENV=mainnet requires BINANCE_MAINNET_API_KEY/SECRET
+      - HOPE_BINANCE_ENV=testnet requires BINANCE_TESTNET_API_KEY/SECRET
+      - HOPE_BINANCE_ENV=auto tries mainnet first, fallback to testnet
+      - Legacy API_KEY/SECRET are ALWAYS treated as testnet
+
+    USD valuation:
+      - Fetches tickers for all assets
+      - Calculates USD equivalent via USDT/BTC/BUSD pricing chains
+      - Reports top-5 assets by USD value
+
+    Returns BinanceBalanceResult with success/error info and details.
     """
+    log = logging.getLogger("tg_bot")
+    log.info("[BALANCE] Starting fetch, CCXT_AVAILABLE=%s", CCXT_AVAILABLE)
+
     if not CCXT_AVAILABLE:
+        log.warning("[BALANCE] ccxt not installed")
         return BinanceBalanceResult(
             success=False,
             error="ccxt not installed",
             source="none"
         )
 
-    api_key = os.getenv("BINANCE_API_KEY") or os.getenv("API_KEY") or ""
-    api_secret = os.getenv("BINANCE_API_SECRET") or os.getenv("API_SECRET") or ""
+    keys = _load_binance_keys()
+    env_attempts = _choose_env_attempts()
+    acct_attempts = _choose_account_attempts()
 
-    if not api_key or not api_secret:
+    log.info("[BALANCE] Keys available: %s", list(keys.keys()))
+    log.info("[BALANCE] Env attempts: %s, Account attempts: %s", env_attempts, acct_attempts)
+
+    # Fail-closed: explicit mode requires explicit keys
+    explicit_env = _get_env_str("HOPE_BINANCE_ENV", "auto").lower()
+    if explicit_env in ("mainnet", "testnet") and explicit_env not in keys:
+        error_msg = f"{explicit_env} keys missing (set BINANCE_{explicit_env.upper()}_API_KEY/SECRET)"
+        log.error("[BALANCE] FAIL-CLOSED: %s", error_msg)
         return BinanceBalanceResult(
             success=False,
-            error="BINANCE_API_KEY/SECRET not set",
-            source="none"
+            error=error_msg,
+            source="binance"
         )
 
-    # Check if testnet mode (HOPE_BINANCE_TESTNET=1 or try both)
-    use_testnet = os.getenv("HOPE_BINANCE_TESTNET", "").strip() in ("1", "true", "yes")
+    last_err = "no keys available"
 
-    def _try_fetch(sandbox: bool) -> BinanceBalanceResult:
-        try:
-            exchange = ccxt.binance({
-                "apiKey": api_key,
-                "secret": api_secret,
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-            })
+    for acct in acct_attempts:
+        for env_name in env_attempts:
+            ks = keys.get(env_name)
+            if not ks:
+                log.info("[BALANCE] Skipping %s/%s: no keys", env_name, acct)
+                continue
 
-            if sandbox:
-                exchange.set_sandbox_mode(True)
+            sandbox = (env_name == "testnet")
+            source = f"binance_{env_name}_{acct}"
+            log.info("[BALANCE] Trying %s...", source)
 
-            bal = exchange.fetch_balance()
+            try:
+                # Select exchange class based on account type
+                if acct == "spot":
+                    exchange = ccxt.binance({
+                        "apiKey": ks.api_key,
+                        "secret": ks.api_secret,
+                        "enableRateLimit": True,
+                        "options": {"defaultType": "spot"},
+                    })
+                elif acct == "usdm":
+                    exchange = ccxt.binanceusdm({
+                        "apiKey": ks.api_key,
+                        "secret": ks.api_secret,
+                        "enableRateLimit": True,
+                    })
+                elif acct == "coinm":
+                    exchange = ccxt.binancecoinm({
+                        "apiKey": ks.api_key,
+                        "secret": ks.api_secret,
+                        "enableRateLimit": True,
+                    })
+                else:
+                    continue
 
-            # Get USDT balance as USD proxy
-            usdt = bal.get("USDT") or {}
-            total = float(usdt.get("total") or 0.0)
-            free = float(usdt.get("free") or 0.0)
+                if sandbox and hasattr(exchange, "set_sandbox_mode"):
+                    exchange.set_sandbox_mode(True)
 
-            # Also check BUSD as backup
-            busd = bal.get("BUSD") or {}
-            total += float(busd.get("total") or 0.0)
-            free += float(busd.get("free") or 0.0)
+                # Fetch balances
+                balances = exchange.fetch_balance()
 
-            source = "binance_testnet_spot" if sandbox else "binance_spot_api"
-            return BinanceBalanceResult(
-                success=True,
-                total_usd=total,
-                free_usd=free,
-                source=source
-            )
+                # Fetch tickers for USD valuation
+                tickers = {}
+                try:
+                    tickers = exchange.fetch_tickers()
+                    log.info("[BALANCE] Fetched %d tickers", len(tickers))
+                except Exception as e:
+                    log.warning("[BALANCE] Tickers fetch failed: %s", str(e)[:50])
+                    tickers = {}
 
-        except ccxt.AuthenticationError as e:
-            return BinanceBalanceResult(
-                success=False,
-                error=f"AuthError: {str(e)[:100]}",
-                source="binance_api"
-            )
-        except ccxt.NetworkError as e:
-            return BinanceBalanceResult(
-                success=False,
-                error=f"NetworkError: {str(e)[:100]}",
-                source="binance_api"
-            )
-        except Exception as e:
-            return BinanceBalanceResult(
-                success=False,
-                error=f"{type(e).__name__}: {str(e)[:100]}",
-                source="binance_api"
-            )
+                # Calculate USD value for all assets
+                total_usd = 0.0
+                free_usd = 0.0
+                ranked = []
 
-    # If testnet explicitly set, use it
-    if use_testnet:
-        return _try_fetch(sandbox=True)
+                for asset, t_amt, f_amt in _iter_nonzero_balances(balances):
+                    # Get USD price
+                    if tickers:
+                        px = _price_usdt(asset, tickers)
+                    else:
+                        # No tickers - only count stablecoins
+                        px = 1.0 if asset.upper() in ("USDT", "BUSD", "USDC", "FDUSD") else None
 
-    # Otherwise try mainnet first, fallback to testnet
-    result = _try_fetch(sandbox=False)
-    if result.success:
-        return result
+                    if px is None:
+                        log.debug("[BALANCE] No price for %s, skipping", asset)
+                        continue
 
-    # Mainnet failed, try testnet
-    testnet_result = _try_fetch(sandbox=True)
-    if testnet_result.success:
-        return testnet_result
+                    v_total = t_amt * px
+                    v_free = f_amt * px
+                    total_usd += v_total
+                    free_usd += v_free
+                    ranked.append((abs(v_total), asset, v_total, v_free, t_amt))
 
-    # Both failed, return mainnet error
-    return result
+                # Sort by USD value descending
+                ranked.sort(reverse=True)
+                top5 = ranked[:5]
+
+                # Build details string with proper formatting
+                def _fmt_asset(asset: str, usd_val: float, amount: float) -> str:
+                    """Format asset: USDT=100.38$ or BNB=0.17$(0.0003)"""
+                    if asset.upper() in ("USDT", "USDC", "BUSD", "FDUSD"):
+                        return f"{asset}={usd_val:.2f}$"
+                    elif amount < 0.01:
+                        return f"{asset}={usd_val:.2f}$({amount:.4f})"
+                    elif amount < 1:
+                        return f"{asset}={usd_val:.2f}$({amount:.3f})"
+                    else:
+                        return f"{asset}={usd_val:.2f}$({amount:.2f})"
+
+                if top5:
+                    top_str = ", ".join([_fmt_asset(a, vt, amt) for _, a, vt, _, amt in top5])
+                else:
+                    top_str = "no valued assets"
+
+                log.info("[BALANCE] %s SUCCESS: total=%.2f, free=%.2f, top5=[%s]",
+                        source, total_usd, free_usd, top_str)
+
+                return BinanceBalanceResult(
+                    success=True,
+                    total_usd=float(total_usd),
+                    free_usd=float(free_usd),
+                    source=source,
+                    details=top_str
+                )
+
+            except ccxt.AuthenticationError as e:
+                last_err = f"AuthError ({env_name}/{acct}): {str(e)[:80]}"
+                log.warning("[BALANCE] %s", last_err)
+                continue
+            except ccxt.NetworkError as e:
+                last_err = f"NetworkError ({env_name}/{acct}): {str(e)[:80]}"
+                log.warning("[BALANCE] %s", last_err)
+                continue
+            except Exception as e:
+                last_err = f"{type(e).__name__} ({env_name}/{acct}): {str(e)[:80]}"
+                log.warning("[BALANCE] %s", last_err)
+                continue
+
+    # All attempts failed
+    log.error("[BALANCE] All attempts failed: %s", last_err)
+    return BinanceBalanceResult(
+        success=False,
+        error=last_err,
+        source="binance"
+    )
 
 
 async def _fetch_binance_balance_async() -> BinanceBalanceResult:
@@ -485,7 +777,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v1.4.0-real-binance-balance"
+    VERSION = "tgbot-v2.0.0-ssot-key-contract"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
@@ -693,29 +985,31 @@ class HopeMiniBot:
         h = _health()
         mode = _mode_from_health(h)
 
-        # Priority 1: Try REAL Binance API (LIVE mode or explicit request)
-        if mode == "LIVE" or os.getenv("HOPE_FORCE_BINANCE_BALANCE"):
-            result = await _fetch_binance_balance_async()
-            if result.success and result.total_usd is not None:
-                await self._reply(
-                    update,
-                    f"💰 Balance (Binance SPOT):\n"
-                    f"  Total: {result.total_usd:.2f} USD\n"
-                    f"  Free:  {result.free_usd:.2f} USD\n"
-                    f"Source: {result.source}\n"
-                    f"Mode={mode}",
-                )
-                return
-            else:
-                # Log error but continue to fallbacks
-                self.log.warning("Binance balance fetch failed: %s", result.error)
+        # Priority 1: ALWAYS try Binance API first (SSoT key contract)
+        result = await _fetch_binance_balance_async()
+        if result.success and result.total_usd is not None:
+            # Format response with full details
+            details_line = f"\n  Assets: {result.details}" if result.details else ""
+            await self._reply(
+                update,
+                f"💰 Balance (Binance):\n"
+                f"  Total: {result.total_usd:.2f} USD\n"
+                f"  Free:  {result.free_usd:.2f} USD{details_line}\n"
+                f"Source: {result.source}\n"
+                f"Mode={mode}",
+            )
+            return
 
-        # Priority 2: Health.json fields (engine reports this)
+        # Binance failed, log and continue to fallbacks
+        self.log.warning("Binance balance fetch failed: %s", result.error)
+        binance_error = result.error
+
+        # Priority 2: Health.json fields (engine reports this) - but skip if zero
         eq = _parse_float(h.get("equity_usd"))
-        bal = h.get("balance_usd", None)
-        bal_f = _parse_float(bal)
+        bal_f = _parse_float(h.get("balance_usd"))
 
-        if eq is not None or bal_f is not None:
+        # Only use health if we have meaningful non-zero values
+        if (eq is not None and eq > 0) or (bal_f is not None and bal_f > 0):
             parts = []
             if eq is not None:
                 parts.append(f"equity_usd={eq:.2f}")
@@ -729,7 +1023,7 @@ class HopeMiniBot:
 
         # Priority 3: DRY mode paper equity from env var
         paper = self._paper_equity_usd()
-        if mode == "DRY" and paper is not None:
+        if paper is not None and paper > 0:
             await self._reply(
                 update,
                 f"💰 Balance (DRY paper): equity_usd={paper:.2f}\n"
@@ -755,36 +1049,12 @@ class HopeMiniBot:
                             + f"\nFile={p.name}\nMode={mode}",
                         )
                         return
-                    await self._reply(
-                        update,
-                        f"💰 Balance snapshot найден ({p.name}), но поля не распознаны.\nMode={mode}",
-                    )
-                    return
-                await self._reply(
-                    update,
-                    f"💰 Balance snapshot найден ({p.name}), но не удалось прочитать JSON.\nMode={mode}",
-                )
-                return
 
-        # Priority 5: Try Binance API as last resort (even in DRY mode)
-        result = await _fetch_binance_balance_async()
-        if result.success and result.total_usd is not None:
-            await self._reply(
-                update,
-                f"💰 Balance (Binance SPOT fallback):\n"
-                f"  Total: {result.total_usd:.2f} USD\n"
-                f"  Free:  {result.free_usd:.2f} USD\n"
-                f"Source: {result.source}\n"
-                f"Mode={mode}",
-            )
-            return
-
-        # All sources failed
-        error_info = result.error if result else "unknown"
+        # All sources failed - show Binance error
         await self._reply(
             update,
-            f"💰 /balance: все источники недоступны.\n"
-            f"Binance API: {error_info}\n"
+            f"💰 /balance: Binance API недоступен.\n"
+            f"Error: {binance_error}\n"
             f"Mode={mode}",
         )
 
