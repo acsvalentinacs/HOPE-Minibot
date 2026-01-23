@@ -1,6 +1,17 @@
 # -*- coding: utf-8 -*-
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-23 22:00:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-24 10:00:00 UTC
+# === END SIGNATURE ===
 r"""
-HOPEminiBOT — tg_bot_simple (v1.3.0 — PID-truth + Stack UI)
+HOPEminiBOT — tg_bot_simple (v1.4.0 — Real Binance Balance)
+
+Changes in v1.4.0:
+- /balance now fetches REAL Binance SPOT balance via ccxt
+- Async wrapper for sync ccxt calls
+- Fallback chain: Binance API -> health.json -> env var -> snapshot file
 
 Changes in v1.3.0:
 - /stack command with direct launcher v2 integration
@@ -42,6 +53,13 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
+
+# ccxt for real Binance balance (optional - graceful fallback if missing)
+try:
+    import ccxt
+    CCXT_AVAILABLE = True
+except ImportError:
+    CCXT_AVAILABLE = False
 
 THIS_FILE = Path(__file__).resolve()
 if THIS_FILE.parent.name.lower() == "minibot":
@@ -302,6 +320,117 @@ def _parse_float(x) -> Optional[float]:
         return None
 
 
+# --- Binance SPOT balance fetch (async wrapper) ---
+@dataclass
+class BinanceBalanceResult:
+    """Result of Binance balance fetch."""
+    success: bool
+    total_usd: Optional[float] = None
+    free_usd: Optional[float] = None
+    error: Optional[str] = None
+    source: str = "binance_api"
+
+
+def _fetch_binance_balance_sync() -> BinanceBalanceResult:
+    """
+    Sync Binance SPOT balance fetch via ccxt.
+    Supports both mainnet and testnet (sandbox mode).
+    Returns BinanceBalanceResult with success/error info.
+    """
+    if not CCXT_AVAILABLE:
+        return BinanceBalanceResult(
+            success=False,
+            error="ccxt not installed",
+            source="none"
+        )
+
+    api_key = os.getenv("BINANCE_API_KEY") or os.getenv("API_KEY") or ""
+    api_secret = os.getenv("BINANCE_API_SECRET") or os.getenv("API_SECRET") or ""
+
+    if not api_key or not api_secret:
+        return BinanceBalanceResult(
+            success=False,
+            error="BINANCE_API_KEY/SECRET not set",
+            source="none"
+        )
+
+    # Check if testnet mode (HOPE_BINANCE_TESTNET=1 or try both)
+    use_testnet = os.getenv("HOPE_BINANCE_TESTNET", "").strip() in ("1", "true", "yes")
+
+    def _try_fetch(sandbox: bool) -> BinanceBalanceResult:
+        try:
+            exchange = ccxt.binance({
+                "apiKey": api_key,
+                "secret": api_secret,
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            })
+
+            if sandbox:
+                exchange.set_sandbox_mode(True)
+
+            bal = exchange.fetch_balance()
+
+            # Get USDT balance as USD proxy
+            usdt = bal.get("USDT") or {}
+            total = float(usdt.get("total") or 0.0)
+            free = float(usdt.get("free") or 0.0)
+
+            # Also check BUSD as backup
+            busd = bal.get("BUSD") or {}
+            total += float(busd.get("total") or 0.0)
+            free += float(busd.get("free") or 0.0)
+
+            source = "binance_testnet_spot" if sandbox else "binance_spot_api"
+            return BinanceBalanceResult(
+                success=True,
+                total_usd=total,
+                free_usd=free,
+                source=source
+            )
+
+        except ccxt.AuthenticationError as e:
+            return BinanceBalanceResult(
+                success=False,
+                error=f"AuthError: {str(e)[:100]}",
+                source="binance_api"
+            )
+        except ccxt.NetworkError as e:
+            return BinanceBalanceResult(
+                success=False,
+                error=f"NetworkError: {str(e)[:100]}",
+                source="binance_api"
+            )
+        except Exception as e:
+            return BinanceBalanceResult(
+                success=False,
+                error=f"{type(e).__name__}: {str(e)[:100]}",
+                source="binance_api"
+            )
+
+    # If testnet explicitly set, use it
+    if use_testnet:
+        return _try_fetch(sandbox=True)
+
+    # Otherwise try mainnet first, fallback to testnet
+    result = _try_fetch(sandbox=False)
+    if result.success:
+        return result
+
+    # Mainnet failed, try testnet
+    testnet_result = _try_fetch(sandbox=True)
+    if testnet_result.success:
+        return testnet_result
+
+    # Both failed, return mainnet error
+    return result
+
+
+async def _fetch_binance_balance_async() -> BinanceBalanceResult:
+    """Async wrapper for sync Binance balance fetch."""
+    return await asyncio.to_thread(_fetch_binance_balance_sync)
+
+
 # --- PID-truth helpers (read state/pids/*.pid files) ---
 def _read_pid_file(role: str) -> Optional[int]:
     """Read PID from state/pids/{role}.pid, return None if missing/invalid."""
@@ -356,7 +485,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v1.3.0-pidtruth+stack"
+    VERSION = "tgbot-v1.4.0-real-binance-balance"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
@@ -561,46 +690,55 @@ class HopeMiniBot:
         if not await self._guard_admin(update):
             return
 
-        # Fallback to DRY-paper or health (Binance SPOT disabled due to invalid API keys)
         h = _health()
         mode = _mode_from_health(h)
 
+        # Priority 1: Try REAL Binance API (LIVE mode or explicit request)
+        if mode == "LIVE" or os.getenv("HOPE_FORCE_BINANCE_BALANCE"):
+            result = await _fetch_binance_balance_async()
+            if result.success and result.total_usd is not None:
+                await self._reply(
+                    update,
+                    f"💰 Balance (Binance SPOT):\n"
+                    f"  Total: {result.total_usd:.2f} USD\n"
+                    f"  Free:  {result.free_usd:.2f} USD\n"
+                    f"Source: {result.source}\n"
+                    f"Mode={mode}",
+                )
+                return
+            else:
+                # Log error but continue to fallbacks
+                self.log.warning("Binance balance fetch failed: %s", result.error)
+
+        # Priority 2: Health.json fields (engine reports this)
         eq = _parse_float(h.get("equity_usd"))
         bal = h.get("balance_usd", None)
         bal_f = _parse_float(bal)
 
-        paper = self._paper_equity_usd()
-
-        suspicious = (
-            (mode == "DRY") and ((eq is None) or (eq == 0.0)) and (paper is not None)
-        )
-
-        if suspicious:
-            await self._reply(
-                update,
-                f"💰 Balance (DRY paper): equity_usd={paper}\n"
-                f"Источник: HOPE_DRY_EQUITY_USD\n"
-                f"(health equity_usd={eq} | balance_usd={bal})\n"
-                f"Mode={mode}",
-            )
-            return
-
-        if eq is not None or bal is not None:
+        if eq is not None or bal_f is not None:
             parts = []
             if eq is not None:
-                parts.append(f"equity_usd={eq}")
-            else:
-                parts.append(f"equity_usd={h.get('equity_usd')}")
+                parts.append(f"equity_usd={eq:.2f}")
             if bal_f is not None:
-                parts.append(f"balance_usd={bal_f}")
-            else:
-                parts.append(f"balance_usd={bal}")
+                parts.append(f"balance_usd={bal_f:.2f}")
             await self._reply(
                 update,
                 "💰 Balance (from health): " + " | ".join(parts) + f"\nMode={mode}",
             )
             return
 
+        # Priority 3: DRY mode paper equity from env var
+        paper = self._paper_equity_usd()
+        if mode == "DRY" and paper is not None:
+            await self._reply(
+                update,
+                f"💰 Balance (DRY paper): equity_usd={paper:.2f}\n"
+                f"Источник: HOPE_DRY_EQUITY_USD\n"
+                f"Mode={mode}",
+            )
+            return
+
+        # Priority 4: Snapshot files
         for p in BALANCE_CANDIDATES:
             if p.exists():
                 j = _safe_json_load(p)
@@ -628,9 +766,25 @@ class HopeMiniBot:
                 )
                 return
 
+        # Priority 5: Try Binance API as last resort (even in DRY mode)
+        result = await _fetch_binance_balance_async()
+        if result.success and result.total_usd is not None:
+            await self._reply(
+                update,
+                f"💰 Balance (Binance SPOT fallback):\n"
+                f"  Total: {result.total_usd:.2f} USD\n"
+                f"  Free:  {result.free_usd:.2f} USD\n"
+                f"Source: {result.source}\n"
+                f"Mode={mode}",
+            )
+            return
+
+        # All sources failed
+        error_info = result.error if result else "unknown"
         await self._reply(
             update,
-            "💰 /balance: сейчас недоступно (нет полей в health и нет снапшота).\n"
+            f"💰 /balance: все источники недоступны.\n"
+            f"Binance API: {error_info}\n"
             f"Mode={mode}",
         )
 
