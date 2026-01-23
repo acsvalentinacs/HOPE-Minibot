@@ -1,0 +1,36 @@
+{
+  "_comment": "HOPE Policy SSoT - HOPE-LAW-001 / HOPE-RULE-001",
+  "policy_version": 1,
+  "forbidden_phrases": [
+    "(?i)\\bесли\\s+хоч(ешь|ите)\\b",
+    "(?i)\\bесли\\s+ты\\s+реально\\s+хоч(ешь|ите)\\b",
+    "(?i)\\bследующим\\s+шагом\\b",
+    "(?i)\\bскажи\\s+одно\\s+слово\\b",
+    "(?i)\\bмогу\\s+сделать\\s+это\\s+потом\\b",
+    "(?i)\\bможно\\s+было\\s+бы\\b"
+  ],
+  "secret_patterns": [
+    "TELEGRAM_BOT_TOKEN\\s*=\\s*['\"]?[0-9]+:[A-Za-z0-9_-]{30,}",
+    "OPENAI_API_KEY\\s*=\\s*['\"]?sk-[A-Za-z0-9]{20,}",
+    "ANTHROPIC_API_KEY\\s*=\\s*['\"]?sk-ant-[A-Za-z0-9-]{20,}",
+    "FRIEND_BRIDGE_TOKEN\\s*=\\s*['\"]?[A-Za-z0-9_-]{16,}",
+    "Authorization\\s*:\\s*Bearer\\s+[A-Za-z0-9._-]{20,}",
+    "X-API-KEY\\s*:\\s*[A-Za-z0-9._-]{16,}",
+    "\\bsk-[A-Za-z0-9]{20,}\\b",
+    "\\bsk-ant-[A-Za-z0-9-]{20,}\\b",
+    "-----BEGIN\\s+(RSA\\s+|EC\\s+|OPENSSH\\s+)?PRIVATE\\s+KEY-----",
+    "\\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\\b"
+  ],
+  "enforce_channels": {
+    "stdout": true,
+    "stderr": true,
+    "logging": true
+  },
+  "allowlist": {
+    "default": "AllowList.txt",
+    "core": "AllowList.core.txt",
+    "spider": "AllowList.spider.txt",
+    "dev": "AllowList.dev.txt"
+  },
+  "policy_sha256": "sha256:b2ba4e8426775c204096a3e8e8fde6a45accd94e2979befa7733597640ad91d2"
+}

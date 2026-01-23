@@ -1,0 +1,26 @@
+﻿{
+  "BTCUSDT": {
+    "mode": "both",          // both | only_long | only_short | off
+    "risk_per_trade": 0.01,  // 1% депозита на сделку
+    "stop_loss_atr": 2.0,
+    "take_profit_atr": 6.0,  // под трейлинг, можем потом уменьшить
+    "max_daily_loss_r": 3.0, // стоп по -3R в день
+    "max_trades_per_day": 15
+  },
+  "ETHUSDT": {
+    "mode": "only_short",
+    "risk_per_trade": 0.01,
+    "stop_loss_atr": 2.0,
+    "take_profit_atr": 6.0,
+    "max_daily_loss_r": 3.0,
+    "max_trades_per_day": 15
+  },
+  "SOLUSDT": {
+    "mode": "only_long",
+    "risk_per_trade": 0.01,
+    "stop_loss_atr": 2.0,
+    "take_profit_atr": 6.0,
+    "max_daily_loss_r": 3.0,
+    "max_trades_per_day": 15
+  }
+}

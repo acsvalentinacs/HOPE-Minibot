@@ -1,0 +1,33 @@
+#!/bin/sh
+# HOPE pre-commit hook: block deletions in protected paths (fail-closed)
+# Any deletion in core/scripts/tools/state/data = REJECT commit
+set -e
+
+deleted=$(git diff --cached --name-status --diff-filter=D 2>/dev/null | awk '{print $2}')
+[ -z "$deleted" ] && exit 0
+
+is_protected() {
+    case "$1" in
+        core/*|scripts/*|tools/*|state/*|data/*|CLAUDE.md) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+blocked=""
+for path in $deleted; do
+    p=$(printf '%s' "$path" | tr '\\' '/')
+    if is_protected "$p"; then
+        blocked="$blocked
+  - $p"
+    fi
+done
+
+if [ -n "$blocked" ]; then
+    echo "FAIL-CLOSED: deletion blocked by HOPE policy." >&2
+    echo "$blocked" >&2
+    echo "" >&2
+    echo "To delete protected files, adjust hook policy (review-required change)." >&2
+    exit 1
+fi
+
+exit 0

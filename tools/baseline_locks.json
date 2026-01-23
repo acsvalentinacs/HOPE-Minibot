@@ -1,0 +1,23 @@
+{
+  "_ai_meta": {
+    "created_by": "Claude (opus-4)",
+    "created_at": "2026-01-23T15:00:00Z",
+    "modified_by": "Claude (opus-4)",
+    "modified_at": "2026-01-23T15:00:00Z"
+  },
+  "version": 1,
+  "locks": [
+    {
+      "path": "AllowList.txt",
+      "mode": "whole-file",
+      "baseline_sha256": "sha256:50f361943de1345554d8e52f9a18d99c1a423b0f1d6d7048076943458944a991",
+      "locked_at_utc": "2026-01-23T15:00:00Z",
+      "locked_by": "Claude (opus-4)",
+      "verification": [
+        "python tools/audit_allowlist.py --root . --file AllowList.txt",
+        "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tools\\hope_gate.ps1 -Mode Release -AllowOffline"
+      ],
+      "rationale": "AllowList accepted (16 hosts, no wildcards); freeze to prevent regressions"
+    }
+  ]
+}

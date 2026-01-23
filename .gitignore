@@ -85,12 +85,22 @@ coverage.xml
 dmypy.json
 
 # === STATE FILES (may contain runtime secrets) ===
-state/*.flag
-state/STOP.flag
-state/STOP.json
-state/cache/
-state/*.txt
-state/*.jsonl
+state/
+
+# === REPORTS / STAGING (generated) ===
+reports/
+staging/
+
+# === WINDOWS SPECIAL FILES ===
+nul
+NUL
+
+# === BACKUP FILES ===
+*.bak_*
+*.bak
+*.bak-*
+run_live_*.bak*
+*. bak_*
 
 # === IPC (runtime only, never commit) ===
 ipc/
@@ -107,3 +117,13 @@ Thumbs.db
 *.tar.gz
 *.rar
 *.7z
+
+# === CLAUDE TEMPORARY ===
+tmpclaude-*
+
+# === BROKEN BACKUP FILES ===
+*.BROKEN_*
+
+# === AI CHAT LOGS (not project code) ===
+ИИ Claude говорит*/
+Чат GPT*/

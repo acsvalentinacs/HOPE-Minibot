@@ -1,0 +1,26 @@
+# AI Signature Scope - SSoT for files that MUST have AI signatures
+# Paths relative to HOPE root (minibot/)
+# Only files in this list are checked in fail-closed mode
+# Legacy files outside this list are allowed without signatures
+
+# Core infrastructure (Senior Architect modules)
+core/cmdline_ssot.py
+core/atomic_io.py
+core/contracts.py
+core/jsonl_sha.py
+core/chat_shell.py
+core/market_scanner.py
+core/telegram_publisher.py
+
+# Tools (gate and audit)
+tools/hope_gate.ps1
+tools/install_git_hooks.ps1
+tools/audit_ai_signature.py
+tools/audit_allowlist.py
+tools/audit_execution_protocol.py
+tools/audit_cmdline_ssot.py
+tools/jsonl_stress.py
+tools/jsonl_verify.py
+
+# Scripts
+scripts/morning_scan.py

@@ -1,12 +1,21 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-23 11:30:00 UTC
+# === END SIGNATURE ===
 """
-HOPE/NORE Market Intelligence Module v1.0
+HOPE/NORE Market Intelligence Module v1.1
 
 Aggregates market data from multiple sources:
-- CoinGecko API (market caps, prices, volumes)
+- CoinGecko API (market caps, prices, volumes, global data)
 - Binance API (order books, 24h stats)
 - RSS news feeds (sentiment signals)
 
-Fail-closed: API errors logged, not ignored. Stale data = STOP signal.
+Fail-closed design:
+- All external data MUST be persisted via snapshot_store before use
+- Stale/invalid snapshots = skip cycle, log reason
+- Signals MUST reference snapshot_id for audit trail
 
 Usage:
     from core.market_intel import MarketIntel
@@ -29,7 +38,12 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 import xml.etree.ElementTree as ET
 
+from core.snapshot_store import SnapshotStore, SnapshotMeta, DomainNotAllowedError
+
 logger = logging.getLogger(__name__)
+
+# Base directory for project
+BASE_DIR = Path(r"C:\Users\kirillDev\Desktop\TradingBot\minibot")
 
 # Cache settings
 CACHE_DIR = Path(r'C:\Users\kirillDev\Desktop\TradingBot\minibot\state\cache')
@@ -38,6 +52,7 @@ NEWS_CACHE_TTL_SECONDS = 900  # 15 minutes for news
 
 # API endpoints
 COINGECKO_MARKETS = "https://api.coingecko.com/api/v3/coins/markets"
+COINGECKO_GLOBAL = "https://api.coingecko.com/api/v3/global"
 BINANCE_TICKER_24H = "https://api.binance.com/api/v3/ticker/24hr"
 BINANCE_EXCHANGE_INFO = "https://api.binance.com/api/v3/exchangeInfo"
 
@@ -86,6 +101,17 @@ class NewsItem:
 
 
 @dataclass
+class GlobalMarketData:
+    """CoinGecko global market data."""
+    total_market_cap_usd: float
+    total_volume_24h_usd: float
+    btc_dominance: float
+    eth_dominance: float
+    market_cap_change_24h_pct: float
+    timestamp: float
+
+
+@dataclass
 class MarketSnapshot:
     """Aggregated market snapshot."""
     timestamp: float
@@ -94,6 +120,7 @@ class MarketSnapshot:
     btc_dominance: float
     total_market_cap: float
     fear_greed_index: int  # 0-100
+    global_data: Optional[GlobalMarketData] = None
     is_stale: bool = False
 
 
@@ -115,14 +142,18 @@ class MarketIntel:
     Market intelligence aggregator.
 
     Fail-closed design:
+    - All external data persisted via SnapshotStore with sha256 id
     - API timeout = cached data + stale flag
     - Parse error = skip source + log
     - No data = STOP signal to engine
+    - Signals MUST reference snapshot_id for audit trail
     """
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    def __init__(self, cache_dir: Optional[Path] = None, base_dir: Optional[Path] = None):
         self.cache_dir = cache_dir or CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._base_dir = base_dir or BASE_DIR
+        self._snapshot_store = SnapshotStore(self._base_dir)
         self._last_snapshot: Optional[MarketSnapshot] = None
         self._request_timeout = 10  # seconds
 
@@ -142,23 +173,33 @@ class MarketIntel:
             if cached and time.time() - cached.get("ts", 0) < CACHE_TTL_SECONDS:
                 return self._deserialize_snapshot(cached)
 
-        # Fetch fresh data
+        # Fetch fresh data with snapshot persistence
         tickers = self._fetch_binance_tickers()
         news = self._fetch_news()
+        global_data, global_snapshot_id = self._fetch_global_data()
 
-        # Calculate aggregates
-        btc_ticker = tickers.get("BTCUSDT")
-        total_volume = sum(t.volume_24h for t in tickers.values())
+        # Use CoinGecko data if available, else estimate from Binance
+        if global_data:
+            btc_dom = global_data.btc_dominance
+            total_mcap = global_data.total_market_cap_usd
+        else:
+            btc_dom = self._estimate_btc_dominance(tickers)
+            total_mcap = self._estimate_market_cap(tickers)
 
         snapshot = MarketSnapshot(
             timestamp=time.time(),
             tickers=tickers,
             news=news,
-            btc_dominance=self._estimate_btc_dominance(tickers),
-            total_market_cap=self._estimate_market_cap(tickers),
+            btc_dominance=btc_dom,
+            total_market_cap=total_mcap,
             fear_greed_index=self._calculate_fear_greed(tickers, news),
+            global_data=global_data,
             is_stale=len(tickers) == 0,
         )
+
+        # Log snapshot_id for audit trail
+        if global_snapshot_id:
+            logger.info("Market snapshot using global_data from: %s", global_snapshot_id[:24])
 
         # Cache result
         self._save_cache("snapshot", self._serialize_snapshot(snapshot))
@@ -193,6 +234,77 @@ class MarketIntel:
         signals.sort(key=lambda s: s.strength, reverse=True)
 
         return signals
+
+    def _fetch_global_data(self) -> Tuple[Optional[GlobalMarketData], Optional[str]]:
+        """
+        Fetch global market data from CoinGecko with snapshot persistence.
+
+        Returns:
+            Tuple of (GlobalMarketData or None, snapshot_id or None)
+        """
+        source_url = COINGECKO_GLOBAL
+        raw_bytes = b""
+        http_status = 0
+        parse_ok = False
+        error_msg = ""
+
+        try:
+            req = Request(source_url, headers={"User-Agent": "HOPE-Bot/1.0"})
+            with urlopen(req, timeout=self._request_timeout) as resp:
+                http_status = resp.status
+                raw_bytes = resp.read()
+        except (URLError, HTTPError) as e:
+            error_msg = str(e)
+            http_status = getattr(e, "code", 0) or 0
+            logger.warning("Failed to fetch CoinGecko global: %s", e)
+
+        # Always persist snapshot (even on failure) for audit
+        parsed_data: Optional[Dict[str, Any]] = None
+        global_data: Optional[GlobalMarketData] = None
+
+        if raw_bytes and http_status == 200:
+            try:
+                parsed_data = json.loads(raw_bytes.decode("utf-8"))
+                parse_ok = True
+
+                data = parsed_data.get("data", {})
+                market_cap = data.get("total_market_cap", {})
+                volume = data.get("total_volume", {})
+
+                global_data = GlobalMarketData(
+                    total_market_cap_usd=market_cap.get("usd", 0.0),
+                    total_volume_24h_usd=volume.get("usd", 0.0),
+                    btc_dominance=data.get("market_cap_percentage", {}).get("btc", 0.0),
+                    eth_dominance=data.get("market_cap_percentage", {}).get("eth", 0.0),
+                    market_cap_change_24h_pct=data.get("market_cap_change_percentage_24h_usd", 0.0),
+                    timestamp=time.time(),
+                )
+            except (json.JSONDecodeError, KeyError) as e:
+                error_msg = f"Parse error: {e}"
+                parse_ok = False
+
+        # Persist to snapshot store
+        try:
+            meta, _ = self._snapshot_store.persist(
+                source="coingecko_global",
+                source_url=source_url,
+                raw=raw_bytes or b"{}",
+                ttl_sec=CACHE_TTL_SECONDS,
+                http_status=http_status or 0,
+                parse_ok=parse_ok,
+                error=error_msg,
+                parsed=parsed_data,
+            )
+            snapshot_id = meta.snapshot_id
+            logger.debug("Persisted CoinGecko global snapshot: %s", snapshot_id[:24])
+        except DomainNotAllowedError as e:
+            logger.error("Domain not allowed for CoinGecko: %s", e)
+            return None, None
+
+        if not parse_ok:
+            return None, snapshot_id
+
+        return global_data, snapshot_id
 
     def _fetch_binance_tickers(self) -> Dict[str, MarketTicker]:
         """Fetch 24h tickers from Binance."""
@@ -533,6 +645,14 @@ class MarketIntel:
             "btc_dominance": snapshot.btc_dominance,
             "total_market_cap": snapshot.total_market_cap,
             "fear_greed_index": snapshot.fear_greed_index,
+            "global_data": {
+                "total_market_cap_usd": snapshot.global_data.total_market_cap_usd,
+                "total_volume_24h_usd": snapshot.global_data.total_volume_24h_usd,
+                "btc_dominance": snapshot.global_data.btc_dominance,
+                "eth_dominance": snapshot.global_data.eth_dominance,
+                "market_cap_change_24h_pct": snapshot.global_data.market_cap_change_24h_pct,
+                "timestamp": snapshot.global_data.timestamp,
+            } if snapshot.global_data else None,
             "is_stale": snapshot.is_stale,
         }
 
@@ -552,6 +672,14 @@ class MarketIntel:
             except (TypeError, KeyError):
                 pass
 
+        global_data = None
+        gd = data.get("global_data")
+        if gd:
+            try:
+                global_data = GlobalMarketData(**gd)
+            except (TypeError, KeyError):
+                pass
+
         return MarketSnapshot(
             timestamp=data.get("ts", 0),
             tickers=tickers,
@@ -559,6 +687,7 @@ class MarketIntel:
             btc_dominance=data.get("btc_dominance", 0),
             total_market_cap=data.get("total_market_cap", 0),
             fear_greed_index=data.get("fear_greed_index", 50),
+            global_data=global_data,
             is_stale=data.get("is_stale", True),
         )
 
@@ -595,3 +724,4 @@ if __name__ == "__main__":
     for sig in signals[:10]:
         print(f"[{sig.signal_type}] {sig.symbol} {sig.direction.upper()} (strength: {sig.strength:.2f})")
         print(f"  Reason: {sig.reason}")
+

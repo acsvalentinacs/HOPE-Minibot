@@ -1,16 +1,30 @@
-﻿import os
+# === AI SIGNATURE ===
+# Created by: Claude
+# Created at: 2026-01-20 12:30:00 UTC
+# Modified by: Claude
+# Modified at: 2026-01-20 12:30:00 UTC
+# === END SIGNATURE ===
+"""
+Config module for HOPE minibot.
+
+Uses core.secrets for secret loading (Defense in Depth).
+Legacy _maybe_load_dotenv kept for backward compatibility but deprecated.
+"""
+import os
 from typing import Any, Dict, Optional
 
+
 def _maybe_load_dotenv(env_file: Optional[str] = None) -> None:
-    try:
-        from dotenv import load_dotenv, find_dotenv
-        if env_file and os.path.exists(env_file):
-            load_dotenv(env_file, override=False)
-        else:
-            load_dotenv(find_dotenv(), override=False)
-    except Exception:
-        # Без python-dotenv — просто пропустим
-        pass
+    """
+    DEPRECATED: Use core.secrets.get_secret() instead.
+
+    This function is kept for backward compatibility only.
+    New code should use:
+        from core.secrets import get_secret, require_secret
+    """
+    # No-op: secrets are now loaded via core.secrets module
+    # which handles keyring, env vars, and .env file with proper priority
+    pass
 
 def load_yaml(path: str = "risk_config.yaml") -> Dict[str, Any]:
     try:

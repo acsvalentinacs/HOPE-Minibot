@@ -1,3 +1,9 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-23 11:30:00 UTC
+# === END SIGNATURE ===
 """
 Inter-AI Communication Protocol v2.1
 
@@ -88,6 +94,9 @@ MAX_EXPRESSION_LENGTH = 64
 ACK_TIMEOUT_SEC = 15.0
 RESEND_MIN_INTERVAL_SEC = 5.0
 MAX_RESENDS_PER_CYCLE = 10
+
+# Friend Chat ACK tracking file (separate from IPC cursor to avoid race conditions)
+FRIEND_CHAT_ACKS_FILE = BASE_DIR / "state" / "friend_chat" / "acked_messages.json"
 
 # =============================================================================
 # LOGGING - UTF-8 file logger with duplicate handler guard
@@ -427,6 +436,37 @@ class IPCAgent:
         except Exception as e:
             logger.warning("Cursor load failed: %s", e)
 
+    def _sync_friend_chat_acks(self) -> int:
+        """
+        Sync ACKs from Friend Chat tracking file.
+
+        Friend Chat sends ACKs via HTTP API which are recorded in acked_messages.json.
+        This function clears corresponding entries from pending_acks.
+
+        Returns number of entries cleared.
+        """
+        if not FRIEND_CHAT_ACKS_FILE.exists():
+            return 0
+
+        try:
+            data = json.loads(FRIEND_CHAT_ACKS_FILE.read_text(encoding="utf-8"))
+            acked_ids = set(data.get("acked_messages", {}).keys())
+        except (json.JSONDecodeError, OSError):
+            return 0
+
+        cleared = 0
+        for msg_id in list(self._pending_acks.keys()):
+            if msg_id in acked_ids:
+                del self._pending_acks[msg_id]
+                self._last_resend_attempt.pop(msg_id, None)
+                cleared += 1
+                logger.info("Friend Chat ACK cleared: %s", msg_id[:24])
+
+        if cleared:
+            self._save_cursor()
+
+        return cleared
+
     def _save_cursor(self) -> None:
         """Save processed message IDs and pending acks."""
         self._cursor_file.parent.mkdir(parents=True, exist_ok=True)
@@ -748,6 +788,7 @@ class IPCAgent:
     def process_cycle(self) -> Dict[str, Any]:
         """
         One deterministic cycle:
+        0) Sync Friend Chat ACKs from acked_messages.json
         1) Sync external -> internal (ingest from Russian folders)
         2) Process internal inbox
         3) Sync internal -> external (mirror outbox to Russian folders)
@@ -755,6 +796,9 @@ class IPCAgent:
         """
         ext_to_int = 0
         int_to_ext = 0
+
+        # 0) Sync Friend Chat ACKs (clears pending_acks for messages ACKed via HTTP API)
+        friend_chat_cleared = self._sync_friend_chat_acks()
 
         # 1) External -> internal ingest
         if self._role == Sender.CLAUDE:
@@ -841,6 +885,7 @@ class IPCAgent:
         resent = self._resend_unacked(time.time())
 
         return {
+            "friend_chat_cleared": friend_chat_cleared,
             "ext_to_int": ext_to_int,
             "processed": len(results),
             "int_to_ext": int_to_ext,
@@ -1127,7 +1172,7 @@ def main() -> None:
     try:
         while True:
             cycle = agent.process_cycle()
-            if cycle["processed"] > 0 or cycle["resent"] > 0:
+            if cycle["processed"] > 0 or cycle["resent"] > 0 or cycle.get("friend_chat_cleared", 0) > 0:
                 logger.info("Cycle: %s", {k: v for k, v in cycle.items() if k != "results"})
             time.sleep(poll_sec)
     except KeyboardInterrupt:
@@ -1136,3 +1181,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

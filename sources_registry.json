@@ -1,0 +1,1817 @@
+{
+  "_ai_meta": {
+    "created_by": "Claude",
+    "created_at": "2026-01-23T15:45:00Z",
+    "schema_version": "1.0"
+  },
+  "_schema": {
+    "host": "hostname only, lowercase, no scheme/path",
+    "category": "exchange_api|exchange_status|market_data|news|regulators|security|onchain|macro|infra|chain_official|defi|stablecoin|wallet|analytics",
+    "trust_tier": "T0 (official/regulators) | T1 (providers/explorers) | T2 (media)",
+    "use_case": "core|spider|dev",
+    "why": "1-line justification",
+    "enabled": true
+  },
+  "sources": [
+    {
+      "host": "bridge.acsvalentinacs.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "core",
+      "why": "Friend Bridge IPC - critical for Claude/GPT communication",
+      "enabled": true
+    },
+    {
+      "host": "api.binance.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "core",
+      "why": "Binance REST API - trading/market data",
+      "enabled": true
+    },
+    {
+      "host": "data.binance.vision",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "core",
+      "why": "Binance historical data downloads",
+      "enabled": true
+    },
+    {
+      "host": "testnet.binance.vision",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "core",
+      "why": "Binance testnet API",
+      "enabled": true
+    },
+    {
+      "host": "developers.binance.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Binance API documentation",
+      "enabled": true
+    },
+    {
+      "host": "www.binance.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Binance main site - announcements",
+      "enabled": true
+    },
+    {
+      "host": "binance.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Binance main site (non-www redirect)",
+      "enabled": true
+    },
+    {
+      "host": "status.binance.com",
+      "category": "exchange_status",
+      "trust_tier": "T0",
+      "use_case": "core",
+      "why": "Binance status page - incident monitoring",
+      "enabled": true
+    },
+    {
+      "host": "academy.binance.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Binance Academy - educational content",
+      "enabled": true
+    },
+    {
+      "host": "research.binance.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Binance Research - reports",
+      "enabled": true
+    },
+    {
+      "host": "api.coingecko.com",
+      "category": "market_data",
+      "trust_tier": "T0",
+      "use_case": "core",
+      "why": "CoinGecko API - market data aggregator",
+      "enabled": true
+    },
+    {
+      "host": "www.coingecko.com",
+      "category": "market_data",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CoinGecko web (redirects)",
+      "enabled": true
+    },
+    {
+      "host": "coingecko.com",
+      "category": "market_data",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CoinGecko web (non-www)",
+      "enabled": true
+    },
+    {
+      "host": "pro-api.coinmarketcap.com",
+      "category": "market_data",
+      "trust_tier": "T0",
+      "use_case": "core",
+      "why": "CoinMarketCap Pro API",
+      "enabled": true
+    },
+    {
+      "host": "coinmarketcap.com",
+      "category": "market_data",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CoinMarketCap web",
+      "enabled": true
+    },
+    {
+      "host": "www.coinmarketcap.com",
+      "category": "market_data",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CoinMarketCap web (www)",
+      "enabled": true
+    },
+    {
+      "host": "min-api.cryptocompare.com",
+      "category": "market_data",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "CryptoCompare API",
+      "enabled": true
+    },
+    {
+      "host": "www.cryptocompare.com",
+      "category": "market_data",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "CryptoCompare web",
+      "enabled": true
+    },
+    {
+      "host": "api.coinpaprika.com",
+      "category": "market_data",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Coinpaprika API",
+      "enabled": true
+    },
+    {
+      "host": "coinpaprika.com",
+      "category": "market_data",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Coinpaprika web",
+      "enabled": true
+    },
+    {
+      "host": "api.messari.io",
+      "category": "market_data",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Messari API - research/data",
+      "enabled": true
+    },
+    {
+      "host": "messari.io",
+      "category": "market_data",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Messari web",
+      "enabled": true
+    },
+    {
+      "host": "www.coinbase.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Coinbase - major exchange",
+      "enabled": true
+    },
+    {
+      "host": "api.coinbase.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Coinbase API",
+      "enabled": true
+    },
+    {
+      "host": "status.coinbase.com",
+      "category": "exchange_status",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Coinbase status page",
+      "enabled": true
+    },
+    {
+      "host": "www.kraken.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Kraken exchange",
+      "enabled": true
+    },
+    {
+      "host": "api.kraken.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Kraken API",
+      "enabled": true
+    },
+    {
+      "host": "status.kraken.com",
+      "category": "exchange_status",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Kraken status page",
+      "enabled": true
+    },
+    {
+      "host": "www.okx.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "OKX exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.bybit.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bybit exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.bitfinex.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bitfinex exchange",
+      "enabled": true
+    },
+    {
+      "host": "api.bitfinex.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bitfinex API",
+      "enabled": true
+    },
+    {
+      "host": "status.bitfinex.com",
+      "category": "exchange_status",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bitfinex status",
+      "enabled": true
+    },
+    {
+      "host": "www.bitstamp.net",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bitstamp exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.gemini.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Gemini exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.kucoin.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "KuCoin exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.gate.io",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Gate.io exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.mexc.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "MEXC exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.crypto.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Crypto.com exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.htx.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "HTX (ex-Huobi) exchange",
+      "enabled": true
+    },
+    {
+      "host": "www.deribit.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Deribit derivatives",
+      "enabled": true
+    },
+    {
+      "host": "www.bithumb.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bithumb Korea",
+      "enabled": true
+    },
+    {
+      "host": "www.upbit.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Upbit Korea",
+      "enabled": true
+    },
+    {
+      "host": "www.bitget.com",
+      "category": "exchange_api",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bitget exchange",
+      "enabled": true
+    },
+    {
+      "host": "api.etherscan.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Etherscan API - Ethereum explorer",
+      "enabled": true
+    },
+    {
+      "host": "etherscan.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Etherscan web",
+      "enabled": true
+    },
+    {
+      "host": "bscscan.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "BscScan - BSC explorer",
+      "enabled": true
+    },
+    {
+      "host": "api.bscscan.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "BscScan API",
+      "enabled": true
+    },
+    {
+      "host": "polygonscan.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Polygonscan - Polygon explorer",
+      "enabled": true
+    },
+    {
+      "host": "api.polygonscan.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Polygonscan API",
+      "enabled": true
+    },
+    {
+      "host": "arbiscan.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Arbiscan - Arbitrum explorer",
+      "enabled": true
+    },
+    {
+      "host": "api.arbiscan.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Arbiscan API",
+      "enabled": true
+    },
+    {
+      "host": "optimistic.etherscan.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Optimism explorer",
+      "enabled": true
+    },
+    {
+      "host": "basescan.org",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Base explorer",
+      "enabled": true
+    },
+    {
+      "host": "snowtrace.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Avalanche explorer",
+      "enabled": true
+    },
+    {
+      "host": "api.snowtrace.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Avalanche explorer API",
+      "enabled": true
+    },
+    {
+      "host": "ftmscan.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Fantom explorer",
+      "enabled": true
+    },
+    {
+      "host": "tronscan.org",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Tron explorer",
+      "enabled": true
+    },
+    {
+      "host": "solscan.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Solana explorer",
+      "enabled": true
+    },
+    {
+      "host": "public-api.solscan.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Solscan API",
+      "enabled": true
+    },
+    {
+      "host": "explorer.ton.org",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "TON explorer",
+      "enabled": true
+    },
+    {
+      "host": "tonapi.io",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "TON API",
+      "enabled": true
+    },
+    {
+      "host": "blockchair.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Multi-chain explorer",
+      "enabled": true
+    },
+    {
+      "host": "api.blockchair.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Blockchair API",
+      "enabled": true
+    },
+    {
+      "host": "blockstream.info",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Bitcoin explorer (Blockstream)",
+      "enabled": true
+    },
+    {
+      "host": "mempool.space",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Bitcoin mempool explorer",
+      "enabled": true
+    },
+    {
+      "host": "blockchain.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Blockchain.com explorer",
+      "enabled": true
+    },
+    {
+      "host": "www.blockchain.com",
+      "category": "onchain",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Blockchain.com web",
+      "enabled": true
+    },
+    {
+      "host": "ethereum.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Ethereum Foundation official",
+      "enabled": true
+    },
+    {
+      "host": "blog.ethereum.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Ethereum official blog",
+      "enabled": true
+    },
+    {
+      "host": "bitcoin.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bitcoin official site",
+      "enabled": true
+    },
+    {
+      "host": "bitcoincore.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bitcoin Core development",
+      "enabled": true
+    },
+    {
+      "host": "solana.com",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Solana Foundation",
+      "enabled": true
+    },
+    {
+      "host": "docs.solana.com",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Solana documentation",
+      "enabled": true
+    },
+    {
+      "host": "polygon.technology",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Polygon official",
+      "enabled": true
+    },
+    {
+      "host": "arbitrum.io",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Arbitrum official",
+      "enabled": true
+    },
+    {
+      "host": "optimism.io",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Optimism official",
+      "enabled": true
+    },
+    {
+      "host": "base.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Base (Coinbase L2) official",
+      "enabled": true
+    },
+    {
+      "host": "avax.network",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Avalanche official",
+      "enabled": true
+    },
+    {
+      "host": "cosmos.network",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Cosmos Hub official",
+      "enabled": true
+    },
+    {
+      "host": "polkadot.network",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Polkadot official",
+      "enabled": true
+    },
+    {
+      "host": "near.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "NEAR Protocol official",
+      "enabled": true
+    },
+    {
+      "host": "cardano.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Cardano Foundation",
+      "enabled": true
+    },
+    {
+      "host": "iohk.io",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "IOHK (Cardano developer)",
+      "enabled": true
+    },
+    {
+      "host": "ripple.com",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Ripple official",
+      "enabled": true
+    },
+    {
+      "host": "stellar.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Stellar Foundation",
+      "enabled": true
+    },
+    {
+      "host": "algorand.com",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Algorand official",
+      "enabled": true
+    },
+    {
+      "host": "tezos.com",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Tezos official",
+      "enabled": true
+    },
+    {
+      "host": "tron.network",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Tron official",
+      "enabled": true
+    },
+    {
+      "host": "aptosfoundation.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Aptos Foundation",
+      "enabled": true
+    },
+    {
+      "host": "aptos.dev",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Aptos documentation",
+      "enabled": true
+    },
+    {
+      "host": "sui.io",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Sui official",
+      "enabled": true
+    },
+    {
+      "host": "ton.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "TON official",
+      "enabled": true
+    },
+    {
+      "host": "bnbchain.org",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "BNB Chain official",
+      "enabled": true
+    },
+    {
+      "host": "zksync.io",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "zkSync official",
+      "enabled": true
+    },
+    {
+      "host": "scroll.io",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Scroll official",
+      "enabled": true
+    },
+    {
+      "host": "starknet.io",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "StarkNet official",
+      "enabled": true
+    },
+    {
+      "host": "linea.build",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Linea (ConsenSys L2)",
+      "enabled": true
+    },
+    {
+      "host": "chain.link",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Chainlink official",
+      "enabled": true
+    },
+    {
+      "host": "wormhole.com",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Wormhole bridge",
+      "enabled": true
+    },
+    {
+      "host": "layerzero.network",
+      "category": "chain_official",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "LayerZero official",
+      "enabled": true
+    },
+    {
+      "host": "tether.to",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Tether official",
+      "enabled": true
+    },
+    {
+      "host": "www.tether.to",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Tether official (www)",
+      "enabled": true
+    },
+    {
+      "host": "circle.com",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Circle (USDC) official",
+      "enabled": true
+    },
+    {
+      "host": "www.circle.com",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Circle official (www)",
+      "enabled": true
+    },
+    {
+      "host": "paxos.com",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Paxos (USDP/BUSD) official",
+      "enabled": true
+    },
+    {
+      "host": "makerdao.com",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "MakerDAO (DAI) official",
+      "enabled": true
+    },
+    {
+      "host": "sky.money",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Sky (MakerDAO rebrand)",
+      "enabled": true
+    },
+    {
+      "host": "frax.finance",
+      "category": "stablecoin",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Frax Finance official",
+      "enabled": true
+    },
+    {
+      "host": "uniswap.org",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Uniswap official",
+      "enabled": true
+    },
+    {
+      "host": "aave.com",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Aave official",
+      "enabled": true
+    },
+    {
+      "host": "compound.finance",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Compound official",
+      "enabled": true
+    },
+    {
+      "host": "curve.fi",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Curve Finance official",
+      "enabled": true
+    },
+    {
+      "host": "lido.fi",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Lido staking official",
+      "enabled": true
+    },
+    {
+      "host": "yearn.finance",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Yearn Finance official",
+      "enabled": true
+    },
+    {
+      "host": "1inch.io",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "1inch DEX aggregator",
+      "enabled": true
+    },
+    {
+      "host": "pancakeswap.finance",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "PancakeSwap official",
+      "enabled": true
+    },
+    {
+      "host": "dydx.exchange",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "dYdX exchange",
+      "enabled": true
+    },
+    {
+      "host": "dydx.trade",
+      "category": "defi",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "dYdX trading",
+      "enabled": true
+    },
+    {
+      "host": "defillama.com",
+      "category": "defi",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "DeFi Llama - TVL tracker",
+      "enabled": true
+    },
+    {
+      "host": "www.defillama.com",
+      "category": "defi",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "DeFi Llama web",
+      "enabled": true
+    },
+    {
+      "host": "glassnode.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Glassnode on-chain analytics",
+      "enabled": true
+    },
+    {
+      "host": "api.glassnode.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Glassnode API",
+      "enabled": true
+    },
+    {
+      "host": "cryptoquant.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "CryptoQuant analytics",
+      "enabled": true
+    },
+    {
+      "host": "santiment.net",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Santiment analytics",
+      "enabled": true
+    },
+    {
+      "host": "intotheblock.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "IntoTheBlock analytics",
+      "enabled": true
+    },
+    {
+      "host": "lunarcrush.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "LunarCrush social metrics",
+      "enabled": true
+    },
+    {
+      "host": "coinglass.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Coinglass derivatives data",
+      "enabled": true
+    },
+    {
+      "host": "www.coinglass.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Coinglass web",
+      "enabled": true
+    },
+    {
+      "host": "coinalyze.net",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Coinalyze futures data",
+      "enabled": true
+    },
+    {
+      "host": "whale-alert.io",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Whale Alert tracker",
+      "enabled": true
+    },
+    {
+      "host": "api.whale-alert.io",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Whale Alert API",
+      "enabled": true
+    },
+    {
+      "host": "coinmarketcal.com",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Crypto calendar events",
+      "enabled": true
+    },
+    {
+      "host": "token.unlocks.app",
+      "category": "analytics",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Token unlocks tracker",
+      "enabled": true
+    },
+    {
+      "host": "cve.mitre.org",
+      "category": "security",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CVE database",
+      "enabled": true
+    },
+    {
+      "host": "nvd.nist.gov",
+      "category": "security",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "NVD vulnerability database",
+      "enabled": true
+    },
+    {
+      "host": "www.nist.gov",
+      "category": "security",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "NIST official",
+      "enabled": true
+    },
+    {
+      "host": "cisa.gov",
+      "category": "security",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CISA cybersecurity",
+      "enabled": true
+    },
+    {
+      "host": "www.cisa.gov",
+      "category": "security",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CISA web",
+      "enabled": true
+    },
+    {
+      "host": "cert.org",
+      "category": "security",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "CERT coordination center",
+      "enabled": true
+    },
+    {
+      "host": "immunefi.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Immunefi bug bounty",
+      "enabled": true
+    },
+    {
+      "host": "rekt.news",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Rekt News - hack reports",
+      "enabled": true
+    },
+    {
+      "host": "certik.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "CertiK audits",
+      "enabled": true
+    },
+    {
+      "host": "slowmist.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "SlowMist security",
+      "enabled": true
+    },
+    {
+      "host": "peckshield.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "PeckShield security",
+      "enabled": true
+    },
+    {
+      "host": "trailofbits.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Trail of Bits audits",
+      "enabled": true
+    },
+    {
+      "host": "halborn.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Halborn security",
+      "enabled": true
+    },
+    {
+      "host": "chainalysis.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Chainalysis blockchain forensics",
+      "enabled": true
+    },
+    {
+      "host": "elliptic.co",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Elliptic compliance",
+      "enabled": true
+    },
+    {
+      "host": "hackerone.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "HackerOne bug bounty platform",
+      "enabled": true
+    },
+    {
+      "host": "bugcrowd.com",
+      "category": "security",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Bugcrowd bug bounty",
+      "enabled": true
+    },
+    {
+      "host": "sec.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "US SEC official",
+      "enabled": true
+    },
+    {
+      "host": "www.sec.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "US SEC web",
+      "enabled": true
+    },
+    {
+      "host": "cftc.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "US CFTC official",
+      "enabled": true
+    },
+    {
+      "host": "www.cftc.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "US CFTC web",
+      "enabled": true
+    },
+    {
+      "host": "fincen.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "FinCEN AML/KYC",
+      "enabled": true
+    },
+    {
+      "host": "www.fincen.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "FinCEN web",
+      "enabled": true
+    },
+    {
+      "host": "treasury.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "US Treasury",
+      "enabled": true
+    },
+    {
+      "host": "home.treasury.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "US Treasury home",
+      "enabled": true
+    },
+    {
+      "host": "ofac.treasury.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "OFAC sanctions",
+      "enabled": true
+    },
+    {
+      "host": "federalreserve.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Federal Reserve",
+      "enabled": true
+    },
+    {
+      "host": "www.federalreserve.gov",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Fed web",
+      "enabled": true
+    },
+    {
+      "host": "ecb.europa.eu",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "European Central Bank",
+      "enabled": true
+    },
+    {
+      "host": "www.ecb.europa.eu",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "ECB web",
+      "enabled": true
+    },
+    {
+      "host": "esma.europa.eu",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "ESMA European securities",
+      "enabled": true
+    },
+    {
+      "host": "www.esma.europa.eu",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "ESMA web",
+      "enabled": true
+    },
+    {
+      "host": "eba.europa.eu",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "EBA banking authority",
+      "enabled": true
+    },
+    {
+      "host": "www.eba.europa.eu",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "EBA web",
+      "enabled": true
+    },
+    {
+      "host": "fca.org.uk",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "UK FCA",
+      "enabled": true
+    },
+    {
+      "host": "www.fca.org.uk",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "UK FCA web",
+      "enabled": true
+    },
+    {
+      "host": "bankofengland.co.uk",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bank of England",
+      "enabled": true
+    },
+    {
+      "host": "bis.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "BIS international settlements",
+      "enabled": true
+    },
+    {
+      "host": "www.bis.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "BIS web",
+      "enabled": true
+    },
+    {
+      "host": "imf.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "IMF",
+      "enabled": true
+    },
+    {
+      "host": "www.imf.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "IMF web",
+      "enabled": true
+    },
+    {
+      "host": "worldbank.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "World Bank",
+      "enabled": true
+    },
+    {
+      "host": "www.worldbank.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "World Bank web",
+      "enabled": true
+    },
+    {
+      "host": "oecd.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "OECD",
+      "enabled": true
+    },
+    {
+      "host": "www.oecd.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "OECD web",
+      "enabled": true
+    },
+    {
+      "host": "fatf-gafi.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "FATF AML standards",
+      "enabled": true
+    },
+    {
+      "host": "www.fatf-gafi.org",
+      "category": "regulators",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "FATF web",
+      "enabled": true
+    },
+    {
+      "host": "fred.stlouisfed.org",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "FRED economic data",
+      "enabled": true
+    },
+    {
+      "host": "bea.gov",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "BEA economic analysis",
+      "enabled": true
+    },
+    {
+      "host": "www.bea.gov",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "BEA web",
+      "enabled": true
+    },
+    {
+      "host": "bls.gov",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Bureau of Labor Statistics",
+      "enabled": true
+    },
+    {
+      "host": "www.bls.gov",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "BLS web",
+      "enabled": true
+    },
+    {
+      "host": "eia.gov",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Energy Information Admin",
+      "enabled": true
+    },
+    {
+      "host": "www.eia.gov",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "EIA web",
+      "enabled": true
+    },
+    {
+      "host": "opec.org",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "OPEC oil data",
+      "enabled": true
+    },
+    {
+      "host": "www.opec.org",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "OPEC web",
+      "enabled": true
+    },
+    {
+      "host": "iea.org",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "IEA energy agency",
+      "enabled": true
+    },
+    {
+      "host": "www.iea.org",
+      "category": "macro",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "IEA web",
+      "enabled": true
+    },
+    {
+      "host": "www.coindesk.com",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "CoinDesk news",
+      "enabled": true
+    },
+    {
+      "host": "coindesk.com",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "CoinDesk (non-www)",
+      "enabled": true
+    },
+    {
+      "host": "cointelegraph.com",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "Cointelegraph news",
+      "enabled": true
+    },
+    {
+      "host": "www.cointelegraph.com",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "Cointelegraph (www)",
+      "enabled": true
+    },
+    {
+      "host": "decrypt.co",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "Decrypt news",
+      "enabled": true
+    },
+    {
+      "host": "www.decrypt.co",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "Decrypt (www)",
+      "enabled": true
+    },
+    {
+      "host": "www.theblock.co",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "The Block news",
+      "enabled": true
+    },
+    {
+      "host": "theblock.co",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "The Block (non-www)",
+      "enabled": true
+    },
+    {
+      "host": "bitcoinmagazine.com",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "Bitcoin Magazine",
+      "enabled": true
+    },
+    {
+      "host": "www.bitcoinmagazine.com",
+      "category": "news",
+      "trust_tier": "T2",
+      "use_case": "spider",
+      "why": "Bitcoin Magazine (www)",
+      "enabled": true
+    },
+    {
+      "host": "www.reuters.com",
+      "category": "news",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Reuters mainstream news",
+      "enabled": true
+    },
+    {
+      "host": "www.bloomberg.com",
+      "category": "news",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Bloomberg financial news",
+      "enabled": true
+    },
+    {
+      "host": "www.wsj.com",
+      "category": "news",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Wall Street Journal",
+      "enabled": true
+    },
+    {
+      "host": "www.ft.com",
+      "category": "news",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "Financial Times",
+      "enabled": true
+    },
+    {
+      "host": "www.cnbc.com",
+      "category": "news",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "CNBC financial news",
+      "enabled": true
+    },
+    {
+      "host": "www.economist.com",
+      "category": "news",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "The Economist",
+      "enabled": true
+    },
+    {
+      "host": "metamask.io",
+      "category": "wallet",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "MetaMask official",
+      "enabled": true
+    },
+    {
+      "host": "consensys.net",
+      "category": "wallet",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "ConsenSys (MetaMask parent)",
+      "enabled": true
+    },
+    {
+      "host": "ledger.com",
+      "category": "wallet",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Ledger hardware wallets",
+      "enabled": true
+    },
+    {
+      "host": "trezor.io",
+      "category": "wallet",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Trezor hardware wallets",
+      "enabled": true
+    },
+    {
+      "host": "walletconnect.com",
+      "category": "wallet",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "WalletConnect protocol",
+      "enabled": true
+    },
+    {
+      "host": "fireblocks.com",
+      "category": "wallet",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Fireblocks institutional custody",
+      "enabled": true
+    },
+    {
+      "host": "bitgo.com",
+      "category": "wallet",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "BitGo custody",
+      "enabled": true
+    },
+    {
+      "host": "status.openai.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "OpenAI status page",
+      "enabled": true
+    },
+    {
+      "host": "status.anthropic.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Anthropic status page",
+      "enabled": true
+    },
+    {
+      "host": "www.githubstatus.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "dev",
+      "why": "GitHub status page",
+      "enabled": true
+    },
+    {
+      "host": "www.cloudflarestatus.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "spider",
+      "why": "Cloudflare status",
+      "enabled": true
+    },
+    {
+      "host": "pypi.org",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "dev",
+      "why": "Python Package Index",
+      "enabled": true
+    },
+    {
+      "host": "files.pythonhosted.org",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "dev",
+      "why": "PyPI file hosting",
+      "enabled": true
+    },
+    {
+      "host": "github.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "dev",
+      "why": "GitHub main",
+      "enabled": true
+    },
+    {
+      "host": "api.github.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "dev",
+      "why": "GitHub API",
+      "enabled": true
+    },
+    {
+      "host": "raw.githubusercontent.com",
+      "category": "infra",
+      "trust_tier": "T0",
+      "use_case": "dev",
+      "why": "GitHub raw content",
+      "enabled": true
+    },
+    {
+      "host": "opensea.io",
+      "category": "defi",
+      "trust_tier": "T1",
+      "use_case": "spider",
+      "why": "OpenSea NFT marketplace",
+      "enabled": true
+    }
+  ]
+}

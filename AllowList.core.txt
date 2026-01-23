@@ -1,0 +1,14 @@
+# HTTP allowlist (HOSTS ONLY). Wildcards forbidden. Fail-closed.
+# Profile: CORE
+# Generated: 2026-01-23T21:18:00Z
+# Source: sources_registry.json + manual
+# Count: 8
+#
+api.binance.com
+api.openai.com
+api.coingecko.com
+bridge.acsvalentinacs.com
+data.binance.vision
+pro-api.coinmarketcap.com
+status.binance.com
+testnet.binance.vision

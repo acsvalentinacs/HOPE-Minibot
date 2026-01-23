@@ -1,8 +1,16 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-22 23:00:00 UTC
+# === END SIGNATURE ===
 """
 Morning Scan - Daily 10:00 AM routine.
 
 Scans market, publishes intel to Telegram channel.
 Designed to run via Task Scheduler.
+
+SSoT: Paths computed from __file__, not hardcoded.
 """
 from __future__ import annotations
 
@@ -14,10 +22,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Setup paths
-BASE_DIR = Path(r"C:\Users\kirillDev\Desktop\TradingBot\minibot")
+# SSoT: Compute paths from __file__ (not hardcoded)
+BASE_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = BASE_DIR / "state"
-SECRETS_DIR = Path(r"C:\secrets\hope")
+SECRETS_DIR = Path(os.environ.get("HOPE_SECRETS_DIR", r"C:\secrets\hope"))
 
 # Load .env
 def load_env():
@@ -46,9 +54,9 @@ logger = logging.getLogger("morning_scan")
 def run_scan() -> dict:
     """Run market intel scan."""
     sys.path.insert(0, str(BASE_DIR))
-    from core.ipc_tools import run_scan as ipc_scan
+    from core.market_scanner import run_scan as market_scan
 
-    return ipc_scan(trigger="morning_scan", top=5)
+    return market_scan(trigger="morning_scan", top=5)
 
 
 async def publish_to_channel() -> bool:
@@ -107,3 +115,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

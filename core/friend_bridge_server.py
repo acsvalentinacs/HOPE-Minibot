@@ -1,3 +1,9 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-23 11:30:00 UTC
+# === END SIGNATURE ===
 """
 Friend Bridge HTTP Server (Hardened).
 
@@ -11,7 +17,8 @@ Endpoints:
     GET  /ipc/status     - IPC system status
     GET  /last_sent      - Last sent message info (artifact-based proof)
     GET  /inbox/{agent}  - Poll inbox for agent (gpt or claude)
-                           Query params: after, limit, type
+                           Query params: after, limit, type, order
+                           order=desc returns newest first (default: asc)
 
 Auth:
     Header: X-HOPE-Token must match FRIEND_BRIDGE_TOKEN from env
@@ -61,7 +68,7 @@ logger = logging.getLogger("friend_bridge")
 # Configuration
 DEFAULT_PORT = 8765
 BIND_HOST = "127.0.0.1"  # Localhost only, no external access
-VERSION = "1.4.0"  # Added structured /send (type + payload) for E2E-2 contract cycle
+VERSION = "1.6.0"  # Standardized on structured protocol; legacy mode deprecated
 MAX_INBOX_LIMIT = 200
 
 
@@ -125,6 +132,7 @@ def _list_inbox_messages(
     after: str = "",
     msg_type: str = "",
     limit: int = 50,
+    order: str = "asc",
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     List IPC messages from source_dir without modifying or deleting them.
@@ -141,6 +149,7 @@ def _list_inbox_messages(
         after: Cursor in format "{timestamp}_{filename}" or legacy "{filename}"
         msg_type: Filter by message type (response, ack, chat)
         limit: Max messages to return
+        order: Sort order - "asc" (oldest first) or "desc" (newest first)
 
     Returns:
         Tuple of (messages list, next_after cursor)
@@ -172,15 +181,25 @@ def _list_inbox_messages(
         file_data.append((float(msg_ts), f.name, f, d))
 
     # Sort by (timestamp, filename) - MONOTONIC ordering
-    file_data.sort(key=lambda x: (x[0], x[1]))
+    # order=desc: newest first, order=asc: oldest first (default)
+    reverse = order.lower() == "desc"
+    file_data.sort(key=lambda x: (x[0], x[1]), reverse=reverse)
 
     out: List[Dict[str, Any]] = []
     next_after = after
 
     for msg_ts, fname, f, d in file_data:
-        # Skip if <= cursor (timestamp first, then filename as tie-break)
-        if (msg_ts, fname) <= (cursor_ts, cursor_fname):
-            continue
+        # Skip based on cursor:
+        # - For ASC: skip if (ts, fname) <= cursor (already seen older)
+        # - For DESC: skip if (ts, fname) >= cursor (already seen newer)
+        if reverse:
+            # DESC order: skip messages newer than or equal to cursor
+            if cursor_ts > 0 and (msg_ts, fname) >= (cursor_ts, cursor_fname):
+                continue
+        else:
+            # ASC order: skip messages older than or equal to cursor
+            if (msg_ts, fname) <= (cursor_ts, cursor_fname):
+                continue
 
         # Filter by message type if requested
         if msg_type and d.get("type") != msg_type:
@@ -335,9 +354,15 @@ class FriendBridgeHandler(BaseHTTPRequestHandler):
             after = (query.get("after", [""])[0] or "").strip()
             limit = _safe_int(query.get("limit", ["50"])[0], 50)
             msg_type = (query.get("type", [""])[0] or "").strip().lower()
+            order = (query.get("order", ["asc"])[0] or "asc").strip().lower()
+
+            # Validate order
+            if order not in {"asc", "desc"}:
+                self._send_json({"ok": False, "error": "order must be 'asc' or 'desc'"}, status=400)
+                return
 
             # Validate type filter
-            if msg_type and msg_type not in {"response", "ack", "chat"}:
+            if msg_type and msg_type not in {"response", "ack", "chat", "task", "task_request", "result"}:
                 self._send_json({"ok": False, "error": "Invalid type filter"}, status=400)
                 return
 
@@ -360,11 +385,13 @@ class FriendBridgeHandler(BaseHTTPRequestHandler):
                 after=after,
                 msg_type=msg_type,
                 limit=limit,
+                order=order,
             )
             self._send_json({
                 "ok": True,
                 "agent": agent,
                 "source_dir": str(source_dir),
+                "order": order,
                 "count": len(messages),
                 "after": after,
                 "next_after": next_after,
@@ -434,7 +461,9 @@ class FriendBridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(result.to_dict(), status=status_code)
 
             elif message:
-                # === LEGACY MODE (simple chat) ===
+                # === LEGACY MODE (DEPRECATED - use structured mode) ===
+                # Kept for backward compatibility only.
+                # New clients MUST use type="task" + payload={task_type:"chat", message:"..."}
                 context = data.get("context", "friend_chat")
 
                 if len(message) > MAX_MESSAGE_LEN:
@@ -444,7 +473,17 @@ class FriendBridgeHandler(BaseHTTPRequestHandler):
                     )
                     return
 
-                result = send_chat_tracked(to, message, context)
+                # Use structured mode when reply_to is present (supports correlation)
+                if reply_to:
+                    chat_payload = {
+                        "task_type": "chat",
+                        "message": message,
+                        "context": context,
+                    }
+                    result = send_structured_tracked(to, "task", chat_payload, reply_to)
+                else:
+                    result = send_chat_tracked(to, message, context)
+
                 status_code = 200 if result.ok else 400
                 self._send_json(result.to_dict(), status=status_code)
 
@@ -538,3 +577,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

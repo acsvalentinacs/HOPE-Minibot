@@ -1,5 +1,11 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-23 11:30:00 UTC
+# === END SIGNATURE ===
 """
 core.risk_sandbox
 Небольшой стенд для ручного теста RiskManager.can_open().
@@ -10,7 +16,7 @@ core.risk_sandbox
 
 или:
 
-    python .\minibot\core\risk_sandbox.py
+    python ./minibot/core/risk_sandbox.py
 """
 
 from __future__ import annotations
@@ -155,3 +161,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

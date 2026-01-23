@@ -1,3 +1,9 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-23 11:30:00 UTC
+# === END SIGNATURE ===
 """
 Chat Dispatch Module - Single source of truth for IPC chat messaging.
 
@@ -26,6 +32,13 @@ _IPC_DIR = _MINIBOT_DIR / "ipc"
 # IPC directories
 CLAUDE_INBOX = _IPC_DIR / "claude_inbox"
 GPT_INBOX = _IPC_DIR / "gpt_inbox"
+
+# State directory for cursor files
+_STATE_DIR = _MINIBOT_DIR / "state"
+IPC_CURSOR_GPT = _STATE_DIR / "ipc_cursor_gpt-5.2.json"
+IPC_CURSOR_CLAUDE = _STATE_DIR / "ipc_cursor_claude.json"
+# Friend Chat ACK tracking (separate from IPC agent to avoid race conditions)
+FRIEND_CHAT_ACKS_FILE = _STATE_DIR / "friend_chat" / "acked_messages.json"
 
 
 class Recipient(str, Enum):
@@ -101,6 +114,87 @@ def _atomic_write(path: Path, content: str) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+def _clear_pending_ack(cursor_file: Path, acked_message_id: str) -> bool:
+    """
+    Remove message from pending_acks in IPC cursor file.
+
+    Called when ACK message is sent to immediately clear resend tracking.
+    This ensures resend loops stop even if IPC agent is not running.
+
+    NOTE: Due to race conditions with IPC agent, also records ACK in
+    separate friend_chat acked_messages.json for verification.
+
+    Args:
+        cursor_file: Path to IPC cursor JSON file
+        acked_message_id: The message ID being acknowledged (reply_to value)
+
+    Returns:
+        True if successfully cleared or not present, False on error
+    """
+    if not acked_message_id or not acked_message_id.startswith("sha256:"):
+        return False
+
+    # Record ACK in Friend Chat tracking file (race-condition safe)
+    _record_friend_chat_ack(acked_message_id)
+
+    if not cursor_file.exists():
+        return True
+
+    try:
+        data = json.loads(cursor_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    pending = data.get("pending_acks", {})
+    resend = data.get("last_resend_attempt", {})
+
+    if acked_message_id not in pending:
+        return True
+
+    del pending[acked_message_id]
+    resend.pop(acked_message_id, None)
+    data["pending_acks"] = pending
+    data["last_resend_attempt"] = resend
+    data["last_update"] = time.time()
+
+    try:
+        _atomic_write(cursor_file, json.dumps(data, indent=2, ensure_ascii=False))
+        return True
+    except OSError:
+        return False
+
+
+def _record_friend_chat_ack(acked_message_id: str) -> None:
+    """
+    Record ACK in Friend Chat tracking file.
+
+    This is separate from IPC cursor to avoid race conditions with IPC agent.
+    The check_friend_chat_ack tool uses this file as source of truth.
+    """
+    FRIEND_CHAT_ACKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if FRIEND_CHAT_ACKS_FILE.exists():
+            data = json.loads(FRIEND_CHAT_ACKS_FILE.read_text(encoding="utf-8"))
+        else:
+            data = {"acked_messages": {}}
+    except (json.JSONDecodeError, OSError):
+        data = {"acked_messages": {}}
+
+    data["acked_messages"][acked_message_id] = time.time()
+    data["last_update"] = time.time()
+
+    # Keep only last 1000 ACKs
+    if len(data["acked_messages"]) > 1000:
+        sorted_acks = sorted(data["acked_messages"].items(), key=lambda x: x[1])
+        data["acked_messages"] = dict(sorted_acks[-1000:])
+
+    try:
+        _atomic_write(FRIEND_CHAT_ACKS_FILE, json.dumps(data, indent=2, ensure_ascii=False))
+    except OSError:
+        pass  # Best effort, verification will handle
 
 
 def _json_canonical(obj: object) -> str:
@@ -375,6 +469,17 @@ def send_structured(
     content = json.dumps(msg_data, ensure_ascii=False, sort_keys=True, indent=2)
     _atomic_write(filepath, content)
 
+    # If this is an ACK message, immediately clear from pending_acks
+    # This ensures resend loops stop even if IPC agent is not actively processing
+    if msg_type == MessageType.ACK.value and reply_to:
+        # Determine which cursor file to update based on recipient
+        # ACK to GPT → clear from GPT's pending_acks (messages GPT sent)
+        # ACK to Claude → clear from Claude's pending_acks
+        if to_lower == Recipient.GPT.value:
+            _clear_pending_ack(IPC_CURSOR_GPT, reply_to)
+        else:
+            _clear_pending_ack(IPC_CURSOR_CLAUDE, reply_to)
+
     return SendResult(
         ok=True,
         ipc_id=msg_id,
@@ -400,3 +505,4 @@ def send_structured_tracked(
     if result.ok:
         _last_sent = result
     return result
+

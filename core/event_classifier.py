@@ -1,3 +1,9 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-23 11:30:00 UTC
+# === END SIGNATURE ===
 """
 HOPE/NORE Event Classifier v1.0
 
@@ -105,7 +111,9 @@ EVENT_PATTERNS: Dict[str, List[Tuple[str, float]]] = {
         (r"\bgeopolitic(?:al|s)?\b", 0.55),
         (r"\bwar\b", 0.7),
         (r"\bsanction(?:ed|s|ing)?\b", 0.65),
-        (r"\btariff\b", 0.5),
+        (r"\btariff\b", 0.7),
+        (r"\btrade\s+war\b", 0.75),
+        (r"\bmarket\s+clos(?:ed|ure)\b", 0.5),
     ],
     "institutional": [
         (r"\bETF\b(?!\s+reject)", 0.7),
@@ -125,6 +133,7 @@ EVENT_PATTERNS: Dict[str, List[Tuple[str, float]]] = {
         (r"\bwhale\b", 0.4),
     ],
     "market": [
+        (r"\$\d+\s*(?:m|b)illion.*\bliquidat", 0.85),  # $XXX million liquidated
         (r"\bliquidat(?:ion|ed|es|ing)\b", 0.6),
         (r"\b(?:long|short)\s+squeeze\b", 0.7),
         (r"\bshort\s+interest\b", 0.5),
@@ -404,3 +413,4 @@ if __name__ == "__main__":
         print(f"   Assets: {event.affected_assets}")
         print(f"   Keywords: {event.keywords_matched}")
         print()
+

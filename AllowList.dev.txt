@@ -1,0 +1,12 @@
+# HTTP allowlist (HOSTS ONLY). Wildcards forbidden. Fail-closed.
+# Profile: DEV
+# Generated: 2026-01-23T12:52:57Z
+# Source: sources_registry.json
+# Count: 6
+#
+api.github.com
+files.pythonhosted.org
+github.com
+pypi.org
+raw.githubusercontent.com
+www.githubstatus.com

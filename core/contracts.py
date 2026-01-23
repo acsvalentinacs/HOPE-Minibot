@@ -1,3 +1,9 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-22 19:20:00 UTC
+# === END SIGNATURE ===
 """
 Contract validation primitives with fail-closed semantics.
 
@@ -151,3 +157,4 @@ def make_envelope(
         "payload": payload,
     }
     return env
+

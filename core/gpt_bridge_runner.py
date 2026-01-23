@@ -1,3 +1,9 @@
+﻿# === AI SIGNATURE ===
+# Created by: Kirill Dev
+# Created at: 2026-01-19 18:24:32 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-23 17:10:00 UTC
+# === END SIGNATURE ===
 """
 GPT Bridge Runner - Autonomous GPT ↔ Claude communication daemon.
 
@@ -21,6 +27,9 @@ Usage:
 """
 from __future__ import annotations
 
+# HOPE-LAW-001: Policy bootstrap (output + network guards)
+# NOTE: bootstrap() called in main() before any network activity
+
 import json
 import logging
 import os
@@ -33,19 +42,25 @@ from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from core.secrets import require_secret, redact
+from core.audit import emit_startup_audit
+from core.policy.bootstrap import bootstrap
+
 _THIS_FILE = Path(__file__).resolve()
 _CORE_DIR = _THIS_FILE.parent
 _MINIBOT_DIR = _CORE_DIR.parent
 _STATE_DIR = _MINIBOT_DIR / "state"
 
-logger = logging.getLogger("gpt_bridge_runner")
+# Logger initialized in main() after bootstrap
+logger: logging.Logger | None = None
 
-VERSION = "1.2.0"  # Added E2E-2 contract protocol (task_request → task → result)
+VERSION = "1.3.0"  # Added ACK processing to clear pending_acks in IPC cursor
 DEFAULT_POLL_INTERVAL = 30
 DEFAULT_MODEL = "gpt-4o"
 BRIDGE_BASE_URL = "http://127.0.0.1:8765"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 CURSOR_FILE = _STATE_DIR / "gpt_runner_cursor.txt"
+IPC_CURSOR_FILE = _STATE_DIR / "ipc_cursor_gpt-5.2.json"
 MAX_MESSAGE_LEN = 4000
 
 
@@ -80,6 +95,55 @@ def _load_cursor() -> str:
 def _save_cursor(cursor: str) -> None:
     """Atomically save cursor."""
     _atomic_write(CURSOR_FILE, cursor)
+
+
+def _clear_pending_ack(acked_message_id: str) -> bool:
+    """
+    Remove message from pending_acks in IPC cursor file.
+
+    This is needed because gpt_bridge_runner operates separately from IPCAgent,
+    but both share the same cursor file for tracking ACKs.
+
+    Args:
+        acked_message_id: The message ID being acknowledged (reply_to value)
+
+    Returns:
+        True if successfully cleared, False otherwise
+    """
+    if not acked_message_id or not acked_message_id.startswith("sha256:"):
+        logger.warning("Invalid acked_message_id: %s", acked_message_id[:30] if acked_message_id else "None")
+        return False
+
+    if not IPC_CURSOR_FILE.exists():
+        logger.debug("IPC cursor file not found, nothing to clear")
+        return True
+
+    try:
+        data = json.loads(IPC_CURSOR_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("Failed to read IPC cursor: %s", e)
+        return False
+
+    pending = data.get("pending_acks", {})
+    resend = data.get("last_resend_attempt", {})
+
+    if acked_message_id not in pending:
+        logger.debug("Message %s not in pending_acks", acked_message_id[:24])
+        return True
+
+    del pending[acked_message_id]
+    resend.pop(acked_message_id, None)
+    data["pending_acks"] = pending
+    data["last_resend_attempt"] = resend
+    data["last_update"] = time.time()
+
+    try:
+        _atomic_write(IPC_CURSOR_FILE, json.dumps(data, indent=2, ensure_ascii=False))
+        logger.info("Cleared pending_ack: %s", acked_message_id[:24])
+        return True
+    except OSError as e:
+        logger.error("Failed to write IPC cursor: %s", e)
+        return False
 
 
 def _http_request(
@@ -309,6 +373,17 @@ def process_message(config: Config, msg: Dict[str, Any]) -> bool:
         logger.info("[DRY-RUN] Would call OpenAI and send response")
         return True
 
+    # === Handle ACK: Clear from pending_acks ===
+    if msg_type == "ack":
+        reply_to = msg.get("reply_to", "")
+        if reply_to:
+            cleared = _clear_pending_ack(reply_to)
+            logger.info("ACK received for %s, cleared=%s", reply_to[:24], cleared)
+            return cleared
+        else:
+            logger.warning("ACK message %s missing reply_to", msg_id[:24])
+            return False
+
     # === Handle task_request: Generate structured task ===
     if msg_type == "task_request":
         response = call_openai(config, user_text, context, is_task_request=True)
@@ -456,7 +531,7 @@ def load_config_from_env() -> Config:
     """
     Load configuration from environment variables.
 
-    Required:
+    Required (loaded from secure storage):
         OPENAI_API_KEY
         FRIEND_BRIDGE_TOKEN
 
@@ -465,16 +540,12 @@ def load_config_from_env() -> Config:
         POLL_INTERVAL_SEC (default: 30)
         MAX_RETRIES (default: 3)
     """
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    bridge_token = os.environ.get("FRIEND_BRIDGE_TOKEN", "")
+    # FAIL-CLOSED: require_secret raises if not found
+    api_key = require_secret("OPENAI_API_KEY")
+    bridge_token = require_secret("FRIEND_BRIDGE_TOKEN")
 
-    if not api_key:
-        logger.error("FAIL-CLOSED: OPENAI_API_KEY not set")
-        sys.exit(1)
-
-    if not bridge_token:
-        logger.error("FAIL-CLOSED: FRIEND_BRIDGE_TOKEN not set")
-        sys.exit(1)
+    logger.info(f"OpenAI API key: {redact(api_key)}")
+    logger.info(f"Bridge token: {redact(bridge_token)}")
 
     return Config(
         openai_api_key=api_key,
@@ -487,12 +558,17 @@ def load_config_from_env() -> Config:
 
 def main() -> int:
     """CLI entrypoint."""
+    # HOPE-LAW-001: Policy bootstrap MUST be first (before logging/network)
+    bootstrap("gpt_bridge", network_profile="core")
+
     import argparse
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    global logger
+    logger = logging.getLogger("gpt_bridge_runner")
 
     parser = argparse.ArgumentParser(description="GPT Bridge Runner")
     parser.add_argument(
@@ -519,9 +595,20 @@ def main() -> int:
     config = load_config_from_env()
     config.dry_run = args.dry_run
 
+    # Emit startup audit (records git commit, python version, config hash)
+    emit_startup_audit(
+        "gpt_bridge",
+        config_public={
+            "poll_interval": config.poll_interval,
+            "model": config.model,
+            "dry_run": config.dry_run,
+        },
+    )
+
     run_daemon(config, once=args.once)
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
