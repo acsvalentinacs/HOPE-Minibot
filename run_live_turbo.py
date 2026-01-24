@@ -108,7 +108,7 @@ except ImportError:  # прямой запуск без пакета
 
 def load_env() -> Dict[str, str]:
     """
-    Читаем env, при наличии C:\secrets\hope\.env — подгружаем, НО не меняем его.
+    Читаем env, при наличии C:/secrets/hope/.env — подгружаем, НО не меняем его.
     """
     if load_dotenv is not None and ENV_PATH.exists():
         load_dotenv(ENV_PATH)

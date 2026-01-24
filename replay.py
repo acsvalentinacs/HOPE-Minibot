@@ -16,7 +16,7 @@ minibot.replay — v3.4-backtest
 Запуск:
     python -m minibot.replay --reset
 или:
-    python .\minibot\replay.py --reset
+    python minibot/replay.py --reset
 """
 
 from __future__ import annotations

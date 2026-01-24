@@ -8,7 +8,7 @@ HOPE Trading Bot - Telegram Notifier
 из live-логики (minibot, live_manager, watchdog и т.п.).
 
 Особенности:
-- НЕ трогает C:\secrets\hope\.env, только читает переменные окружения.
+- НЕ трогает C:/secrets/hope/.env, только читает переменные окружения.
 - По умолчанию использует TELEGRAM_TOKEN_MINI / TELEGRAM_TOKEN
   и TELEGRAM_ALLOWED / TELEGRAM_ALERT_CHAT_IDS.
 - Минимальные зависимости: только requests.
