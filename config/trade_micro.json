@@ -1,0 +1,23 @@
+{
+  "_ai_meta": {
+    "created_by": "Claude (opus-4)",
+    "created_at": "2026-01-25T22:55:00Z",
+    "purpose": "Micro Trade v0.1 configuration"
+  },
+  "schema_version": "trade_micro_v1",
+  "description": "Default configuration for $10 USDT spot trades",
+
+  "symbol": "BTCUSDT",
+  "quote_amount": 10.0,
+  "tp_percent": 0.5,
+  "timeout_minutes": 30,
+
+  "mode": "DRY",
+
+  "notes": {
+    "quote_amount": "Amount in quote asset (USDT) to spend on buy",
+    "tp_percent": "Take-profit target as percentage above entry (0.5 = 0.5%)",
+    "timeout_minutes": "Minutes to wait before canceling TP and market selling",
+    "mode": "DRY (simulated), TESTNET (test funds), MAINNET (REAL MONEY)"
+  }
+}

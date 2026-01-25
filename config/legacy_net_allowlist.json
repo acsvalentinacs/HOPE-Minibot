@@ -193,9 +193,9 @@
     },
     {
       "path": "tools/smoke_network_guard.py",
-      "reason": "Network guard smoke test uses socket for testing",
-      "deadline": "never",
-      "owner": "system"
+      "reason": "Network guard smoke test uses socket for testing - MIGRATE to tests/",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
     }
   ]
 }

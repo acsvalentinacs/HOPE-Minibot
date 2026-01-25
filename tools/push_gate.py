@@ -2,14 +2,20 @@
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T18:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at (UTC): 2026-01-25T21:00:00Z
-# Purpose: Push Gate v2.1 - unified release verification with MAINNET eligibility
+# Modified at (UTC): 2026-01-25T22:40:00Z
+# Purpose: Push Gate v2.2 - unified release verification with strict MAINNET eligibility
 # === END SIGNATURE ===
 """
-Push Gate v2.1 - Unified Release Verification.
+Push Gate v2.2 - Unified Release Verification.
 
 Runs ALL required gates in fixed order before allowing push.
 ANY gate failure = FAIL (no exceptions, no "optional").
+
+v2.2 Changes:
+- ADDED: legacy_allowlist_guard (validates "never" policy)
+- ADDED: manifest_sha256 in release_gate.json (chain-of-custody)
+- FIXED: --skip-testnet now sets eligible_for_mainnet=false (mathematically strict)
+- FIXED: Eligibility formula is AND of ALL requirements
 
 Gate Order (fixed, mandatory):
 1. commit_gate       - Manifest and policy validation
@@ -17,20 +23,23 @@ Gate Order (fixed, mandatory):
 3. verify_tree       - Deterministic tree manifest
 4. allowlist_guard   - AllowList format validation
 5. network_guard     - No direct network outside core/net/** (AST)
-6. secrets_guard     - No hardcoded secrets
-7. live_smoke_gate   - Trading smoke test (DRY)
-8. evidence_guard    - Health file schema validation
-9. testnet_gate      - TESTNET API verification
-10. git push --dry-run
+6. secrets_guard     - No hardcoded secrets (v2.2 JSON-aware)
+7. legacy_allowlist_guard - Legacy network allowlist policy
+8. live_smoke_gate   - Trading smoke test (DRY)
+9. evidence_guard    - Health file schema validation
+10. testnet_gate     - TESTNET API verification
+11. git push --dry-run
 
 Output: state/health/release_gate.json
 
-Schema: release_gate_v1
+Schema: release_gate_v2
 - schema_version: str
 - cmdline_sha256: str
 - git_head: str
 - ts_utc: str
+- manifest_sha256: str (from tree_manifest.json - chain-of-custody)
 - eligible_for_mainnet: bool
+- eligibility_reasons: [str] (why not eligible)
 - gates[]: {name, passed, details}
 
 Usage:
@@ -84,6 +93,24 @@ def get_git_head() -> Optional[str]:
     return None
 
 
+def get_manifest_sha256() -> Optional[str]:
+    """
+    Get SHA256 from tree_manifest.json for chain-of-custody.
+
+    Returns:
+        SHA256 of manifest file content, or None if not available
+    """
+    manifest_path = PROJECT_ROOT / "state" / "health" / "tree_manifest.json"
+    if not manifest_path.exists():
+        return None
+
+    try:
+        content = manifest_path.read_bytes()
+        return hashlib.sha256(content).hexdigest()
+    except OSError:
+        return None
+
+
 def run_command(cmd: List[str], description: str) -> Tuple[bool, str]:
     """Run command and return (success, output)."""
     try:
@@ -127,26 +154,43 @@ def atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
         raise
 
 
-def check_legacy_allowlist_empty() -> bool:
-    """Check if legacy network allowlist is empty (required for MAINNET)."""
+def check_legacy_allowlist_empty() -> Tuple[bool, int]:
+    """
+    Check if legacy network allowlist has no non-infra "never" entries.
+
+    Returns:
+        (is_empty, count_of_active_entries)
+    """
     allowlist_path = PROJECT_ROOT / "config" / "legacy_net_allowlist.json"
     if not allowlist_path.exists():
-        return True  # No file = no legacy entries
+        return True, 0  # No file = no legacy entries
 
     try:
         data = json.loads(allowlist_path.read_text(encoding="utf-8"))
         allowed = data.get("allowed", [])
-        # Filter out "never" deadline entries (they're permanent exceptions)
+
+        # Filter: only entries that have deadline (not "never") need migration
+        # "never" entries for infra are OK, but "never" for non-infra are violations
+        # Active entries = entries with actual deadlines (need migration)
         active_entries = [e for e in allowed if e.get("deadline") != "never"]
-        return len(active_entries) == 0
+
+        # Also count invalid "never" entries (non-infra)
+        infra_paths = {"tools/network_guard.py"}
+        invalid_never = [
+            e for e in allowed
+            if e.get("deadline") == "never"
+            and e.get("path", "").replace("\\", "/") not in infra_paths
+        ]
+
+        return len(active_entries) == 0 and len(invalid_never) == 0, len(active_entries) + len(invalid_never)
     except (json.JSONDecodeError, KeyError):
-        return False
+        return False, -1
 
 
 def main() -> int:
     """Main entrypoint."""
     parser = argparse.ArgumentParser(
-        description="Push Gate v2.1 - unified release verification (fail-closed)",
+        description="Push Gate v2.2 - unified release verification (fail-closed)",
     )
     parser.add_argument(
         "--execute", action="store_true",
@@ -158,7 +202,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--skip-testnet", action="store_true",
-        help="Skip TESTNET gate (for offline environments)",
+        help="Skip TESTNET gate (for offline environments) - DISABLES MAINNET ELIGIBILITY",
     )
     parser.add_argument(
         "--json", action="store_true",
@@ -171,16 +215,18 @@ def main() -> int:
     cmdline_sha256 = get_cmdline_sha256()
     git_head = get_git_head() or "unknown"
 
-    total_gates = 10 if not args.skip_testnet else 9
+    total_gates = 11 if not args.skip_testnet else 10
 
     if not args.json:
         print("=" * 60)
-        print("PUSH GATE v2.1 - Unified Release Verification")
+        print("PUSH GATE v2.2 - Unified Release Verification")
         print("=" * 60)
         print(f"Timestamp: {ts_utc}")
         print(f"Root: {PROJECT_ROOT}")
         print(f"Git HEAD: {git_head[:12]}...")
         print(f"Gates: {total_gates}")
+        if args.skip_testnet:
+            print(f"WARNING: --skip-testnet DISABLES MAINNET eligibility")
         print()
         print("ALL gates are MANDATORY. Any failure = FAIL.")
         print()
@@ -238,41 +284,90 @@ def main() -> int:
     run_gate("network_guard",
              lambda: run_python_gate("tools/network_guard.py", []))
 
-    # === GATE 6: secrets_guard ===
+    # === GATE 6: secrets_guard (v2.2 JSON-aware) ===
     run_gate("secrets_guard",
              lambda: run_python_gate("tools/secrets_guard.py", []))
 
-    # === GATE 7: live_smoke_gate ===
+    # === GATE 7: legacy_allowlist_guard (NEW in v2.2) ===
+    run_gate("legacy_allowlist_guard",
+             lambda: run_python_gate("tools/legacy_allowlist_guard.py", []))
+
+    # === GATE 8: live_smoke_gate ===
     run_gate("live_smoke_gate",
              lambda: run_python_gate("tools/live_smoke_gate.py", ["--mode", "DRY"]))
 
-    # === GATE 8: evidence_guard ===
+    # === GATE 9: evidence_guard ===
     run_gate("evidence_guard",
              lambda: run_python_gate("tools/evidence_guard.py", ["--path", "state/health/live_trade.json"]))
 
-    # === GATE 9: testnet_gate ===
+    # === GATE 10: testnet_gate ===
+    testnet_passed = False
     if not args.skip_testnet:
-        run_gate("testnet_gate",
-                 lambda: run_python_gate("tools/testnet_gate.py", []))
+        testnet_passed = run_gate("testnet_gate",
+                                   lambda: run_python_gate("tools/testnet_gate.py", []))
     else:
-        gates_results.append({"name": "testnet_gate", "passed": None, "details": "SKIPPED"})
+        gates_results.append({"name": "testnet_gate", "passed": None, "details": "SKIPPED (--skip-testnet)"})
+        if not args.json:
+            gate_num += 1
+            print(f"[{gate_num}/{total_gates}] testnet_gate...")
+            print("      SKIP (--skip-testnet)")
 
-    # === GATE 10: git push --dry-run ===
+    # === GATE 11: git push --dry-run ===
     run_gate("git_push_dry",
              lambda: run_command(["git", "push", "--dry-run"], "git push --dry-run"))
 
-    # Determine MAINNET eligibility
-    legacy_empty = check_legacy_allowlist_empty()
+    # Get manifest SHA256 for chain-of-custody
+    manifest_sha256 = get_manifest_sha256()
+
+    # Determine MAINNET eligibility (STRICT formula v2.2)
+    eligibility_reasons: List[str] = []
+
+    # Rule 1: All gates must pass
+    if not all_passed:
+        eligibility_reasons.append("Not all gates passed")
+
+    # Rule 2: Legacy allowlist must be empty (no pending migrations)
+    legacy_empty, legacy_count = check_legacy_allowlist_empty()
+    if not legacy_empty:
+        eligibility_reasons.append(f"Legacy network allowlist not empty ({legacy_count} entries)")
+
+    # Rule 3: Network guard must pass
     network_gate_passed = any(g["name"] == "network_guard" and g["passed"] for g in gates_results)
-    eligible_for_mainnet = all_passed and legacy_empty and network_gate_passed
+    if not network_gate_passed:
+        eligibility_reasons.append("Network guard failed")
+
+    # Rule 4: Secrets guard must pass
+    secrets_gate_passed = any(g["name"] == "secrets_guard" and g["passed"] for g in gates_results)
+    if not secrets_gate_passed:
+        eligibility_reasons.append("Secrets guard failed")
+
+    # Rule 5: Legacy allowlist guard must pass
+    legacy_guard_passed = any(g["name"] == "legacy_allowlist_guard" and g["passed"] for g in gates_results)
+    if not legacy_guard_passed:
+        eligibility_reasons.append("Legacy allowlist guard failed")
+
+    # Rule 6: Testnet must be verified (not skipped) - STRICT in v2.2
+    if args.skip_testnet:
+        eligibility_reasons.append("Testnet gate was skipped (--skip-testnet)")
+    elif not testnet_passed:
+        eligibility_reasons.append("Testnet gate failed")
+
+    # Rule 7: Manifest must exist for chain-of-custody
+    if not manifest_sha256:
+        eligibility_reasons.append("Tree manifest not found (chain-of-custody broken)")
+
+    # Final eligibility: ONLY if no reasons
+    eligible_for_mainnet = len(eligibility_reasons) == 0
 
     # Write release_gate.json
     report = {
-        "schema_version": "release_gate_v1",
+        "schema_version": "release_gate_v2",
         "ts_utc": ts_utc,
         "cmdline_sha256": cmdline_sha256,
         "git_head": git_head,
+        "manifest_sha256": manifest_sha256 or "missing",
         "eligible_for_mainnet": eligible_for_mainnet,
+        "eligibility_reasons": eligibility_reasons if not eligible_for_mainnet else [],
         "all_passed": all_passed,
         "gates": gates_results,
     }
@@ -306,10 +401,12 @@ def main() -> int:
     print()
     print(f"MAINNET Eligible: {'YES' if eligible_for_mainnet else 'NO'}")
     if not eligible_for_mainnet:
-        if not legacy_empty:
-            print("  Reason: Legacy network allowlist not empty")
-        if not all_passed:
-            print("  Reason: Not all gates passed")
+        print("  Reasons:")
+        for reason in eligibility_reasons:
+            print(f"    - {reason}")
+
+    if manifest_sha256:
+        print(f"  Manifest SHA256: {manifest_sha256[:16]}...")
 
     print()
 
