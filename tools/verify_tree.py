@@ -1,10 +1,12 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T20:00:00Z
-# Purpose: Deterministic tree manifest generator (fail-closed)
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-25T21:00:00Z
+# Purpose: Deterministic tree manifest generator v1.1 (fail-closed)
 # === END SIGNATURE ===
 """
-Verify Tree - Deterministic Manifest Generator.
+Verify Tree v1.1 - Deterministic Manifest Generator.
 
 Produces a cryptographic proof pack of the minibot/** tree.
 Used as evidence for release gates.
@@ -14,11 +16,12 @@ Output: state/health/tree_manifest.json
 Schema: tree_manifest_v1
 - schema_version: str
 - ts_utc: ISO8601
-- root: str (absolute path)
+- root: str (relative, "minibot")
+- git_head: str (commit hash)
 - cmdline_sha256: str (SSoT binding)
 - run_id: str (deterministic)
-- files[]: {rel_path, size, mtime_utc, sha256}
-- counts: {total_files, total_bytes}
+- files[]: {path, size, sha256} (path normalized to POSIX /)
+- metrics: {total_files, total_bytes, scan_time_ms}
 
 Exit codes:
     0 = SUCCESS (manifest written)
@@ -31,10 +34,12 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Any, Set
+from typing import Dict, List, Any, Set, Optional
 
 # SSoT paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -91,6 +96,23 @@ def get_cmdline_sha256() -> str:
         # Fallback: hash sys.argv
         cmdline = " ".join(sys.argv)
         return hashlib.sha256(cmdline.encode("utf-8")).hexdigest()
+
+
+def get_git_head(root: Path) -> Optional[str]:
+    """Get current git HEAD commit hash."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
 
 
 def should_exclude(rel_path: Path) -> bool:
@@ -205,15 +227,26 @@ def generate_manifest(root: Path) -> Dict[str, Any]:
     Raises:
         OSError: On failure (fail-closed)
     """
+    ts_start = time.perf_counter()
     ts_utc = datetime.now(timezone.utc).isoformat()
     cmdline_sha256 = get_cmdline_sha256()
+    git_head = get_git_head(root)
 
     # Scan tree
     files = scan_tree(root)
 
+    # Convert to schema format (path instead of rel_path, no mtime)
+    file_entries = [
+        {"path": f["rel_path"], "size": f["size"], "sha256": f["sha256"]}
+        for f in files
+    ]
+
     # Compute totals
     total_files = len(files)
     total_bytes = sum(f["size"] for f in files)
+
+    ts_end = time.perf_counter()
+    scan_time_ms = int((ts_end - ts_start) * 1000)
 
     # Generate deterministic run_id
     run_id = f"tree_v1__ts={ts_utc[:19].replace('-', '').replace(':', '').replace('T', 'T')}Z__files={total_files}__cmd={cmdline_sha256[:8]}"
@@ -221,13 +254,15 @@ def generate_manifest(root: Path) -> Dict[str, Any]:
     manifest = {
         "schema_version": "tree_manifest_v1",
         "ts_utc": ts_utc,
-        "root": str(root.resolve()),
+        "root": root.name,  # Just "minibot", not full path
+        "git_head": git_head or "unknown",
         "cmdline_sha256": cmdline_sha256,
         "run_id": run_id,
-        "files": files,
-        "counts": {
+        "files": file_entries,
+        "metrics": {
             "total_files": total_files,
             "total_bytes": total_bytes,
+            "scan_time_ms": scan_time_ms,
         },
     }
 
@@ -314,8 +349,10 @@ def main() -> int:
         print(f"FAIL: {e}", file=sys.stderr)
         return 1
 
-    print(f"Files: {manifest['counts']['total_files']}")
-    print(f"Bytes: {manifest['counts']['total_bytes']:,}")
+    print(f"Files: {manifest['metrics']['total_files']}")
+    print(f"Bytes: {manifest['metrics']['total_bytes']:,}")
+    print(f"Scan time: {manifest['metrics']['scan_time_ms']}ms")
+    print(f"Git HEAD: {manifest['git_head'][:12]}...")
 
     if args.json:
         print(json.dumps(manifest, indent=2))

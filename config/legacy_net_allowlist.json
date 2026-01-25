@@ -1,0 +1,201 @@
+{
+  "_ai_meta": {
+    "created_by": "Claude (opus-4)",
+    "created_at": "2026-01-25T21:00:00Z",
+    "purpose": "Legacy network calls migration allowlist"
+  },
+  "schema_version": "legacy_net_allowlist_v1",
+  "description": "Files temporarily allowed to have direct network calls. Must migrate to core/net/** by deadline.",
+  "policy": {
+    "eligible_for_mainnet": false,
+    "note": "MAINNET eligibility requires ZERO entries in this list"
+  },
+  "allowed": [
+    {
+      "path": "monitor.py",
+      "reason": "Legacy monitoring script",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "notifier.py",
+      "reason": "Legacy notification system",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/ai_calibrator.py",
+      "reason": "AI calibration - uses httpx",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/claude_executor_runner.py",
+      "reason": "Claude API integration",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/data_fetcher.py",
+      "reason": "Data fetcher - migrate to core/net",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/friend_bridge_cli.py",
+      "reason": "Friend bridge CLI",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/gpt_bridge_runner.py",
+      "reason": "GPT bridge",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/gpt_orchestrator_runner.py",
+      "reason": "GPT orchestrator",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/market_intel.py",
+      "reason": "Market intelligence - migrate to core/net",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/net_guard.py",
+      "reason": "Network guard itself uses socket for testing",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/news_spider.py",
+      "reason": "Legacy spider - superseded by core/spider",
+      "deadline": "2026-02-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/order_router.py",
+      "reason": "Legacy order router - superseded by core/trade",
+      "deadline": "2026-02-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/spot_testnet_client.py",
+      "reason": "Testnet client - migrate to core/net",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/telegram_publisher.py",
+      "reason": "Telegram publisher - uses aiohttp",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/telegram_signals.py",
+      "reason": "Telegram signals",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/policy/network_guard.py",
+      "reason": "Policy network guard - uses socket",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "scripts/find_msg.py",
+      "reason": "Utility script",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "scripts/friend_chat.py",
+      "reason": "Utility script",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "scripts/get_response.py",
+      "reason": "Utility script",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "scripts/save_response.py",
+      "reason": "Utility script",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tests/test_binance_online_gate.py",
+      "reason": "Test file",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tests/test_friend_bridge.py",
+      "reason": "Test file",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/nexus.py",
+      "reason": "Nexus tool",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/night_test_hope.py",
+      "reason": "Night test tool",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/night_test_v3.py",
+      "reason": "Night test v3",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/testnet_gate.py",
+      "reason": "Testnet gate - migrate to core/net",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/test_mainnet_key.py",
+      "reason": "Mainnet key test",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/test_send.py",
+      "reason": "Send test",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/verify_bootstrap_first.py",
+      "reason": "Bootstrap verification",
+      "deadline": "2026-03-01",
+      "owner": "Valentin"
+    },
+    {
+      "path": "tools/network_guard.py",
+      "reason": "Network guard itself contains patterns for detection",
+      "deadline": "never",
+      "owner": "system"
+    },
+    {
+      "path": "tools/smoke_network_guard.py",
+      "reason": "Network guard smoke test uses socket for testing",
+      "deadline": "never",
+      "owner": "system"
+    }
+  ]
+}

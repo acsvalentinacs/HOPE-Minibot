@@ -48,6 +48,8 @@ EXCLUDE_DIRS: Set[str] = {
     ".mypy_cache",
     "node_modules",
     "staging/backup",
+    "state/health",  # Contains sha256 hashes (false positives)
+    "state/audit",  # Contains sha256 hashes (false positives)
 }
 
 # Allowed files (false positive exclusions)
