@@ -1,0 +1,10 @@
+1. Работай в `C:\Users\kirillDev\Desktop\TradingBot\minibot`, PS5.1, python: `..\..\.venv\Scripts\python.exe`.
+2. Секреты `C:\secrets\hope\.env` **read-only**: не менять; печатать только Present/Length.
+3. Тест: `tests\test_binance_online_gate.py` (только stdlib, без core/nore импортов).
+4. Test A (public): GET `/api/v3/time` → PASS если HTTP200 + serverTime int>0. Timeout 10s, 1 retry.
+5. Test B (private): если есть BINANCE_*_API_KEY/SECRET → signed GET `/api/v3/account`; иначе SKIP.
+6. PASS = A.ok AND (B.ok OR B.skipped). FAIL = A.fail OR (B.attempted AND B.fail).
+7. Evidence: `state\audit\binance_online_gate\<YYYYMMDD_HHMMSS>\report.json` + `.sha256`.
+8. В отчёте: attempts, timeout_s, effective_host, error_class, sanitized error (no signature leak).
+9. Запуск: `pytest -q .\tests\test_binance_online_gate.py -vv` или `.\tools\run_binance_gate.ps1`.
+10. Verify: `Get-FileHash report.json` должен совпадать с `report.json.sha256`.
