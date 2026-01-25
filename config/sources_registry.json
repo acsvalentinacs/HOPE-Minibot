@@ -1,0 +1,88 @@
+{
+  "_ai_meta": {
+    "created_by": "Claude (opus-4)",
+    "created_at": "2026-01-25T14:00:00Z",
+    "purpose": "News Spider v1.0 - Source Registry (SSoT)"
+  },
+  "version": "1.0.0",
+  "description": "News sources for HOPE Spider. All hosts must be in AllowList.txt.",
+  "sources": [
+    {
+      "id": "coindesk_rss",
+      "name": "CoinDesk RSS",
+      "type": "rss",
+      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+      "enabled": true,
+      "priority": 1,
+      "category": "market",
+      "language": "en",
+      "ttl_minutes": 15
+    },
+    {
+      "id": "cointelegraph_rss",
+      "name": "Cointelegraph RSS",
+      "type": "rss",
+      "url": "https://cointelegraph.com/rss",
+      "enabled": true,
+      "priority": 1,
+      "category": "market",
+      "language": "en",
+      "ttl_minutes": 15
+    },
+    {
+      "id": "decrypt_rss",
+      "name": "Decrypt RSS",
+      "type": "rss",
+      "url": "https://decrypt.co/feed",
+      "enabled": true,
+      "priority": 2,
+      "category": "market",
+      "language": "en",
+      "ttl_minutes": 15
+    },
+    {
+      "id": "theblock_rss",
+      "name": "The Block RSS",
+      "type": "rss",
+      "url": "https://www.theblock.co/rss.xml",
+      "enabled": true,
+      "priority": 2,
+      "category": "market",
+      "language": "en",
+      "ttl_minutes": 15
+    },
+    {
+      "id": "binance_announcements",
+      "name": "Binance Announcements",
+      "type": "binance_announcements",
+      "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&pageNo=1&pageSize=20",
+      "enabled": true,
+      "priority": 1,
+      "category": "listing",
+      "language": "en",
+      "ttl_minutes": 5
+    },
+    {
+      "id": "binance_new_listings",
+      "name": "Binance New Listings",
+      "type": "binance_announcements",
+      "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=48&pageNo=1&pageSize=20",
+      "enabled": true,
+      "priority": 1,
+      "category": "listing",
+      "language": "en",
+      "ttl_minutes": 5
+    },
+    {
+      "id": "rekt_news",
+      "name": "Rekt News RSS",
+      "type": "rss",
+      "url": "https://rekt.news/rss.xml",
+      "enabled": true,
+      "priority": 3,
+      "category": "exploit",
+      "language": "en",
+      "ttl_minutes": 30
+    }
+  ]
+}
