@@ -127,3 +127,8 @@ tmpclaude-*
 # === AI CHAT LOGS (not project code) ===
 ИИ Claude говорит*/
 Чат GPT*/
+
+# === LEGACY DUPLICATES (superseded by core/trade/*) ===
+core/order_router.py
+core/risk_engine.py
+tools/test_mainnet_key.py
