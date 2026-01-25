@@ -1,13 +1,17 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T14:00:00Z
-# Purpose: News deduplication store (stdlib-only, JSONL append)
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-25T19:00:00Z
+# Purpose: News deduplication store (sha256 JSONL format, atomic I/O)
 # === END SIGNATURE ===
 """
 News Deduplication Module
 
 Tracks seen item IDs to avoid processing duplicates.
-Uses atomic JSONL append for persistence.
+Uses sha256 JSONL format: sha256:<hex16> <json>
+
+Backward compatible: reads legacy plain JSON lines during migration.
 """
 
 import json
@@ -19,27 +23,12 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Set, Optional, Dict, Any
 
-# Windows-specific locking
-if sys.platform == "win32":
-    import msvcrt
-
-    def _lock_file(f):
-        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
-
-    def _unlock_file(f):
-        try:
-            f.seek(0)
-            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-        except Exception:
-            pass
-else:
-    import fcntl
-
-    def _lock_file(f):
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-
-    def _unlock_file(f):
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+from core.io.atomic import (
+    atomic_append_sha256_jsonl,
+    parse_sha256_jsonl_line,
+    format_sha256_jsonl_line,
+    atomic_write_text,
+)
 
 
 @dataclass
@@ -105,7 +94,13 @@ class DedupStore:
                     if not line:
                         continue
                     try:
-                        entry = json.loads(line)
+                        # Try sha256 JSONL format first
+                        if line.startswith("sha256:"):
+                            entry = parse_sha256_jsonl_line(line)
+                        else:
+                            # Legacy plain JSON (backward compatible)
+                            entry = json.loads(line)
+
                         # Check expiry
                         first_seen = entry.get("first_seen_utc", "")
                         if first_seen:
@@ -118,7 +113,7 @@ class DedupStore:
                             except Exception:
                                 pass
                         self._cache.add(entry.get("item_id", ""))
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, ValueError):
                         continue
         except Exception:
             pass
@@ -148,6 +143,8 @@ class DedupStore:
         """
         Add item to dedup store if not present.
 
+        Uses sha256 JSONL format: sha256:<hex16> <json>
+
         Args:
             item_id: Item identifier
             source_id: Source that provided item
@@ -155,6 +152,9 @@ class DedupStore:
 
         Returns:
             True if added (was new), False if already present
+
+        Raises:
+            OSError: On I/O failure (fail-closed)
         """
         with self._lock:
             self._ensure_loaded()
@@ -165,7 +165,7 @@ class DedupStore:
             # Add to cache
             self._cache.add(item_id)
 
-            # Persist to file with locking
+            # Persist to file with sha256 JSONL format
             entry = {
                 "item_id": item_id,
                 "source_id": source_id,
@@ -173,17 +173,8 @@ class DedupStore:
                 "link": link,
             }
 
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Atomic append with lock
-            with open(self._path, "a", encoding="utf-8") as f:
-                _lock_file(f)
-                try:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-                finally:
-                    _unlock_file(f)
+            # Atomic append with sha256 prefix
+            atomic_append_sha256_jsonl(self._path, entry)
 
             return True
 
@@ -197,7 +188,8 @@ class DedupStore:
         """
         Remove expired entries from store file.
 
-        Rewrites file with only non-expired entries.
+        Rewrites file with only non-expired entries in sha256 JSONL format.
+        Migrates legacy plain JSON to sha256 format during rewrite.
 
         Returns:
             Number of entries removed
@@ -207,60 +199,67 @@ class DedupStore:
                 return 0
 
             cutoff = datetime.now(timezone.utc) - timedelta(days=self._retention_days)
-            kept = []
+            kept_entries = []
             removed = 0
 
             try:
                 with open(self._path, "r", encoding="utf-8") as f:
-                    _lock_file(f)
-                    try:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            # Parse both formats
+                            if line.startswith("sha256:"):
+                                entry = parse_sha256_jsonl_line(line)
+                            else:
                                 entry = json.loads(line)
-                                first_seen = entry.get("first_seen_utc", "")
-                                if first_seen:
-                                    dt = datetime.fromisoformat(
-                                        first_seen.replace("Z", "+00:00")
-                                    )
-                                    if dt < cutoff:
-                                        removed += 1
-                                        continue
-                                kept.append(line)
-                            except Exception:
-                                kept.append(line)  # Keep malformed
-                    finally:
-                        _unlock_file(f)
+
+                            first_seen = entry.get("first_seen_utc", "")
+                            if first_seen:
+                                dt = datetime.fromisoformat(
+                                    first_seen.replace("Z", "+00:00")
+                                )
+                                if dt < cutoff:
+                                    removed += 1
+                                    continue
+                            kept_entries.append(entry)
+                        except Exception:
+                            # Skip malformed (fail-closed for corrupted data)
+                            removed += 1
             except Exception:
                 return 0
 
-            if removed > 0:
-                # Rewrite file
-                tmp = self._path.with_suffix(".tmp")
-                try:
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        for line in kept:
-                            f.write(line + "\n")
-                        f.flush()
-                        os.fsync(f.fileno())
-                    os.replace(tmp, self._path)
+            if removed > 0 or self._needs_migration():
+                # Rewrite file in sha256 JSONL format
+                lines = []
+                for entry in kept_entries:
+                    lines.append(format_sha256_jsonl_line(entry))
 
-                    # Update cache
-                    self._cache.clear()
-                    for line in kept:
-                        try:
-                            entry = json.loads(line)
-                            self._cache.add(entry.get("item_id", ""))
-                        except Exception:
-                            pass
-                except Exception:
-                    if tmp.exists():
-                        tmp.unlink()
-                    raise
+                content = "".join(lines)
+                atomic_write_text(self._path, content)
+
+                # Update cache
+                self._cache.clear()
+                for entry in kept_entries:
+                    self._cache.add(entry.get("item_id", ""))
 
             return removed
+
+    def _needs_migration(self) -> bool:
+        """Check if file contains legacy plain JSON that needs migration."""
+        if not self._path.exists():
+            return False
+
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                first_line = f.readline().strip()
+                if first_line and not first_line.startswith("sha256:"):
+                    return True
+        except Exception:
+            pass
+
+        return False
 
 
 def is_duplicate(

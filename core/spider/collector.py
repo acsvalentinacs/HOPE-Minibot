@@ -399,8 +399,13 @@ class NewsCollector:
         """
         Append item to output JSONL file.
 
-        Uses atomic append with file locking.
+        Uses atomic append with sha256 JSONL format:
+        sha256:<hex16> <json>
+
+        Fail-closed: raises on I/O error.
         """
+        from core.io.atomic import atomic_append_sha256_jsonl
+
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
 
         record = {
@@ -408,30 +413,8 @@ class NewsCollector:
             **item.to_dict(),
         }
 
-        # Atomic append
-        with open(self._output_path, "a", encoding="utf-8") as f:
-            if sys.platform == "win32":
-                import msvcrt
-                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
-                try:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-                finally:
-                    try:
-                        f.seek(0)
-                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                    except Exception:
-                        pass
-            else:
-                import fcntl
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        # Use atomic sha256 JSONL append
+        atomic_append_sha256_jsonl(self._output_path, record)
 
 
 def run_collection(

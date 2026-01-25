@@ -1,0 +1,32 @@
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at (UTC): 2026-01-25T18:00:00Z
+# Purpose: AllowList for Spider - news/announcements/telegram only
+# === END SIGNATURE ===
+#
+# SPIDER EGRESS ALLOWLIST
+# Used by: core/spider/* modules
+# Profile: news collection + telegram publish
+#
+# RULES:
+# - One host per line (exact match, no wildcards)
+# - Comments start with #
+# - Empty lines ignored
+#
+
+# === NEWS RSS FEEDS ===
+www.coindesk.com
+cointelegraph.com
+decrypt.co
+www.theblock.co
+rekt.news
+
+# === BINANCE ANNOUNCEMENTS ===
+www.binance.com
+
+# === MARKET DATA (for correlation) ===
+api.binance.com
+api.coingecko.com
+
+# === TELEGRAM PUBLISHING ===
+api.telegram.org
