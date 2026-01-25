@@ -196,6 +196,18 @@
       "reason": "Network guard smoke test uses socket for testing - MIGRATE to tests/",
       "deadline": "2026-02-15",
       "owner": "Valentin"
+    },
+    {
+      "path": "tools/publish_news_digest.py",
+      "reason": "News digest publisher - uses urllib for Telegram API",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
+    },
+    {
+      "path": "core/exchange/binance_spot_client.py",
+      "reason": "Binance Spot API client - uses urllib for REST API",
+      "deadline": "2026-02-15",
+      "owner": "Valentin"
     }
   ]
 }
