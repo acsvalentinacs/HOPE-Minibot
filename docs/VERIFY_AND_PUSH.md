@@ -1,6 +1,7 @@
 <!-- AI SIGNATURE: Created by Claude (opus-4) at 2026-01-25T18:00:00Z -->
+<!-- AI SIGNATURE: Modified by Claude (opus-4) at 2026-01-25T20:00:00Z -->
 
-# Release Verification Protocol
+# Release Verification Protocol v2.0
 
 ## Принцип
 
@@ -8,15 +9,18 @@
 
 Любое отклонение от протокола = FAIL.
 
-## Порядок верификации (фиксированный)
+## Порядок верификации (фиксированный, 9 гейтов)
 
 ```
 1. commit_gate       → Manifest + policy validation
 2. dirty_tree_guard  → No untracked/modified files
-3. live_smoke_gate   → Trading smoke test (DRY)
-4. evidence_guard    → Schema validation for health files
-5. testnet_gate      → Read-only API verification
-6. git push --dry-run → Verify push will succeed
+3. verify_tree       → Deterministic tree manifest (sha256)
+4. network_guard     → No direct network outside core/net/**
+5. secrets_guard     → No hardcoded secrets
+6. live_smoke_gate   → Trading smoke test (DRY)
+7. evidence_guard    → Schema validation for health files
+8. testnet_gate      → Read-only API verification
+9. git push --dry-run → Verify push will succeed
 ```
 
 ## Команда верификации
@@ -56,7 +60,52 @@ python tools/push_gate.py --execute
 
 **Исключение:** `--allow-state` разрешает untracked в state/** (runtime артефакты)
 
-### 3. live_smoke_gate
+### 3. verify_tree
+
+**Проверяет:** Создаёт детерминированный manifest дерева
+
+**Записывает:** `state/health/tree_manifest.json`
+
+**Содержит:**
+- `schema_version`: "tree_manifest_v1"
+- `cmdline_sha256`: SSoT binding
+- `files[]`: {rel_path, size, mtime_utc, sha256}
+- `counts`: {total_files, total_bytes}
+
+**FAIL если:** ошибка чтения/хэширования любого файла
+
+### 4. network_guard
+
+**Проверяет:** Нет прямых сетевых вызовов вне `core/net/**`
+
+**Запрещённые паттерны:**
+- `urllib.request.urlopen`
+- `requests.(get|post|put|delete|Session)`
+- `socket.socket`
+- `http.client.HTTP(S)Connection`
+- `aiohttp.ClientSession`
+- `httpx.(Client|AsyncClient)`
+
+**FAIL если:** найден любой прямой вызов
+
+**Вывод:** только `file:line:pattern` (БЕЗ содержимого строк)
+
+### 5. secrets_guard
+
+**Проверяет:** Нет хардкод секретов в коде
+
+**Ищет:**
+- GitHub tokens (`ghp_...`)
+- AWS keys (`AKIA...`)
+- Slack tokens (`xox[baprs]-...`)
+- Private keys (`BEGIN PRIVATE KEY`)
+- API key patterns
+
+**FAIL если:** найден потенциальный секрет
+
+**Вывод:** только `file:line` (НИКОГДА содержимое)
+
+### 6. live_smoke_gate
 
 **Проверяет (7 шагов):**
 1. Syntax (py_compile core/trade/*.py)
@@ -69,7 +118,7 @@ python tools/push_gate.py --execute
 
 **FAIL если:** любой шаг не PASS
 
-### 4. evidence_guard
+### 7. evidence_guard
 
 **Проверяет:** state/health/live_trade.json против схемы
 
@@ -84,7 +133,7 @@ python tools/push_gate.py --execute
 
 **FAIL если:** поле отсутствует, неверный тип, неверное значение
 
-### 5. testnet_gate
+### 8. testnet_gate
 
 **Проверяет (read-only, NO ORDERS):**
 1. testnet.binance.vision в AllowList
@@ -95,7 +144,7 @@ python tools/push_gate.py --execute
 
 **Пишет evidence:** state/health/testnet_gate.json
 
-### 6. git push --dry-run
+### 9. git push --dry-run
 
 **Проверяет:** push будет успешен
 
@@ -103,7 +152,7 @@ python tools/push_gate.py --execute
 
 ## Критерии PASS
 
-Все 6 гейтов = PASS.
+Все 9 гейтов = PASS.
 
 Нет "частичного PASS". Нет "PASS с предупреждениями".
 
@@ -172,8 +221,10 @@ python tools/push_gate.py --execute
 | Файл | Гейт | Схема |
 |------|------|-------|
 | state/health/live_trade.json | run_live_trading.py | live_trade_v1 |
+| state/health/tree_manifest.json | verify_tree.py | tree_manifest_v1 |
 | state/health/spider_health.json | spider | spider_health_v1 |
 | state/health/testnet_gate.json | testnet_gate.py | testnet_gate_v1 |
+| state/news_run.json | spider | news_run_v1 |
 
 ## Схемы версий
 

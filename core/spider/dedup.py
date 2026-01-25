@@ -2,8 +2,8 @@
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T14:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at (UTC): 2026-01-25T19:00:00Z
-# Purpose: News deduplication store (sha256 JSONL format, atomic I/O)
+# Modified at (UTC): 2026-01-25T20:00:00Z
+# Purpose: News deduplication store (sha256 JSONL format, atomic I/O, rotation-based cleanup)
 # === END SIGNATURE ===
 """
 News Deduplication Module
@@ -184,23 +184,103 @@ class DedupStore:
             self._ensure_loaded()
             return len(self._cache)
 
-    def clear_expired(self) -> int:
+    def rotate_if_needed(
+        self,
+        max_entries: int = 10000,
+        max_bytes: int = 5 * 1024 * 1024,
+    ) -> tuple[bool, str]:
         """
-        Remove expired entries from store file.
+        Rotate dedup file if size limits exceeded.
 
-        Rewrites file with only non-expired entries in sha256 JSONL format.
-        Migrates legacy plain JSON to sha256 format during rewrite.
+        NEVER deletes original file. Creates backup and starts fresh.
+        Policy: backup + new file + LATEST pointer (all atomic).
+
+        Args:
+            max_entries: Max entries before rotation (default: 10000)
+            max_bytes: Max file size before rotation (default: 5MB)
 
         Returns:
-            Number of entries removed
+            (rotated, backup_path_or_reason)
+        """
+        with self._lock:
+            if not self._path.exists():
+                return False, "no_file"
+
+            # Check size limits
+            try:
+                file_size = self._path.stat().st_size
+            except OSError:
+                return False, "stat_error"
+
+            entry_count = len(self._cache) if self._loaded else self._count_lines()
+
+            needs_rotation = (entry_count > max_entries) or (file_size > max_bytes)
+
+            if not needs_rotation:
+                return False, "within_limits"
+
+            # Generate backup filename with run_id
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            backup_name = f"news_dedup.{ts}.bak.jsonl"
+            backup_path = self._path.parent / backup_name
+
+            # Step 1: Rename current to backup (atomic on same filesystem)
+            try:
+                os.rename(self._path, backup_path)
+            except OSError as e:
+                return False, f"rename_error: {e}"
+
+            # Step 2: Create fresh empty file
+            try:
+                self._path.touch()
+            except OSError as e:
+                # Restore backup
+                try:
+                    os.rename(backup_path, self._path)
+                except OSError:
+                    pass
+                return False, f"create_error: {e}"
+
+            # Step 3: Write LATEST pointer
+            latest_path = self._path.parent / "news_dedup.LATEST"
+            try:
+                atomic_write_text(latest_path, backup_name + "\n")
+            except OSError:
+                pass  # Non-fatal, backup still valid
+
+            # Clear cache for fresh start
+            self._cache.clear()
+            self._loaded = True
+
+            return True, str(backup_path)
+
+    def _count_lines(self) -> int:
+        """Count lines in dedup file without loading all."""
+        if not self._path.exists():
+            return 0
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                return sum(1 for line in f if line.strip())
+        except OSError:
+            return 0
+
+    def clear_expired(self) -> int:
+        """
+        Mark expired entries (DEPRECATED - use rotate_if_needed).
+
+        This method is kept for backward compatibility but now only
+        triggers rotation if limits exceeded. It does NOT rewrite
+        the file in place (that would violate append-only policy).
+
+        Returns:
+            Number of entries that would be removed (informational only)
         """
         with self._lock:
             if not self._path.exists():
                 return 0
 
             cutoff = datetime.now(timezone.utc) - timedelta(days=self._retention_days)
-            kept_entries = []
-            removed = 0
+            expired_count = 0
 
             try:
                 with open(self._path, "r", encoding="utf-8") as f:
@@ -209,7 +289,6 @@ class DedupStore:
                         if not line:
                             continue
                         try:
-                            # Parse both formats
                             if line.startswith("sha256:"):
                                 entry = parse_sha256_jsonl_line(line)
                             else:
@@ -221,30 +300,17 @@ class DedupStore:
                                     first_seen.replace("Z", "+00:00")
                                 )
                                 if dt < cutoff:
-                                    removed += 1
-                                    continue
-                            kept_entries.append(entry)
+                                    expired_count += 1
                         except Exception:
-                            # Skip malformed (fail-closed for corrupted data)
-                            removed += 1
+                            expired_count += 1
             except Exception:
                 return 0
 
-            if removed > 0 or self._needs_migration():
-                # Rewrite file in sha256 JSONL format
-                lines = []
-                for entry in kept_entries:
-                    lines.append(format_sha256_jsonl_line(entry))
+            # Trigger rotation if many expired (instead of rewrite)
+            if expired_count > 1000:
+                self.rotate_if_needed()
 
-                content = "".join(lines)
-                atomic_write_text(self._path, content)
-
-                # Update cache
-                self._cache.clear()
-                for entry in kept_entries:
-                    self._cache.add(entry.get("item_id", ""))
-
-            return removed
+            return expired_count
 
     def _needs_migration(self) -> bool:
         """Check if file contains legacy plain JSON that needs migration."""

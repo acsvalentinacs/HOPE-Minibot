@@ -1,10 +1,12 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T18:00:00Z
-# Purpose: Push Gate - unified release verification (fail-closed, no "optional")
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-25T20:00:00Z
+# Purpose: Push Gate v2.0 - unified release verification (fail-closed, no "optional")
 # === END SIGNATURE ===
 """
-Push Gate - Unified Release Verification.
+Push Gate v2.0 - Unified Release Verification.
 
 Runs ALL required gates in fixed order before allowing push.
 ANY gate failure = FAIL (no exceptions, no "optional").
@@ -12,9 +14,13 @@ ANY gate failure = FAIL (no exceptions, no "optional").
 Gate Order (fixed, mandatory):
 1. commit_gate      - Manifest and policy validation
 2. dirty_tree_guard - No untracked/modified files
-3. live_smoke_gate  - Trading system smoke test (DRY)
-4. evidence_guard   - Health file schema validation
-5. git push --dry-run - Verify push will succeed
+3. verify_tree      - Deterministic tree manifest (sha256)
+4. network_guard    - No direct network calls outside core/net/**
+5. secrets_guard    - No hardcoded secrets
+6. live_smoke_gate  - Trading system smoke test (DRY)
+7. evidence_guard   - Health file schema validation
+8. testnet_gate     - TESTNET API verification (optional skip)
+9. git push --dry-run - Verify push will succeed
 
 Usage:
     python tools/push_gate.py           # Full verification
@@ -110,20 +116,25 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    total_gates = 9 if not args.skip_testnet else 8
+
     print("=" * 60)
-    print("PUSH GATE - Unified Release Verification")
+    print("PUSH GATE v2.0 - Unified Release Verification")
     print("=" * 60)
     print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
     print(f"Root: {PROJECT_ROOT}")
+    print(f"Gates: {total_gates}")
     print()
     print("ALL gates are MANDATORY. Any failure = FAIL.")
     print()
 
     gates = []
     all_passed = True
+    gate_num = 0
 
     # === GATE 1: commit_gate ===
-    print("[1/6] commit_gate...")
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] commit_gate...")
     success, output = run_python_gate("tools/commit_gate.py", ["--check"])
     gates.append(("commit_gate", success))
     if success:
@@ -134,7 +145,8 @@ def main() -> int:
         all_passed = False
 
     # === GATE 2: dirty_tree_guard ===
-    print("[2/6] dirty_tree_guard...")
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] dirty_tree_guard...")
     dirty_args = []
     if args.allow_state:
         dirty_args.append("--allow-state")
@@ -144,28 +156,70 @@ def main() -> int:
         print("      PASS")
     else:
         print("      FAIL")
-        # Show violations
         for line in output.split("\n"):
             if "UNTRACKED:" in line or "MODIFIED:" in line:
                 print(f"      {line.strip()}")
         all_passed = False
 
-    # === GATE 3: live_smoke_gate ===
-    print("[3/6] live_smoke_gate (DRY)...")
+    # === GATE 3: verify_tree ===
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] verify_tree...")
+    success, output = run_python_gate("tools/verify_tree.py", [])
+    gates.append(("verify_tree", success))
+    if success:
+        print("      PASS")
+    else:
+        print("      FAIL")
+        for line in output.split("\n"):
+            if "ERROR" in line or "FAIL" in line:
+                print(f"      {line.strip()}")
+        all_passed = False
+
+    # === GATE 4: network_guard ===
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] network_guard...")
+    success, output = run_python_gate("tools/network_guard.py", [])
+    gates.append(("network_guard", success))
+    if success:
+        print("      PASS")
+    else:
+        print("      FAIL")
+        for line in output.split("\n"):
+            if ":" in line and not line.startswith("Scanning"):
+                print(f"      {line.strip()[:80]}")
+        all_passed = False
+
+    # === GATE 5: secrets_guard ===
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] secrets_guard...")
+    success, output = run_python_gate("tools/secrets_guard.py", [])
+    gates.append(("secrets_guard", success))
+    if success:
+        print("      PASS")
+    else:
+        print("      FAIL")
+        for line in output.split("\n"):
+            if "[" in line and "]" in line:
+                print(f"      {line.strip()[:60]}")
+        all_passed = False
+
+    # === GATE 6: live_smoke_gate ===
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] live_smoke_gate (DRY)...")
     success, output = run_python_gate("tools/live_smoke_gate.py", ["--mode", "DRY"])
     gates.append(("live_smoke_gate", success))
     if success:
         print("      PASS")
     else:
         print("      FAIL")
-        # Show failed checks
         for line in output.split("\n"):
             if "FAIL:" in line:
                 print(f"      {line.strip()}")
         all_passed = False
 
-    # === GATE 4: evidence_guard ===
-    print("[4/6] evidence_guard...")
+    # === GATE 7: evidence_guard ===
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] evidence_guard...")
     success, output = run_python_gate("tools/evidence_guard.py", ["--path", "state/health/live_trade.json"])
     gates.append(("evidence_guard", success))
     if success:
@@ -177,9 +231,10 @@ def main() -> int:
                 print(f"      {line.strip()}")
         all_passed = False
 
-    # === GATE 5: testnet_gate (optional skip for offline) ===
+    # === GATE 8: testnet_gate (optional skip for offline) ===
     if not args.skip_testnet:
-        print("[5/6] testnet_gate (read-only)...")
+        gate_num += 1
+        print(f"[{gate_num}/{total_gates}] testnet_gate (read-only)...")
         success, output = run_python_gate("tools/testnet_gate.py", [])
         gates.append(("testnet_gate", success))
         if success:
@@ -191,11 +246,11 @@ def main() -> int:
                     print(f"      {line.strip()}")
             all_passed = False
     else:
-        print("[5/6] testnet_gate... SKIPPED (--skip-testnet)")
         gates.append(("testnet_gate", None))
 
-    # === GATE 6: git push --dry-run ===
-    print("[6/6] git push --dry-run...")
+    # === GATE 9: git push --dry-run ===
+    gate_num += 1
+    print(f"[{gate_num}/{total_gates}] git push --dry-run...")
     success, output = run_command(["git", "push", "--dry-run"], "git push --dry-run")
     gates.append(("git_push_dry", success))
     if success:
