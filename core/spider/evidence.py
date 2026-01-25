@@ -1,10 +1,12 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T19:30:00Z
-# Purpose: Spider evidence generation and validation (SSoT, fail-closed)
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-25T20:00:00Z
+# Purpose: Spider evidence generation and validation (SSoT, fail-closed) v1.4
 # === END SIGNATURE ===
 """
-Spider Evidence Module
+Spider Evidence Module v1.4
 
 SSoT channel: state/health/spider_health.json
 
@@ -12,7 +14,9 @@ This module generates and validates evidence for spider runs.
 All PASS claims require valid evidence in spider_health.json.
 
 Evidence includes:
-- run_id: unique identifier for this execution
+- schema_version: "spider_health_v1" (REQUIRED)
+- cmdline_ssot: { source, raw, sha256 } (REQUIRED)
+- run_id: unique identifier with __cmd= binding
 - policy_egress: allowlist path and sha256
 - evidence_line: machine-parseable KPI string
 - sources_result: ok/total/failed counts with reason_codes
@@ -21,10 +25,15 @@ Fail-closed rules:
 - Missing allowlist -> FAIL, no network I/O
 - Health write failure -> FAIL, no network I/O
 - Missing evidence -> "PASS 6/7" forbidden
+- UNKNOWN_ERROR in enforced mode -> UNCLASSIFIED_ERROR_FORBIDDEN
 """
+
+# Schema version constant
+SCHEMA_VERSION = "spider_health_v1"
 
 import hashlib
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +52,21 @@ from core.spider.reason_codes import (
 class EvidenceError(Exception):
     """Raised when evidence cannot be generated or validated."""
     pass
+
+
+@dataclass
+class CmdlineSsot:
+    """Command line SSoT evidence (GetCommandLineW on Windows)."""
+    source: str  # "GetCommandLineW" or "/proc/self/cmdline"
+    raw: str  # Raw command line
+    sha256: str  # SHA256 of raw command line
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source": self.source,
+            "raw": self.raw,
+            "sha256": self.sha256,
+        }
 
 
 @dataclass
@@ -81,10 +105,13 @@ class SpiderEvidence:
     Complete evidence for a spider run.
 
     This is the contract for state/health/spider_health.json.
+    schema_version and cmdline_ssot are REQUIRED fields.
     """
     ts_utc: str
     run_id: str
     policy_egress: PolicyEgress
+    cmdline_ssot: CmdlineSsot
+    schema_version: str = SCHEMA_VERSION
     sources_result: Optional[SourcesResult] = None
     result: str = "PENDING"  # "PASS", "FAIL", "PENDING"
     fail_closed: bool = True
@@ -101,14 +128,17 @@ class SpiderEvidence:
             f"POLICY_EGRESS "
             f"allowlist_path={self.policy_egress.allowlist_path} "
             f"allowlist_sha256={self.policy_egress.allowlist_sha256} "
+            f"cmdline_sha256={self.cmdline_ssot.sha256} "
             f"ts_utc={self.ts_utc} "
             f"run_id={self.run_id}"
         )
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
+            "schema_version": self.schema_version,
             "ts_utc": self.ts_utc,
             "run_id": self.run_id,
+            "cmdline_ssot": self.cmdline_ssot.to_dict(),
             "policy_egress": self.policy_egress.to_dict(),
             "result": self.result,
             "fail_closed": self.fail_closed,
@@ -202,6 +232,36 @@ def generate_policy_evidence(
     )
 
 
+def _get_cmdline_ssot() -> CmdlineSsot:
+    """
+    Get command line SSoT evidence.
+
+    Uses GetCommandLineW on Windows (the only reliable source).
+    Uses /proc/self/cmdline on Linux.
+
+    Returns:
+        CmdlineSsot with source, raw, and sha256
+
+    Raises:
+        EvidenceError: If cmdline cannot be retrieved
+    """
+    try:
+        from core.truth.cmdline_ssot import get_raw_cmdline, get_cmdline_sha256
+
+        raw = get_raw_cmdline()
+        sha256 = get_cmdline_sha256()
+
+        if sys.platform == "win32":
+            source = "GetCommandLineW"
+        else:
+            source = "/proc/self/cmdline"
+
+        return CmdlineSsot(source=source, raw=raw, sha256=sha256)
+
+    except Exception as e:
+        raise EvidenceError(f"CMDLINE_SSOT_FAIL: {e}")
+
+
 def create_initial_evidence(
     allowlist_path: Path,
     policy_mode: str = "enforced",
@@ -224,7 +284,10 @@ def create_initial_evidence(
     """
     global _current_evidence
 
-    # Generate run_id (once per process)
+    # Generate cmdline SSoT FIRST (fail-closed if unavailable)
+    cmdline_ssot = _get_cmdline_ssot()
+
+    # Generate run_id (once per process, now includes __cmd= binding)
     run_id = generate_run_id()
 
     # Generate timestamp
@@ -234,8 +297,10 @@ def create_initial_evidence(
     policy_egress = generate_policy_evidence(allowlist_path, policy_mode)
 
     evidence = SpiderEvidence(
+        schema_version=SCHEMA_VERSION,
         ts_utc=ts_utc,
         run_id=run_id,
+        cmdline_ssot=cmdline_ssot,
         policy_egress=policy_egress,
         result="PENDING",
         fail_closed=True,
@@ -325,11 +390,24 @@ def validate_evidence(evidence_dict: Dict[str, Any], enforced: bool = True) -> b
     Raises:
         EvidenceError: If validation fails
     """
-    # Required fields
-    required = ["ts_utc", "run_id", "policy_egress", "result", "evidence_line"]
-    for field in required:
-        if field not in evidence_dict:
-            raise EvidenceError(f"Missing required field: {field}")
+    # Required fields (schema_version and cmdline_ssot are now REQUIRED)
+    required = ["schema_version", "ts_utc", "run_id", "cmdline_ssot", "policy_egress", "result", "evidence_line"]
+    for fld in required:
+        if fld not in evidence_dict:
+            raise EvidenceError(f"Missing required field: {fld}")
+
+    # Validate schema_version
+    schema_version = evidence_dict.get("schema_version")
+    if schema_version != SCHEMA_VERSION:
+        raise EvidenceError(f"Invalid schema_version: {schema_version}, expected {SCHEMA_VERSION}")
+
+    # Validate cmdline_ssot
+    cmdline = evidence_dict.get("cmdline_ssot", {})
+    if not cmdline.get("source"):
+        raise EvidenceError("Missing cmdline_ssot.source")
+    if not cmdline.get("sha256"):
+        raise EvidenceError("Missing cmdline_ssot.sha256")
+    # cmdline.raw can be empty string (though unusual), but sha256 is required
 
     # Validate run_id
     run_id = evidence_dict["run_id"]
@@ -360,9 +438,9 @@ def validate_evidence(evidence_dict: Dict[str, Any], enforced: bool = True) -> b
             if not is_valid_reason_code(reason_code):
                 raise EvidenceError(f"Invalid reason_code: {reason_code}")
 
-            # In enforced mode, UNKNOWN_ERROR is forbidden
+            # In enforced mode, UNKNOWN_ERROR is forbidden (UNCLASSIFIED_ERROR_FORBIDDEN)
             if enforced and reason_code == "UNKNOWN_ERROR":
-                raise EvidenceError("UNKNOWN_ERROR forbidden in enforced mode")
+                raise EvidenceError("UNCLASSIFIED_ERROR_FORBIDDEN: UNKNOWN_ERROR not allowed in enforced mode")
 
     return True
 
@@ -424,6 +502,15 @@ def is_evidence_valid_for_pass(
     try:
         evidence = load_and_validate_evidence(project_root, enforced=True)
     except EvidenceError:
+        return False
+
+    # Check schema_version
+    if evidence.get("schema_version") != SCHEMA_VERSION:
+        return False
+
+    # Check cmdline_ssot.sha256 present
+    cmdline = evidence.get("cmdline_ssot", {})
+    if not cmdline.get("sha256"):
         return False
 
     # Check sources_result matches

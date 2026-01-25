@@ -1,7 +1,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T19:45:00Z
-# Purpose: Commit discipline gate (fail-closed validation)
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-25T20:00:00Z
+# Purpose: Commit discipline gate (fail-closed validation) v1.4
 # === END SIGNATURE ===
 """
 Commit Gate - Enforces commit discipline before push.
@@ -108,7 +110,13 @@ def check_manifest() -> GateResult:
 
 def check_policy_preflight() -> GateResult:
     """
-    Check policy_preflight gate (spider evidence).
+    Check policy_preflight gate (spider evidence v1.4).
+
+    Validates:
+    - schema_version: "spider_health_v1"
+    - cmdline_ssot.sha256: present
+    - run_id with __cmd= binding
+    - policy_egress.allowlist_sha256
     """
     health_path = PROJECT_ROOT / "state" / "health" / "spider_health.json"
 
@@ -122,14 +130,41 @@ def check_policy_preflight() -> GateResult:
     try:
         data = json.loads(health_path.read_text(encoding="utf-8"))
 
+        # Check schema_version (REQUIRED in v1.4)
+        schema_version = data.get("schema_version")
+        if schema_version != "spider_health_v1":
+            return GateResult(
+                name="policy_preflight",
+                passed=False,
+                reason=f"Invalid schema_version: {schema_version}, expected spider_health_v1",
+            )
+
         # Check required fields
-        required = ["run_id", "policy_egress", "evidence_line"]
+        required = ["schema_version", "run_id", "cmdline_ssot", "policy_egress", "evidence_line"]
         missing = [f for f in required if f not in data]
         if missing:
             return GateResult(
                 name="policy_preflight",
                 passed=False,
                 reason=f"Missing fields: {missing}",
+            )
+
+        # Check cmdline_ssot.sha256 (REQUIRED in v1.4)
+        cmdline = data.get("cmdline_ssot", {})
+        if not cmdline.get("sha256"):
+            return GateResult(
+                name="policy_preflight",
+                passed=False,
+                reason="Missing cmdline_ssot.sha256",
+            )
+
+        # Check run_id contains __cmd= binding
+        run_id = data.get("run_id", "")
+        if "__cmd=" not in run_id:
+            return GateResult(
+                name="policy_preflight",
+                passed=False,
+                reason="run_id missing __cmd= binding (SSoT)",
             )
 
         # Check policy_egress
@@ -144,7 +179,7 @@ def check_policy_preflight() -> GateResult:
         return GateResult(
             name="policy_preflight",
             passed=True,
-            reason=f"Evidence valid, run_id={data['run_id'][:40]}...",
+            reason=f"Evidence v1.4 valid, run_id={run_id[:50]}...",
             evidence_path=str(health_path),
         )
     except Exception as e:

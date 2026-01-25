@@ -1,7 +1,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T19:30:00Z
-# Purpose: Spider reason_code closed dictionary (fail-closed)
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-25T20:00:00Z
+# Purpose: Spider reason_code closed dictionary (fail-closed) v1.4
 # === END SIGNATURE ===
 """
 Spider Reason Codes Module
@@ -37,6 +39,16 @@ class Stage(str, Enum):
     WRITE = "WRITE"
     CLASSIFY = "CLASSIFY"
     PUBLISH = "PUBLISH"
+    INTERNAL = "INTERNAL"  # For internal validation errors
+
+
+class EnforcedModeViolation(Exception):
+    """
+    Raised when UNKNOWN_ERROR is used in enforced mode.
+
+    Error code: UNCLASSIFIED_ERROR_FORBIDDEN
+    """
+    pass
 
 
 class ReasonCode(str, Enum):
@@ -92,6 +104,9 @@ class ReasonCode(str, Enum):
 
     # === UNKNOWN (forbidden in enforced mode) ===
     UNKNOWN_ERROR = "UNKNOWN_ERROR"
+
+    # === INTERNAL (enforced mode violations) ===
+    UNCLASSIFIED_ERROR_FORBIDDEN = "UNCLASSIFIED_ERROR_FORBIDDEN"  # UNKNOWN_ERROR in enforced mode
 
 
 @dataclass
@@ -297,6 +312,13 @@ REASON_CODE_REGISTRY: Dict[ReasonCode, ReasonCodeInfo] = {
         stage=Stage.FETCH, retryable=False, severity="error",
         description="Unknown error (forbidden in enforced mode)"
     ),
+
+    # INTERNAL
+    ReasonCode.UNCLASSIFIED_ERROR_FORBIDDEN: ReasonCodeInfo(
+        code=ReasonCode.UNCLASSIFIED_ERROR_FORBIDDEN,
+        stage=Stage.INTERNAL, retryable=False, severity="error",
+        description="UNKNOWN_ERROR used in enforced mode - must classify the error"
+    ),
 }
 
 
@@ -307,6 +329,24 @@ def is_valid_reason_code(code: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def check_enforced_mode_allowed(code: ReasonCode, enforced: bool = True) -> None:
+    """
+    Check if reason_code is allowed in current mode.
+
+    Args:
+        code: Reason code to check
+        enforced: True if in enforced mode
+
+    Raises:
+        EnforcedModeViolation: If UNKNOWN_ERROR used in enforced mode
+    """
+    if enforced and code == ReasonCode.UNKNOWN_ERROR:
+        raise EnforcedModeViolation(
+            "UNCLASSIFIED_ERROR_FORBIDDEN: UNKNOWN_ERROR is not allowed in enforced mode. "
+            "You must classify the error using map_exception_to_reason() or map_http_status_to_reason()."
+        )
 
 
 def get_reason_info(code: ReasonCode) -> ReasonCodeInfo:
