@@ -28,5 +28,8 @@ www.binance.com
 api.binance.com
 api.coingecko.com
 
+# === TESTNET (for verification) ===
+testnet.binance.vision
+
 # === TELEGRAM PUBLISHING ===
 api.telegram.org

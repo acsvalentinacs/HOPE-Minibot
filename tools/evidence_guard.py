@@ -303,7 +303,16 @@ def main() -> int:
     results = []
 
     for filepath in files_to_check:
-        print(f"Validating: {filepath.relative_to(PROJECT_ROOT)}")
+        # Handle both relative and absolute paths
+        filepath = Path(filepath)
+        if not filepath.is_absolute():
+            filepath = PROJECT_ROOT / filepath
+
+        try:
+            display_path = filepath.relative_to(PROJECT_ROOT)
+        except ValueError:
+            display_path = filepath
+        print(f"Validating: {display_path}")
 
         is_valid, schema_version, errors = validate_evidence(filepath)
 
@@ -317,7 +326,7 @@ def main() -> int:
                 is_valid = False
 
         result = {
-            "path": str(filepath.relative_to(PROJECT_ROOT)),
+            "path": str(display_path),
             "valid": is_valid,
             "schema_version": schema_version,
             "errors": errors,
