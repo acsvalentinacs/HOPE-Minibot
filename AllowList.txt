@@ -1,8 +1,8 @@
 # HTTP allowlist (HOSTS ONLY). Wildcards forbidden. Fail-closed.
 # Profile: COMBINED
-# Generated: 2026-01-23T12:52:57Z
-# Source: sources_registry.json
-# Count: 225
+# Generated: 2026-01-25T10:30:00Z
+# Source: sources_registry.json + BASELINE-BUMP by owner
+# Count: 234
 #
 1inch.io
 aave.com
@@ -10,6 +10,10 @@ academy.binance.com
 algorand.com
 api.arbiscan.io
 api.binance.com
+api1.binance.com
+api2.binance.com
+api3.binance.com
+api4.binance.com
 api.bitfinex.com
 api.blockchair.com
 api.bscscan.com
@@ -23,6 +27,7 @@ api.kraken.com
 api.messari.io
 api.polygonscan.com
 api.snowtrace.io
+api.telegram.org
 api.whale-alert.io
 aptos.dev
 aptosfoundation.org
@@ -70,6 +75,7 @@ cosmos.network
 cryptoquant.com
 curve.fi
 cve.mitre.org
+dapi.binance.com
 data.binance.vision
 decrypt.co
 defillama.com
@@ -85,6 +91,7 @@ esma.europa.eu
 ethereum.org
 etherscan.io
 explorer.ton.org
+fapi.binance.com
 fatf-gafi.org
 fca.org.uk
 federalreserve.gov
@@ -151,8 +158,10 @@ status.coinbase.com
 status.kraken.com
 status.openai.com
 stellar.org
+stream.binance.com
 sui.io
 testnet.binance.vision
+testnet.binancefuture.com
 tether.to
 tezos.com
 theblock.co

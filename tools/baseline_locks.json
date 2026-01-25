@@ -3,21 +3,21 @@
     "created_by": "Claude (opus-4)",
     "created_at": "2026-01-23T15:00:00Z",
     "modified_by": "Claude (opus-4)",
-    "modified_at": "2026-01-23T15:00:00Z"
+    "modified_at": "2026-01-25T10:30:00Z"
   },
-  "version": 1,
+  "version": 2,
   "locks": [
     {
       "path": "AllowList.txt",
       "mode": "whole-file",
-      "baseline_sha256": "sha256:50f361943de1345554d8e52f9a18d99c1a423b0f1d6d7048076943458944a991",
-      "locked_at_utc": "2026-01-23T15:00:00Z",
+      "baseline_sha256": "sha256:6447932c97a40efc9fa02c8c442cbedcc6f4dbe0806eb5e1309ec072cc7119d3",
+      "locked_at_utc": "2026-01-25T10:30:00Z",
       "locked_by": "Claude (opus-4)",
       "verification": [
         "python tools/audit_allowlist.py --root . --file AllowList.txt",
         "powershell -NoProfile -ExecutionPolicy Bypass -File .\\tools\\hope_gate.ps1 -Mode Release -AllowOffline"
       ],
-      "rationale": "AllowList accepted (16 hosts, no wildcards); freeze to prevent regressions"
+      "rationale": "BASELINE-BUMP by owner: added 9 hosts (api1-4.binance.com, stream/fapi/dapi.binance.com, testnet.binancefuture.com, api.telegram.org)"
     }
   ]
 }
