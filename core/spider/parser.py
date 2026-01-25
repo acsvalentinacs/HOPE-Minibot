@@ -298,28 +298,22 @@ def parse_binance_announcements(
     json_content: bytes,
     source_id: str,
     max_items: int = 50,
+    debug: bool = False,
 ) -> List[RSSItem]:
     """
     Parse Binance announcement API JSON response.
 
-    Expected format:
-    {
-        "data": {
-            "articles": [
-                {
-                    "id": 123,
-                    "code": "abc123",
-                    "title": "...",
-                    "releaseDate": 1706184000000  // Unix ms
-                }
-            ]
-        }
-    }
+    Supports multiple response formats:
+    1. {"data": {"articles": [...]}}
+    2. {"data": {"catalogs": [{"articles": [...]}]}}
+    3. {"data": [...]} (direct array)
+    4. {"articles": [...]}
 
     Args:
         json_content: Raw JSON bytes
         source_id: Source configuration ID
         max_items: Maximum items to return
+        debug: If True, print structure info for debugging
 
     Returns:
         List of RSSItem objects
@@ -328,6 +322,7 @@ def parse_binance_announcements(
         ParseError: If JSON is malformed
     """
     import json
+    import sys
 
     try:
         data = json.loads(json_content)
@@ -336,18 +331,49 @@ def parse_binance_announcements(
 
     items = []
 
-    # Navigate to articles array
+    # Debug: show response structure
+    if debug:
+        print(f"[DEBUG] Binance response type: {type(data).__name__}", file=sys.stderr)
+        if isinstance(data, dict):
+            print(f"[DEBUG] Top-level keys: {list(data.keys())}", file=sys.stderr)
+            if "data" in data:
+                d = data["data"]
+                print(f"[DEBUG] data type: {type(d).__name__}", file=sys.stderr)
+                if isinstance(d, dict):
+                    print(f"[DEBUG] data keys: {list(d.keys())}", file=sys.stderr)
+                    if "catalogs" in d:
+                        print(f"[DEBUG] catalogs count: {len(d.get('catalogs', []))}", file=sys.stderr)
+
+    # Navigate to articles array - try multiple structures
     articles = []
+
     if isinstance(data, dict):
-        if "data" in data and isinstance(data["data"], dict):
-            articles = data["data"].get("articles", [])
+        inner = data.get("data")
+
+        if isinstance(inner, dict):
+            # Format 1: {"data": {"articles": [...]}}
+            if "articles" in inner:
+                articles = inner["articles"]
+
+            # Format 2: {"data": {"catalogs": [{"articles": [...]}]}}
+            elif "catalogs" in inner and isinstance(inner["catalogs"], list):
+                for catalog in inner["catalogs"]:
+                    if isinstance(catalog, dict) and "articles" in catalog:
+                        articles.extend(catalog["articles"])
+
+        # Format 3: {"data": [...]}
+        elif isinstance(inner, list):
+            articles = inner
+
+        # Format 4: {"articles": [...]}
         elif "articles" in data:
             articles = data["articles"]
-        elif "data" in data and isinstance(data["data"], list):
-            articles = data["data"]
+
+    if debug:
+        print(f"[DEBUG] Found {len(articles)} articles", file=sys.stderr)
 
     if not isinstance(articles, list):
-        raise ParseError("Cannot find articles array in Binance response")
+        raise ParseError(f"Cannot find articles array in Binance response (got {type(articles).__name__})")
 
     for article in articles[:max_items]:
         if not isinstance(article, dict):

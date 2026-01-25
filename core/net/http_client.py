@@ -110,6 +110,7 @@ def http_get(
     process: str = "http_get",
     follow_redirects: bool = True,
     max_redirects: int = 5,
+    extra_headers: Optional[dict] = None,
 ) -> Tuple[int, bytes, str]:
     """
     Perform HTTP GET with egress policy enforcement.
@@ -124,6 +125,7 @@ def http_get(
         process: Process name for audit log
         follow_redirects: Whether to follow redirects (within same host)
         max_redirects: Maximum redirect hops
+        extra_headers: Additional HTTP headers (e.g., for API authentication)
 
     Returns:
         Tuple of (status_code, body_bytes, final_url)
@@ -190,12 +192,14 @@ def http_get(
     ssl_context = ssl.create_default_context()
 
     while True:
-        # Build request
+        # Build request with headers
+        headers = {'User-Agent': user_agent}
+        if extra_headers:
+            headers.update(extra_headers)
+
         req = Request(
             current_url,
-            headers={
-                'User-Agent': user_agent,
-            },
+            headers=headers,
             method='GET',
         )
 

@@ -53,9 +53,9 @@
     },
     {
       "id": "binance_announcements",
-      "name": "Binance Announcements",
+      "name": "Binance Announcements (General)",
       "type": "binance_announcements",
-      "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&pageNo=1&pageSize=20",
+      "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=48&pageNo=1&pageSize=20",
       "enabled": true,
       "priority": 1,
       "category": "listing",
@@ -64,9 +64,9 @@
     },
     {
       "id": "binance_new_listings",
-      "name": "Binance New Listings",
+      "name": "Binance New Cryptocurrency Listings",
       "type": "binance_announcements",
-      "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=48&pageNo=1&pageSize=20",
+      "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=161&pageNo=1&pageSize=20",
       "enabled": true,
       "priority": 1,
       "category": "listing",

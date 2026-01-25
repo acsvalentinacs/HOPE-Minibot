@@ -34,6 +34,31 @@ from core.spider.parser import (
     ParseError,
 )
 from core.spider.dedup import DedupStore
+from core.spider.health import HealthTracker, categorize_error, ErrorCategory
+
+
+# Browser-like headers for Binance API (avoids 400/403 errors)
+BINANCE_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.binance.com",
+    "Referer": "https://www.binance.com/en/support/announcement/new-cryptocurrency-listing",
+    "sec-ch-ua": '"Chromium";v="120", "Not?A_Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+}
+
+# Sources that MUST return items (if 0 items = silent failure)
+SOURCES_MUST_HAVE_ITEMS = {
+    "coindesk_rss",
+    "cointelegraph_rss",
+    "decrypt_rss",
+    "theblock_rss",
+    # Note: binance_announcements can legitimately have 0 if API returns empty
+}
 
 
 class CollectorMode(Enum):
@@ -136,6 +161,7 @@ class NewsCollector:
         dedup_store: Optional[DedupStore] = None,
         output_path: Optional[Path] = None,
         project_root: Optional[Path] = None,
+        health_tracker: Optional[HealthTracker] = None,
     ):
         """
         Initialize collector.
@@ -145,6 +171,7 @@ class NewsCollector:
             dedup_store: Deduplication store (creates default if None)
             output_path: Path to write collected items JSONL
             project_root: Project root for resolving paths
+            health_tracker: Health tracker for monitoring (creates default if None)
         """
         self._mode = mode
         self._project_root = project_root or Path(__file__).resolve().parent.parent.parent
@@ -156,6 +183,10 @@ class NewsCollector:
         if output_path is None:
             output_path = self._project_root / "state" / "news_items.jsonl"
         self._output_path = output_path
+
+        if health_tracker is None:
+            health_tracker = HealthTracker(project_root=self._project_root)
+        self._health = health_tracker
 
     def collect(
         self,
@@ -211,13 +242,29 @@ class NewsCollector:
                     result.duplicate_items += (
                         src_result.items_count - src_result.new_items_count
                     )
+                    # Record success in health tracker
+                    self._health.record_success(source.id, src_result.items_count)
                 else:
                     result.sources_failed += 1
+                    # Record failure in health tracker
+                    error_category = self._health.record_failure(
+                        source.id, src_result.error or "Unknown error"
+                    )
+
+                    # In STRICT mode, CLIENT_BUG errors should stop immediately
                     if self._mode == CollectorMode.STRICT:
                         result.fatal_error = (
                             f"Source {source.id} failed: {src_result.error}"
                         )
                         break
+                    # In LENIENT mode, CLIENT_BUG should still be flagged
+                    elif error_category == ErrorCategory.CLIENT_BUG:
+                        # Log but continue - this is a bug we need to fix
+                        import sys
+                        print(
+                            f"[CRITICAL] {source.id}: CLIENT BUG detected - {src_result.error}",
+                            file=sys.stderr
+                        )
 
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {e}"
@@ -255,11 +302,17 @@ class NewsCollector:
         start_ms = time.monotonic_ns() // 1_000_000
 
         try:
+            # Use browser-like headers for Binance sources
+            extra_headers = None
+            if source.source_type == SourceType.BINANCE_ANN:
+                extra_headers = BINANCE_HEADERS
+
             # Fetch via egress-controlled http_get
             status, body, final_url = http_get(
                 source.url,
                 timeout_sec=30,
                 process=f"spider:{source.id}",
+                extra_headers=extra_headers,
             )
 
             latency_ms = (time.monotonic_ns() // 1_000_000) - start_ms

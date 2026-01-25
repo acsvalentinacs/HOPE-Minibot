@@ -30,6 +30,12 @@ from core.spider.dedup import (
     DedupStore,
     is_duplicate,
 )
+from core.spider.health import (
+    HealthTracker,
+    HealthStatus,
+    ErrorCategory,
+    categorize_error,
+)
 
 __all__ = [
     # Sources
@@ -48,4 +54,9 @@ __all__ = [
     # Dedup
     "DedupStore",
     "is_duplicate",
+    # Health
+    "HealthTracker",
+    "HealthStatus",
+    "ErrorCategory",
+    "categorize_error",
 ]
