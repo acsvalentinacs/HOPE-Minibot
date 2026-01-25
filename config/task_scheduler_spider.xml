@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+=== AI SIGNATURE ===
+Created by: Claude (opus-4)
+Created at (UTC): 2026-01-25T16:45:00Z
+Purpose: Task Scheduler template for HOPE News Spider
+=== END SIGNATURE ===
+
+INSTALLATION:
+1. Open Task Scheduler (taskschd.msc)
+2. Action -> Import Task...
+3. Select this file
+4. Adjust username/password in Security options
+5. Enable the task
+
+Or via PowerShell (Admin):
+  Register-ScheduledTask -Xml (Get-Content "config\task_scheduler_spider.xml" -Raw) -TaskName "HOPE Spider" -User $env:USERNAME
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Date>2026-01-25T16:45:00</Date>
+    <Author>Claude (opus-4)</Author>
+    <Description>HOPE News Spider - Collects crypto news from RSS feeds and Binance announcements every 15 minutes</Description>
+    <URI>\HOPE Spider</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <!-- Run every 15 minutes -->
+    <TimeTrigger>
+      <Repetition>
+        <Interval>PT15M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>2026-01-25T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+    <!-- Also run at user logon -->
+    <LogonTrigger>
+      <Delay>PT2M</Delay>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>kirillDev</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <DisallowStartOnRemoteAppSession>false</DisallowStartOnRemoteAppSession>
+    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-ExecutionPolicy Bypass -NoProfile -File "C:\Users\kirillDev\Desktop\TradingBot\minibot\scripts\run_spider.ps1"</Arguments>
+      <WorkingDirectory>C:\Users\kirillDev\Desktop\TradingBot\minibot</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
