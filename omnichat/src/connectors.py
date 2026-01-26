@@ -1,7 +1,7 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
-# Modified at: 2026-01-26T12:00:00Z
+# Modified at: 2026-01-26T12:55:00Z
 # Purpose: AI Agent connectors for HOPE OMNI-CHAT
 # Security: Secrets masking implemented
 # === END SIGNATURE ===
@@ -158,7 +158,7 @@ class GeminiAgent(BaseAgent):
             import google.generativeai as genai
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(
-                'gemini-1.0-pro',
+                'gemini-1.5-flash',
                 system_instruction=self.SYSTEM_PROMPT
             )
             self.chat_session = self.model.start_chat(history=[])
