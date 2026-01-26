@@ -129,9 +129,9 @@ class HopeOmniChat(App):
         history_path = Path(__file__).parent / "chat_history.jsonl"
         self.bus = EventBus(history_path=history_path)
         self.bus.set_callbacks(
-            on_message=self._on_message,
-            on_typing=self._on_typing,
-            on_stats_update=self._on_stats_update,
+            on_message=self._handle_chat_message,
+            on_typing=self._handle_typing,
+            on_stats_update=self._handle_stats_update,
         )
         self._typing_agents: set[str] = set()
 
@@ -175,30 +175,39 @@ class HopeOmniChat(App):
         """Focus input on mount."""
         self.query_one("#message-input", Input).focus()
 
-    def _on_message(self, message: ChatMessage) -> None:
-        """Handle new message from bus."""
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        chat_log.mount(MessageWidget(message))
-        chat_log.scroll_end(animate=False)
+    def _handle_chat_message(self, message: ChatMessage) -> None:
+        """Handle new message from bus. Safe to call anytime."""
+        try:
+            chat_log = self.query_one("#chat-log", VerticalScroll)
+            chat_log.mount(MessageWidget(message))
+            chat_log.scroll_end(animate=False)
+        except Exception:
+            pass  # Ignore if UI not ready
 
-    def _on_typing(self, agent_name: str, is_typing: bool) -> None:
+    def _handle_typing(self, agent_name: str, is_typing: bool) -> None:
         """Handle typing indicator."""
-        if is_typing:
-            self._typing_agents.add(agent_name)
-        else:
-            self._typing_agents.discard(agent_name)
+        try:
+            if is_typing:
+                self._typing_agents.add(agent_name)
+            else:
+                self._typing_agents.discard(agent_name)
 
-        indicator = self.query_one("#typing-indicator", Static)
-        if self._typing_agents:
-            names = ", ".join(sorted(self._typing_agents))
-            indicator.update(f"⌛ {names} печатает...")
-        else:
-            indicator.update("")
+            indicator = self.query_one("#typing-indicator", Static)
+            if self._typing_agents:
+                names = ", ".join(sorted(self._typing_agents))
+                indicator.update(f"⌛ {names} печатает...")
+            else:
+                indicator.update("")
+        except Exception:
+            pass  # Ignore if UI not ready
 
-    def _on_stats_update(self, stats: SessionStats) -> None:
+    def _handle_stats_update(self, stats: SessionStats) -> None:
         """Handle stats update."""
-        cost_display = self.query_one(CostDisplay)
-        cost_display.update_cost(stats)
+        try:
+            cost_display = self.query_one(CostDisplay)
+            cost_display.update_cost(stats)
+        except Exception:
+            pass  # Ignore if UI not ready
 
     async def _send_message(self, target: str | None = None) -> None:
         """Send message from input. SECURITY: Fail-closed on secrets."""
@@ -211,7 +220,7 @@ class HopeOmniChat(App):
         # SECURITY: FAIL-CLOSED - Block messages containing secrets
         if contains_secret(text):
             # Show warning but DO NOT send to API
-            self._on_message(ChatMessage(
+            self._handle_chat_message(ChatMessage(
                 role=MessageRole.SYSTEM,
                 content=(
                     "🚫 BLOCKED: Сообщение содержит секрет (API key/token)!\n"
@@ -256,7 +265,7 @@ class HopeOmniChat(App):
         """Export chat to Markdown."""
         export_path = Path(__file__).parent / f"chat_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
         self.bus.export_to_markdown(export_path)
-        self._on_message(ChatMessage(
+        self._handle_chat_message(ChatMessage(
             role=MessageRole.SYSTEM,
             content=f"📁 Чат экспортирован: {export_path.name}",
         ))
