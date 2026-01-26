@@ -158,7 +158,7 @@ class GeminiAgent(BaseAgent):
             import google.generativeai as genai
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(
-                'gemini-2.0-flash',
+                'gemini-2.5-flash',
                 system_instruction=self.SYSTEM_PROMPT
             )
             self.chat_session = self.model.start_chat(history=[])
