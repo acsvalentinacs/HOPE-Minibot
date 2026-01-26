@@ -14,18 +14,7 @@ echo.
 
 cd /d "%~dp0"
 
-REM Check if .env exists
-if not exist ".env" (
-    echo [ERROR] .env file not found!
-    echo.
-    echo Please create .env with:
-    echo   GEMINI_API_KEY=your_key
-    echo   OPENAI_API_KEY=your_key
-    echo   ANTHROPIC_API_KEY=your_key
-    echo.
-    pause
-    exit /b 1
-)
+REM Keys loaded from C:\secrets\hope\.env (main secrets file)
 
 REM Use project venv if available
 set VENV_PYTHON=C:\Users\kirillDev\Desktop\TradingBot\.venv\Scripts\python.exe
