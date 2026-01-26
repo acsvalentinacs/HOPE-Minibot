@@ -26,6 +26,10 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
+# SECURITY: Configure safe logging BEFORE any other imports
+from src.security import configure_safe_logging
+configure_safe_logging(log_file=str(Path(__file__).parent / "omnichat.log"))
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll

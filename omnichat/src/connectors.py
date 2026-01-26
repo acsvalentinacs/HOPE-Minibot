@@ -17,7 +17,6 @@ SECURITY: All API keys are masked in logs and error messages.
 from __future__ import annotations
 
 import os
-import re
 import asyncio
 import logging
 from abc import ABC, abstractmethod
@@ -36,57 +35,14 @@ if _main_secrets.exists():
     load_dotenv(_main_secrets, override=False)  # Don't override local values
 
 
-# === SECURITY: SECRET MASKING ===
+# === SECURITY: USE CENTRALIZED REDACTION ===
+# Import from security.py - single source of truth for secret masking
+from .security import redact
 
-# Patterns for API keys (prefixes)
-_SECRET_PATTERNS = [
-    r'AIza[0-9A-Za-z_-]{35}',           # Google/Gemini
-    r'sk-[a-zA-Z0-9]{20,}',              # OpenAI
-    r'sk-ant-[a-zA-Z0-9_-]{20,}',        # Anthropic
-    r'[a-f0-9]{64}',                      # Generic 64-char hex (tokens)
-]
+# Alias for backward compatibility
+mask_secret = redact
 
-_COMPILED_PATTERNS = [re.compile(p) for p in _SECRET_PATTERNS]
-
-
-def mask_secret(text: str) -> str:
-    """
-    Mask API keys and secrets in text for safe logging.
-
-    Example: sk-proj-abc123... -> sk-pr***
-    """
-    if not text:
-        return ""
-
-    masked = text
-    for pattern in _COMPILED_PATTERNS:
-        masked = pattern.sub(lambda m: m.group()[:6] + "***", masked)
-
-    return masked
-
-
-def safe_log(message: str) -> str:
-    """Return masked message safe for logging."""
-    return mask_secret(message)
-
-
-class SecureLogger:
-    """Logger that automatically masks secrets."""
-
-    def __init__(self, name: str):
-        self._logger = logging.getLogger(name)
-
-    def info(self, msg: str) -> None:
-        self._logger.info(mask_secret(msg))
-
-    def error(self, msg: str) -> None:
-        self._logger.error(mask_secret(msg))
-
-    def warning(self, msg: str) -> None:
-        self._logger.warning(mask_secret(msg))
-
-
-_log = SecureLogger("omnichat.connectors")
+_log = logging.getLogger("omnichat.connectors")
 
 
 @dataclass

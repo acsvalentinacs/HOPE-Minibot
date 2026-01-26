@@ -24,6 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional, Any
 from .connectors import BaseAgent, create_all_agents
+from .security import redact_any
 
 
 class MessageRole(Enum):
@@ -126,11 +127,13 @@ class EventBus:
             self._on_stats_update(self.stats)
 
     def _save_message(self, msg: ChatMessage) -> None:
-        """Append message to JSONL history file."""
+        """Append message to JSONL history file. SECURITY: Redacts secrets."""
         if self.history_path:
             try:
+                # SECURITY: Redact any secrets before persisting to disk
+                safe_dict = redact_any(msg.to_dict())
                 with open(self.history_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(msg.to_dict(), ensure_ascii=False) + "\n")
+                    f.write(json.dumps(safe_dict, ensure_ascii=False) + "\n")
             except Exception:
                 pass  # Fail silently for history
 

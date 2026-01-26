@@ -1,0 +1,41 @@
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-26T12:45:00Z
+# Purpose: Git ignore for HOPE OMNI-CHAT
+# === END SIGNATURE ===
+
+# Secrets - NEVER commit
+.env
+
+# But allow the template
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+*.egg
+
+# Logs
+*.log
+omnichat.log
+
+# Chat history (may contain secrets)
+chat_history.jsonl
+
+# Exports (user-generated)
+chat_export_*.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
