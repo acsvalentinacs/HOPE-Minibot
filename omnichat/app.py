@@ -284,9 +284,16 @@ class HopeOmniChat(App):
 
 
 def main() -> None:
-    """Entry point."""
-    app = HopeOmniChat()
-    app.run()
+    """Entry point with crash protection."""
+    try:
+        app = HopeOmniChat()
+        app.run()
+    except KeyboardInterrupt:
+        print("\n👋 OMNI-CHAT закрыт пользователем (Ctrl+C)")
+    except Exception as e:
+        print(f"\n❌ Критическая ошибка: {e}")
+        print("Нажмите Enter для выхода...")
+        input()
 
 
 if __name__ == "__main__":
