@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 # SECURITY: Configure safe logging BEFORE any other imports
-from src.security import configure_safe_logging
+from src.security import configure_safe_logging, contains_secret, redact
 configure_safe_logging(log_file=str(Path(__file__).parent / "omnichat.log"))
 
 from textual.app import App, ComposeResult
@@ -201,11 +201,27 @@ class HopeOmniChat(App):
         cost_display.update_cost(stats)
 
     async def _send_message(self, target: str | None = None) -> None:
-        """Send message from input."""
+        """Send message from input. SECURITY: Fail-closed on secrets."""
         input_widget = self.query_one("#message-input", Input)
         text = input_widget.value.strip()
 
         if not text:
+            return
+
+        # SECURITY: FAIL-CLOSED - Block messages containing secrets
+        if contains_secret(text):
+            # Show warning but DO NOT send to API
+            self._on_message(ChatMessage(
+                role=MessageRole.SYSTEM,
+                content=(
+                    "🚫 BLOCKED: Сообщение содержит секрет (API key/token)!\n"
+                    f"Обнаружено: {redact(text)}\n"
+                    "Сообщение НЕ отправлено агентам. Удалите секрет и попробуйте снова."
+                ),
+            ))
+            # Clear input but keep focus
+            input_widget.value = ""
+            input_widget.focus()
             return
 
         input_widget.value = ""
