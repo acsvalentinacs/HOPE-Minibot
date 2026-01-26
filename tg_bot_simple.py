@@ -3,7 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-24 14:00:00 UTC
+# Modified at: 2026-01-26T10:30:00Z
+# v2.3.2: Smart executor - blocks start without tunnel, prevents error spam
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -97,6 +98,14 @@ PIDS_DIR = STATE_DIR / "pids"
 
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+# === RATE LIMITING (v2.3.0 - GPT TZ) ===
+RATE_LIMIT_MAX_COMMANDS = 10  # max commands per window
+RATE_LIMIT_WINDOW_SEC = 60    # window in seconds
+_rate_limit_store: dict[int, list[float]] = {}  # user_id -> [timestamps]
+
+BOT_AUDIT_LOG = STATE_DIR / "bot_audit.jsonl"
+BOT_ERROR_LOG = STATE_DIR / "bot_errors.jsonl"
 PIDS_DIR.mkdir(parents=True, exist_ok=True)
 
 SECRETS_ENV_PATH = Path(r"C:\secrets\hope\.env")
@@ -244,6 +253,154 @@ def _fmt_duration(sec: float) -> str:
     h = sec_i // 3600
     m = (sec_i % 3600) // 60
     return f"{h}h {m}m"
+
+
+# === RATE LIMITING & AUDIT (v2.3.0 - GPT TZ) ===
+
+def _check_rate_limit(user_id: int) -> tuple[bool, int]:
+    """
+    Check if user is within rate limit.
+    Returns (allowed, remaining_commands).
+    """
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW_SEC
+
+    # Get user's command history
+    if user_id not in _rate_limit_store:
+        _rate_limit_store[user_id] = []
+
+    # Clean old entries
+    _rate_limit_store[user_id] = [ts for ts in _rate_limit_store[user_id] if ts > cutoff]
+
+    # Check limit
+    count = len(_rate_limit_store[user_id])
+    if count >= RATE_LIMIT_MAX_COMMANDS:
+        return False, 0
+
+    # Record this command
+    _rate_limit_store[user_id].append(now)
+    return True, RATE_LIMIT_MAX_COMMANDS - count - 1
+
+
+def _audit_log(user_id: int, command: str, success: bool, details: str = "") -> None:
+    """Log command to audit file."""
+    try:
+        record = {
+            "ts": time.time(),
+            "ts_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "user_id": user_id,
+            "command": command,
+            "success": success,
+            "details": details[:200] if details else "",
+        }
+        with open(BOT_AUDIT_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # Fail silently - audit should not break commands
+
+
+def _log_error(error_type: str, message: str, context: dict | None = None) -> None:
+    """Log error to error file."""
+    try:
+        record = {
+            "ts": time.time(),
+            "ts_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "type": error_type,
+            "message": message[:500],
+            "context": context or {},
+        }
+        with open(BOT_ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _get_recent_errors(n: int = 10) -> list[dict]:
+    """Get last N errors from error log."""
+    try:
+        if not BOT_ERROR_LOG.exists():
+            return []
+        lines = BOT_ERROR_LOG.read_text(encoding="utf-8").strip().split("\n")
+        errors = []
+        for line in lines[-n:]:
+            if line.strip():
+                try:
+                    errors.append(json.loads(line))
+                except Exception:
+                    pass
+        return errors
+    except Exception:
+        return []
+
+
+# === FRIEND CHAT HELPERS (v2.2.0) ===
+
+CHAT_BRIDGE_URL = "http://127.0.0.1:18765"
+# Scripts are in minibot/scripts/, not ROOT/scripts/
+MINIBOT_DIR = THIS_FILE.parent if THIS_FILE.parent.name.lower() == "minibot" else ROOT / "minibot"
+CHAT_SCRIPTS = {
+    "tunnel": MINIBOT_DIR / "scripts" / "friend_chat_tunnel.cmd",
+    "executor": MINIBOT_DIR / "scripts" / "run_claude_executor.cmd",
+    "gpt_agent": MINIBOT_DIR / "scripts" / "run_gpt_agent.cmd",
+    "claude_agent": MINIBOT_DIR / "scripts" / "run_claude_agent.cmd",
+}
+
+
+def _chat_health() -> dict:
+    """
+    Check Friend Chat system health.
+    Returns dict with status of tunnel, bridge, and agents.
+    """
+    import socket
+    from urllib.request import Request, urlopen
+    from urllib.error import URLError, HTTPError
+
+    result = {
+        "tunnel_ok": False,
+        "bridge_ok": False,
+        "bridge_version": None,
+        "error": None,
+    }
+
+    # Check if tunnel port is listening
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        r = sock.connect_ex(("127.0.0.1", 18765))
+        sock.close()
+        result["tunnel_ok"] = (r == 0)
+    except Exception:
+        result["tunnel_ok"] = False
+
+    if not result["tunnel_ok"]:
+        result["error"] = "Tunnel not connected"
+        return result
+
+    # Check bridge health
+    try:
+        req = Request(f"{CHAT_BRIDGE_URL}/healthz", method="GET")
+        with urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            result["bridge_ok"] = data.get("ok", False)
+            result["bridge_version"] = data.get("version", "?")
+    except HTTPError as e:
+        result["error"] = f"Bridge HTTP {e.code}"
+    except URLError as e:
+        result["error"] = f"Bridge: {e.reason}"
+    except Exception as e:
+        result["error"] = f"Bridge: {type(e).__name__}"
+
+    return result
+
+
+def _chat_status_icon() -> str:
+    """Return status icon for chat: 🟢 OK, 🟡 partial, 🔴 down."""
+    h = _chat_health()
+    if h["bridge_ok"]:
+        return "🟢"
+    if h["tunnel_ok"]:
+        return "🟡"
+    return "🔴"
 
 
 def _parse_allowed_ids(s: str) -> List[int]:
@@ -880,7 +1037,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v2.1.0-valuation-policy"
+    VERSION = "tgbot-v2.3.0-gpt-tz"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
@@ -903,11 +1060,23 @@ class HopeMiniBot:
             return True
         uid = update.effective_user.id if update.effective_user else None
         if uid in self.allowed_ids:
+            # Rate limiting check (v2.3.0 - GPT TZ)
+            allowed, remaining = _check_rate_limit(uid)
+            if not allowed:
+                await self._reply(
+                    update,
+                    f"⚠️ Rate limit: слишком много команд.\n"
+                    f"Подождите {RATE_LIMIT_WINDOW_SEC} секунд."
+                )
+                _log_error("rate_limit", f"User {uid} exceeded rate limit")
+                return False
             return True
         await self._reply(update, "⛔ Доступ запрещён.")
         return False
 
     def _panel_keyboard(self) -> InlineKeyboardMarkup:
+        # Chat status indicator
+        chat_icon = _chat_status_icon()
         buttons = [
             [
                 InlineKeyboardButton("🌅 УТРО", callback_data="hope_morning"),
@@ -931,6 +1100,9 @@ class HopeMiniBot:
             ],
             [
                 InlineKeyboardButton("🧱 Stack", callback_data="hope_stack"),
+                InlineKeyboardButton(f"{chat_icon} Чат", callback_data="hope_chat"),
+            ],
+            [
                 InlineKeyboardButton("ℹ️ Help", callback_data="hope_help"),
             ],
         ]
@@ -999,19 +1171,22 @@ class HopeMiniBot:
         if not await self._guard_admin(update):
             return
         txt = (
-            "🛠 Команды HOPEminiBOT:\n"
+            "🛠 Команды HOPEminiBOT v2.3:\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "/start — меню\n"
             "/panel — панель + кнопки\n"
             "/status — краткий статус\n"
-            "/balance — баланс (DRY: paper через HOPE_DRY_EQUITY_USD)\n"
+            "/health — 🏥 статус всех систем\n"
+            "/logs — 📋 последние ошибки\n"
+            "/balance — баланс\n"
             "/stop — статус STOP.flag\n"
-            "/stop_on — включить STOP.flag\n"
+            "/stop_on — включить STOP.flag ⚠️\n"
             "/stop_off — выключить STOP.flag\n"
             "/morning — 🌅 УТРО\n"
             "/night — 🌙 НОЧЬ\n"
-            "/restart — 🔄 RESTART (не блокирует)\n"
-            "/stack — 🧱 управление HOPE stack (START/STOP/FIXDUP)\n"
+            "/restart — 🔄 RESTART\n"
+            "/stack — 🧱 управление stack\n"
+            "/chat — 💬 чат друзей\n"
             "/signals — последние сигналы\n"
             "/trades — последние сделки\n"
             "/diag — диагностика\n"
@@ -1032,6 +1207,99 @@ class HopeMiniBot:
     ) -> None:
         await self._reply(update, f"🤖 HOPEminiBOT {self.VERSION}")
 
+    # === NEW COMMANDS v2.3.0 (GPT TZ) ===
+
+    async def cmd_health(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Quick system health overview - GPT TZ requirement."""
+        if not await self._guard_admin(update):
+            return
+
+        uid = update.effective_user.id if update.effective_user else 0
+        _audit_log(uid, "health", True)
+
+        # Gather all health info
+        h = _health()
+        engine_ok = bool(h.get("engine_ok", False))
+        mode = _mode_from_health(h)
+        uptime = _fmt_duration(float(h.get("uptime_sec", 0) or 0))
+
+        # IPC health (check local folders)
+        ipc_ok = False
+        ipc_msg = "?"
+        try:
+            ipc_dir = ROOT / "ipc"
+            if ipc_dir.exists():
+                claude_inbox = len(list((ipc_dir / "claude_inbox").glob("*.json"))) if (ipc_dir / "claude_inbox").exists() else 0
+                gpt_inbox = len(list((ipc_dir / "gpt_inbox").glob("*.json"))) if (ipc_dir / "gpt_inbox").exists() else 0
+                deadletter = len(list((ipc_dir / "deadletter").glob("*.json"))) if (ipc_dir / "deadletter").exists() else 0
+                ipc_ok = deadletter == 0
+                ipc_msg = f"claude={claude_inbox} gpt={gpt_inbox} dead={deadletter}"
+            else:
+                ipc_msg = "no ipc folder"
+        except Exception as e:
+            ipc_msg = str(e)[:30]
+
+        # Friend Chat health
+        chat_h = _chat_health()
+        tunnel_ok = chat_h.get("tunnel_ok", False)
+        bridge_ok = chat_h.get("bridge_ok", False)
+        bridge_ver = chat_h.get("bridge_version", "?")
+
+        # Bot process
+        bot_ok = True  # If we're responding, we're alive
+
+        # Telegram bot
+        tg_ok = True
+
+        # Build response
+        lines = [
+            "🏥 HOPE System Health",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"{'✅' if engine_ok else '❌'} Engine: {mode} ({uptime})",
+            f"{'✅' if ipc_ok else '⚠️'} IPC: {ipc_msg}",
+            f"{'✅' if tunnel_ok else '❌'} Tunnel: {'OK' if tunnel_ok else 'DOWN'}",
+            f"{'✅' if bridge_ok else '❌'} Bridge: {bridge_ver if bridge_ok else 'DOWN'}",
+            f"{'✅' if bot_ok else '❌'} Bot: OK",
+            f"{'✅' if tg_ok else '❌'} Telegram: OK",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+
+        all_ok = engine_ok and ipc_ok and tunnel_ok and bridge_ok
+        lines.append(f"Overall: {'✅ ALL OK' if all_ok else '⚠️ ISSUES DETECTED'}")
+
+        await self._reply(update, "\n".join(lines))
+
+    async def cmd_logs(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show recent errors - GPT TZ requirement."""
+        if not await self._guard_admin(update):
+            return
+
+        uid = update.effective_user.id if update.effective_user else 0
+        _audit_log(uid, "logs", True)
+
+        errors = _get_recent_errors(10)
+
+        if not errors:
+            await self._reply(update, "📋 Нет ошибок в логе.")
+            return
+
+        lines = ["📋 Последние ошибки:", "━━━━━━━━━━━━━━━━━━"]
+        for err in errors[-5:]:  # Show last 5
+            ts = err.get("ts_iso", "?")[:16]
+            etype = err.get("type", "?")
+            msg = err.get("message", "?")[:60]
+            lines.append(f"• {ts}")
+            lines.append(f"  [{etype}] {msg}")
+
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        lines.append(f"Всего: {len(errors)} ошибок")
+
+        await self._reply(update, "\n".join(lines))
+
     async def cmd_stop(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1043,15 +1311,35 @@ class HopeMiniBot:
     async def cmd_stop_on(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        """Stop trading - requires confirmation (GPT TZ: confirmations for dangerous actions)."""
         if not await self._guard_admin(update):
             return
+        # Show confirmation dialog instead of immediate action
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Да, остановить", callback_data="confirm_stop_on"),
+                InlineKeyboardButton("❌ Отмена", callback_data="cancel_action"),
+            ]
+        ])
+        await self._reply(
+            update,
+            "⚠️ ВНИМАНИЕ: Вы уверены что хотите ОСТАНОВИТЬ торговлю?\n"
+            "Это действие включит STOP.flag.",
+            keyboard
+        )
+
+    async def _do_stop_on(self, update: Update) -> None:
+        """Actually execute stop_on after confirmation."""
         try:
             STOP_FLAG.write_text(
                 f"STOP set by telegram at {time.strftime('%Y-%m-%d %H:%M:%S')}\n",
                 encoding="utf-8",
             )
+            uid = update.effective_user.id if update.effective_user else 0
+            _audit_log(uid, "stop_on", True, "confirmed")
             await self._reply(update, "⛔ STOP.flag включён (ON).")
         except Exception as e:
+            _log_error("stop_on_failed", str(e))
             await self._reply(
                 update, f"❌ Не удалось включить STOP.flag: {type(e).__name__}: {e}"
             )
@@ -1279,6 +1567,289 @@ class HopeMiniBot:
             update,
             f"🧾 ACTION REPORT: {spec.key}\nRESULT: returncode={proc.returncode}\n⏱ {dt:.0f}s\n\n📜 STDOUT (tail)\n{tail}",
         )
+
+    # === FRIEND CHAT MENU (v2.2.0) ===
+
+    def _chat_keyboard(self) -> InlineKeyboardMarkup:
+        """Keyboard for Friend Chat submenu."""
+        h = _chat_health()
+        tunnel_icon = "🟢" if h["tunnel_ok"] else "🔴"
+        bridge_icon = "🟢" if h["bridge_ok"] else "🔴"
+
+        buttons = [
+            [
+                InlineKeyboardButton(f"{tunnel_icon} Туннель", callback_data="chat_tunnel_status"),
+                InlineKeyboardButton(f"{bridge_icon} Bridge", callback_data="chat_bridge_status"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Executor", callback_data="chat_restart_executor"),
+                InlineKeyboardButton("🔄 All Agents", callback_data="chat_restart_all"),
+            ],
+            [
+                InlineKeyboardButton("🔌 Открыть туннель", callback_data="chat_start_tunnel"),
+            ],
+            [
+                InlineKeyboardButton("📊 Полный статус", callback_data="chat_full_status"),
+            ],
+            [
+                InlineKeyboardButton("◀️ Назад", callback_data="hope_refresh"),
+            ],
+        ]
+        return InlineKeyboardMarkup(buttons)
+
+    def _chat_status_text(self) -> str:
+        """Generate chat status text."""
+        h = _chat_health()
+
+        tunnel_st = "🟢 Подключен" if h["tunnel_ok"] else "🔴 Отключен"
+        bridge_st = "🟢 OK" if h["bridge_ok"] else "🔴 Недоступен"
+        version = h.get("bridge_version") or "?"
+        error = h.get("error") or "—"
+
+        return (
+            "💬 **Чат друзей**\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"SSH Туннель: {tunnel_st}\n"
+            f"VPS Bridge: {bridge_st} (v{version})\n"
+            f"Ошибка: {error}\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "_Управление сервисами чата_"
+        )
+
+    async def cmd_chat(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show Friend Chat control panel."""
+        if not await self._guard_admin(update):
+            return
+        await self._reply(update, self._chat_status_text(), self._chat_keyboard())
+
+    def _kill_agent_processes(self) -> int:
+        """Kill all running agent processes. Returns count of killed processes."""
+        killed = 0
+        patterns = [
+            "claude_executor_runner",
+            "gpt_orchestrator_runner",
+            "ipc_agent",
+        ]
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "get", "processid,commandline"],
+                capture_output=True, text=True, encoding="utf-8", errors="ignore",
+                timeout=10,
+            )
+            for line in result.stdout.split("\n"):
+                line_lower = line.lower()
+                if any(p in line_lower for p in patterns):
+                    parts = line.strip().split()
+                    if parts and parts[-1].isdigit():
+                        pid = parts[-1]
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", pid],
+                            capture_output=True, timeout=5,
+                        )
+                        killed += 1
+        except Exception:
+            pass
+        return killed
+
+    async def _chat_restart_service(self, update: Update, service: str) -> None:
+        """Restart a chat service by launching its CMD script.
+
+        SMART: Executor only starts if tunnel is connected.
+        """
+        script_map = {
+            "executor": CHAT_SCRIPTS.get("executor"),
+            "tunnel": CHAT_SCRIPTS.get("tunnel"),
+            "gpt_agent": CHAT_SCRIPTS.get("gpt_agent"),
+            "claude_agent": CHAT_SCRIPTS.get("claude_agent"),
+        }
+
+        script = script_map.get(service)
+        if not script or not script.exists():
+            await self._reply(update, f"❌ Скрипт не найден: {service}")
+            return
+
+        # BLOCK: Don't start executor without tunnel
+        if service == "executor":
+            h = _chat_health()
+            if not h.get("tunnel_ok", False):
+                await self._reply(
+                    update,
+                    "⛔ **Executor заблокирован**\n\n"
+                    "SSH туннель не подключен.\n"
+                    "Без туннеля executor будет спамить ошибками.\n\n"
+                    "💡 Сначала откройте туннель кнопкой **🔌 Открыть туннель**",
+                    self._chat_keyboard(),
+                )
+                return
+
+        try:
+            # Kill old agent processes first
+            killed = self._kill_agent_processes()
+            if killed > 0:
+                await self._reply(update, f"🔄 Остановлено {killed} старых процессов...")
+                await asyncio.sleep(2)  # Wait for processes to die
+
+            # Start in new window (visible to user)
+            subprocess.Popen(
+                ["cmd.exe", "/c", "start", str(script.name)],
+                cwd=str(script.parent),
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            await self._reply(
+                update,
+                f"✅ Запущен: {service}\n"
+                f"Скрипт: {script.name}\n"
+                "_Окно откроется на рабочем столе_",
+            )
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка запуска {service}: {e}")
+
+    async def _chat_start_tunnel(self, update: Update) -> None:
+        """Start SSH tunnel via Task Scheduler."""
+        try:
+            proc = subprocess.run(
+                ["schtasks", "/run", "/tn", "HOPE\\FriendChatTunnel"],
+                capture_output=True,
+                timeout=10,
+            )
+            if proc.returncode == 0:
+                await self._reply(
+                    update,
+                    "✅ Туннель запущен через Task Scheduler\n"
+                    "_Подождите 5 сек для подключения_",
+                )
+            else:
+                stderr = proc.stderr.decode("utf-8", errors="replace")[:200]
+                await self._reply(update, f"❌ Ошибка запуска туннеля:\n{stderr}")
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
+    def _kill_agent_windows(self) -> int:
+        """Kill all agent CMD windows by title. Returns count of killed windows."""
+        killed = 0
+        # Window titles used by agent scripts
+        window_titles = [
+            "Claude Executor",
+            "GPT Agent",
+            "Claude Agent",
+            "IPC Agent",
+            "Friend Chat",
+        ]
+        try:
+            # Get all cmd.exe processes with window titles
+            result = subprocess.run(
+                ["tasklist", "/v", "/fi", "imagename eq cmd.exe"],
+                capture_output=True, text=True, encoding="utf-8", errors="ignore",
+                timeout=10,
+            )
+            for line in result.stdout.split("\n"):
+                line_lower = line.lower()
+                for title in window_titles:
+                    if title.lower() in line_lower:
+                        # Extract PID (second column)
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            pid = parts[1]
+                            subprocess.run(
+                                ["taskkill", "/F", "/PID", pid],
+                                capture_output=True, timeout=5,
+                            )
+                            killed += 1
+                            break
+        except Exception:
+            pass
+        return killed
+
+    async def _chat_restart_all_agents(self, update: Update) -> None:
+        """Kill all old agent processes/windows and start fresh.
+
+        SMART: Only starts executor if tunnel is connected.
+        IPC agents (gpt_agent, claude_agent) always start - they work locally.
+        """
+        if not await self._guard_admin(update):
+            return
+
+        await self._reply(update, "🔄 Закрываю старые окна агентов...")
+
+        # 1. Kill Python agent processes
+        killed_procs = self._kill_agent_processes()
+
+        # 2. Kill CMD windows with agent titles
+        killed_wins = self._kill_agent_windows()
+
+        total_killed = killed_procs + killed_wins
+        if total_killed > 0:
+            await self._reply(
+                update,
+                f"🧹 Закрыто: {killed_procs} процессов, {killed_wins} окон\n"
+                "⏳ Жду 3 сек..."
+            )
+            await asyncio.sleep(3)
+        else:
+            await self._reply(update, "ℹ️ Старых процессов не найдено")
+            await asyncio.sleep(1)
+
+        # 3. Check tunnel status BEFORE starting executor
+        h = _chat_health()
+        tunnel_ok = h.get("tunnel_ok", False)
+
+        # 4. Start agents (executor ONLY if tunnel is connected)
+        started = []
+        skipped = []
+        failed = []
+
+        # IPC agents - always start (work locally)
+        for name in ["gpt_agent", "claude_agent"]:
+            script = CHAT_SCRIPTS.get(name)
+            if script and script.exists():
+                try:
+                    subprocess.Popen(
+                        ["cmd.exe", "/c", "start", str(script.name)],
+                        cwd=str(script.parent),
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                    started.append(name)
+                    await asyncio.sleep(1)
+                except Exception as e:
+                    failed.append(f"{name}: {e}")
+            else:
+                failed.append(f"{name}: скрипт не найден")
+
+        # Executor - ONLY if tunnel is connected
+        if tunnel_ok:
+            script = CHAT_SCRIPTS.get("executor")
+            if script and script.exists():
+                try:
+                    subprocess.Popen(
+                        ["cmd.exe", "/c", "start", str(script.name)],
+                        cwd=str(script.parent),
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                    started.append("executor")
+                except Exception as e:
+                    failed.append(f"executor: {e}")
+            else:
+                failed.append("executor: скрипт не найден")
+        else:
+            skipped.append("executor (нет туннеля)")
+
+        # 5. Report result
+        msg = "🚀 **Перезапуск агентов**\n━━━━━━━━━━━━━━━━━━\n"
+        if started:
+            msg += f"✅ Запущено: {', '.join(started)}\n"
+        if skipped:
+            msg += f"⏭️ Пропущено: {', '.join(skipped)}\n"
+        if failed:
+            msg += f"❌ Ошибки: {'; '.join(failed)}\n"
+
+        if not tunnel_ok:
+            msg += "\n💡 _Для executor откройте туннель кнопкой ниже_"
+
+        msg += "\n━━━━━━━━━━━━━━━━━━"
+
+        await self._reply(update, msg, self._chat_keyboard())
 
     async def cmd_morning(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1539,8 +2110,33 @@ class HopeMiniBot:
         if data == "hope_stack":
             await self.cmd_stack(update, context)
             return
+        if data == "hope_chat":
+            await self.cmd_chat(update, context)
+            return
         if data == "hope_help":
             await self.cmd_help(update, context)
+            return
+
+        # Friend Chat callbacks (v2.2.0)
+        if data == "chat_tunnel_status" or data == "chat_bridge_status" or data == "chat_full_status":
+            await self.cmd_chat(update, context)
+            return
+        if data == "chat_restart_executor":
+            await self._chat_restart_service(update, "executor")
+            return
+        if data == "chat_restart_all":
+            await self._chat_restart_all_agents(update)
+            return
+        if data == "chat_start_tunnel":
+            await self._chat_start_tunnel(update)
+            return
+
+        # Confirmation callbacks (v2.3.0 - GPT TZ)
+        if data == "confirm_stop_on":
+            await self._do_stop_on(update)
+            return
+        if data == "cancel_action":
+            await self._reply(update, "❌ Действие отменено.")
             return
 
         # Stack control callbacks
@@ -1659,9 +2255,12 @@ class HopeMiniBot:
             BotCommand("night", "stop + report"),
             BotCommand("restart", "перезапуск стека (не блокирует)"),
             BotCommand("stack", "🧱 управление HOPE stack (START/STOP/FIXDUP)"),
+            BotCommand("chat", "💬 чат друзей (Friend Bridge)"),
             BotCommand("signals", "последние сигналы"),
             BotCommand("trades", "последние сделки"),
             BotCommand("diag", "диагностика"),
+            BotCommand("health", "🏥 статус всех систем"),
+            BotCommand("logs", "📋 последние ошибки"),
             BotCommand("whoami", "твой ID"),
             BotCommand("version", "версия"),
             BotCommand("help", "помощь"),
@@ -1690,9 +2289,12 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("night", self.cmd_night))
         app.add_handler(CommandHandler("restart", self.cmd_restart))
         app.add_handler(CommandHandler("stack", self.cmd_stack))
+        app.add_handler(CommandHandler("chat", self.cmd_chat))
         app.add_handler(CommandHandler("signals", self.cmd_signals))
         app.add_handler(CommandHandler("trades", self.cmd_trades))
         app.add_handler(CommandHandler("diag", self.cmd_diag))
+        app.add_handler(CommandHandler("health", self.cmd_health))
+        app.add_handler(CommandHandler("logs", self.cmd_logs))
         app.add_handler(CommandHandler("whoami", self.cmd_whoami))
         app.add_handler(CommandHandler("version", self.cmd_version))
         app.add_handler(CommandHandler("help", self.cmd_help))
