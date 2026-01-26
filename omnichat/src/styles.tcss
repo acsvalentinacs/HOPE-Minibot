@@ -1,0 +1,184 @@
+/* === AI SIGNATURE ===
+ * Created by: Claude (opus-4)
+ * Created at: 2026-01-26T11:00:00Z
+ * Purpose: HOPE OMNI-CHAT TUI Styles
+ * === END SIGNATURE === */
+
+/* ============================================================
+   HOPE OMNI-CHAT - Textual CSS Styles
+   Theme: Dark Professional
+   ============================================================ */
+
+/* === SCREEN === */
+Screen {
+    background: $surface;
+}
+
+/* === HEADER === */
+#header {
+    dock: top;
+    height: 3;
+    background: $primary;
+    color: $text;
+    text-align: center;
+    padding: 1;
+}
+
+#header-title {
+    text-style: bold;
+}
+
+#cost-display {
+    dock: right;
+    width: auto;
+    padding-right: 2;
+    color: $success;
+}
+
+/* === MAIN CONTAINER === */
+#main-container {
+    layout: vertical;
+}
+
+/* === CHAT LOG === */
+#chat-log {
+    height: 1fr;
+    border: solid $primary;
+    padding: 1;
+    overflow-y: auto;
+    scrollbar-background: $surface;
+    scrollbar-color: $primary;
+}
+
+/* === MESSAGE STYLES === */
+.message {
+    margin-bottom: 1;
+    padding: 1;
+    width: 100%;
+}
+
+.message-user {
+    background: $success-darken-2;
+    color: $text;
+    text-align: right;
+    border: solid $success;
+}
+
+.message-gemini {
+    background: #4a1a6b;
+    color: $text;
+    border: solid magenta;
+}
+
+.message-gpt {
+    background: #4a4a1a;
+    color: $text;
+    border: solid yellow;
+}
+
+.message-claude {
+    background: #1a4a4a;
+    color: $text;
+    border: solid cyan;
+}
+
+.message-system {
+    background: $surface-darken-1;
+    color: $text-muted;
+    text-style: italic;
+    border: solid $primary-darken-2;
+}
+
+.message-header {
+    text-style: bold;
+    margin-bottom: 0;
+}
+
+.message-time {
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* === STATUS BAR === */
+#status-bar {
+    dock: bottom;
+    height: 3;
+    background: $surface-darken-1;
+    padding: 0 1;
+    layout: horizontal;
+}
+
+.agent-status {
+    width: 1fr;
+    height: 100%;
+    content-align: center middle;
+    padding: 0 1;
+}
+
+.agent-connected {
+    color: $success;
+}
+
+.agent-disconnected {
+    color: $error;
+}
+
+/* === INPUT AREA === */
+#input-area {
+    dock: bottom;
+    height: 5;
+    layout: horizontal;
+    padding: 1;
+    background: $surface-darken-1;
+}
+
+#message-input {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary;
+    padding: 0 1;
+}
+
+#message-input:focus {
+    border: solid $accent;
+}
+
+/* === BUTTONS === */
+.send-button {
+    width: 12;
+    height: 3;
+    margin-left: 1;
+}
+
+#send-all {
+    background: $primary;
+}
+
+#send-all:hover {
+    background: $primary-lighten-1;
+}
+
+/* === HOTKEY HINTS === */
+#hotkey-bar {
+    dock: bottom;
+    height: 1;
+    background: $surface-darken-2;
+    color: $text-muted;
+    text-align: center;
+}
+
+/* === TYPING INDICATOR === */
+.typing-indicator {
+    color: $warning;
+    text-style: italic;
+    padding-left: 2;
+}
+
+/* === SCROLLBAR === */
+VerticalScroll > ScrollBar {
+    background: $surface;
+}
+
+VerticalScroll > ScrollBar > .scrollbar--bar {
+    background: $primary;
+}

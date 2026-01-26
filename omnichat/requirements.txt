@@ -1,0 +1,17 @@
+# HOPE OMNI-CHAT v1.0 Dependencies
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-26T11:00:00Z
+# === END SIGNATURE ===
+
+# UI Framework
+textual>=0.47.0
+
+# AI API Clients
+google-generativeai>=0.3.0
+openai>=1.12.0
+anthropic>=0.18.0
+
+# Utils
+python-dotenv>=1.0.0
+aiofiles>=23.2.0
