@@ -165,7 +165,8 @@ class HopeOmniChat(App):
             with Horizontal(id="input-area"):
                 yield Input(
                     placeholder="Введите сообщение...",
-                    id="message-input"
+                    id="message-input",
+                    max_length=5000,
                 )
                 yield Button("Send All", id="send-all", classes="send-button")
 
