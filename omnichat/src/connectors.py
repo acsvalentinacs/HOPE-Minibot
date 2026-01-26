@@ -158,7 +158,7 @@ class GeminiAgent(BaseAgent):
             import google.generativeai as genai
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(
-                'gemini-2.0-flash',
+                'gemini-1.5-flash-latest',
                 system_instruction=self.SYSTEM_PROMPT
             )
             self.chat_session = self.model.start_chat(history=[])
@@ -311,7 +311,7 @@ class ClaudeAgent(BaseAgent):
             self.messages.append({"role": "user", "content": text})
 
             response = await self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-3-5-sonnet-latest",
                 max_tokens=2048,
                 system=self.SYSTEM_PROMPT,
                 messages=self.messages,
