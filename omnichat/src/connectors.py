@@ -347,3 +347,4 @@ def create_all_agents() -> dict[str, BaseAgent]:
         "gpt": GPTAgent(),
         "claude": ClaudeAgent(),
     }
+
