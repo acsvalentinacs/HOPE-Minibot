@@ -1,7 +1,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T22:45:00Z
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-26T04:35:00Z
 # Purpose: Binance Spot API thin client - HMAC-signed REST (fail-closed)
+# P0 FIX: Uses core.net.http_client for egress policy enforcement
+# P0 FIX: Added newClientOrderId for order idempotency
 # === END SIGNATURE ===
 """
 Binance Spot API Client v1.0.
@@ -30,6 +34,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -37,8 +42,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlencode
-from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
+
+# P0 FIX: Use egress-safe HTTP client (AllowList enforcement)
+from core.net.http_client import (
+    http_get,
+    http_post,
+    http_delete,
+    EgressDeniedError,
+    EgressError,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -119,6 +131,28 @@ class BinanceSpotClient:
         ).hexdigest()
         return signature
 
+    def _generate_client_order_id(self, symbol: str, side: str) -> str:
+        """
+        Generate unique client order ID for idempotency (P0 FIX).
+
+        Format: hope_{symbol}_{side}_{timestamp_ms}_{nonce_6}
+        Max length: 36 chars (Binance limit)
+
+        Args:
+            symbol: Trading pair (e.g., BTCUSDT)
+            side: BUY or SELL
+
+        Returns:
+            Unique client order ID
+        """
+        ts = int(time.time() * 1000)
+        nonce = secrets.token_hex(3)  # 6 hex chars
+        # Truncate symbol if needed to fit 36 char limit
+        # hope_ = 5, _BUY = 4, _ts = 14, _nonce = 7 = 30 chars for base
+        # leaves 6 chars for symbol
+        sym = symbol[:6]
+        return f"hope_{sym}_{side[:1]}_{ts}_{nonce}"
+
     def _request(
         self,
         method: str,
@@ -127,7 +161,10 @@ class BinanceSpotClient:
         signed: bool = False,
     ) -> Dict[str, Any]:
         """
-        Make API request.
+        Make API request using egress-safe HTTP client.
+
+        P0 FIX: All requests now go through core.net.http_client
+        which enforces AllowList policy (fail-closed).
 
         Args:
             method: HTTP method (GET, POST, DELETE)
@@ -140,6 +177,7 @@ class BinanceSpotClient:
 
         Raises:
             ValueError: On API error (fail-closed)
+            EgressDeniedError: If host not in AllowList
         """
         params = params or {}
 
@@ -149,36 +187,64 @@ class BinanceSpotClient:
 
         url = f"{self.base_url}{endpoint}"
 
-        if method == "GET":
-            if params:
-                url = f"{url}?{urlencode(params)}"
-            data = None
-        else:
-            data = urlencode(params).encode("utf-8") if params else None
-
         headers = {
             "X-MBX-APIKEY": self.credentials.api_key,
         }
-        if data:
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
 
-        req = Request(url, data=data, headers=headers, method=method)
+        process_name = f"binance_{method.lower()}_{endpoint.split('/')[-1]}"
 
         try:
-            with urlopen(req, timeout=self.timeout) as resp:
-                body = resp.read().decode("utf-8")
-                return json.loads(body)
-        except HTTPError as e:
-            body = e.read().decode("utf-8")
-            try:
-                error = json.loads(body)
-                raise ValueError(f"Binance API error {e.code}: {error.get('msg', body)}")
-            except json.JSONDecodeError:
-                raise ValueError(f"Binance API error {e.code}: {body}")
-        except URLError as e:
-            raise ValueError(f"Network error: {e.reason}")
-        except Exception as e:
-            raise ValueError(f"Request error: {e}")
+            if method == "GET":
+                if params:
+                    url = f"{url}?{urlencode(params)}"
+                status, body_bytes, _ = http_get(
+                    url,
+                    timeout_sec=int(self.timeout),
+                    extra_headers=headers,
+                    process=process_name,
+                )
+            elif method == "POST":
+                data = urlencode(params).encode("utf-8") if params else None
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                status, body_bytes, _ = http_post(
+                    url,
+                    data=data,
+                    timeout_sec=int(self.timeout),
+                    extra_headers=headers,
+                    process=process_name,
+                )
+            elif method == "DELETE":
+                data = urlencode(params).encode("utf-8") if params else None
+                if data:
+                    headers["Content-Type"] = "application/x-www-form-urlencoded"
+                status, body_bytes, _ = http_delete(
+                    url,
+                    data=data,
+                    timeout_sec=int(self.timeout),
+                    extra_headers=headers,
+                    process=process_name,
+                )
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+
+            body = body_bytes.decode("utf-8")
+
+            # Check for HTTP errors (4xx, 5xx)
+            if status >= 400:
+                try:
+                    error = json.loads(body)
+                    raise ValueError(f"Binance API error {status}: {error.get('msg', body)}")
+                except json.JSONDecodeError:
+                    raise ValueError(f"Binance API error {status}: {body}")
+
+            return json.loads(body)
+
+        except EgressDeniedError as e:
+            # Egress policy violation - fail-closed
+            raise ValueError(f"EGRESS DENIED: {e.host} not in AllowList. request_id={e.request_id}")
+        except EgressError as e:
+            # Network error after allow
+            raise ValueError(f"Network error ({e.reason.value}): {e.original_error}")
 
     # === Public endpoints ===
 
@@ -265,6 +331,7 @@ class BinanceSpotClient:
         self,
         symbol: str,
         quote_qty: float,
+        client_order_id: Optional[str] = None,
     ) -> OrderResult:
         """
         Market buy using quote asset amount.
@@ -272,6 +339,7 @@ class BinanceSpotClient:
         Args:
             symbol: Trading pair (e.g., "BTCUSDT")
             quote_qty: Amount to spend in quote asset (e.g., 10 USDT)
+            client_order_id: Optional custom idempotency key (auto-generated if None)
 
         Returns:
             Order result
@@ -281,6 +349,8 @@ class BinanceSpotClient:
             "side": "BUY",
             "type": "MARKET",
             "quoteOrderQty": f"{quote_qty:.8f}",
+            # P0 FIX: newClientOrderId for idempotency
+            "newClientOrderId": client_order_id or self._generate_client_order_id(symbol, "BUY"),
         }
         resp = self._request("POST", "/v3/order", params, signed=True)
         return self._parse_order_result(resp)
@@ -289,6 +359,7 @@ class BinanceSpotClient:
         self,
         symbol: str,
         quantity: float,
+        client_order_id: Optional[str] = None,
     ) -> OrderResult:
         """
         Market sell.
@@ -296,6 +367,7 @@ class BinanceSpotClient:
         Args:
             symbol: Trading pair (e.g., "BTCUSDT")
             quantity: Amount to sell in base asset
+            client_order_id: Optional custom idempotency key (auto-generated if None)
 
         Returns:
             Order result
@@ -305,6 +377,8 @@ class BinanceSpotClient:
             "side": "SELL",
             "type": "MARKET",
             "quantity": f"{quantity:.8f}",
+            # P0 FIX: newClientOrderId for idempotency
+            "newClientOrderId": client_order_id or self._generate_client_order_id(symbol, "SELL"),
         }
         resp = self._request("POST", "/v3/order", params, signed=True)
         return self._parse_order_result(resp)
@@ -315,6 +389,7 @@ class BinanceSpotClient:
         quantity: float,
         price: float,
         time_in_force: str = "GTC",
+        client_order_id: Optional[str] = None,
     ) -> OrderResult:
         """
         Limit sell order.
@@ -324,6 +399,7 @@ class BinanceSpotClient:
             quantity: Amount to sell
             price: Limit price
             time_in_force: GTC (Good Till Cancel), IOC, FOK
+            client_order_id: Optional custom idempotency key (auto-generated if None)
 
         Returns:
             Order result
@@ -335,6 +411,8 @@ class BinanceSpotClient:
             "timeInForce": time_in_force,
             "quantity": f"{quantity:.8f}",
             "price": f"{price:.8f}",
+            # P0 FIX: newClientOrderId for idempotency
+            "newClientOrderId": client_order_id or self._generate_client_order_id(symbol, "SELL"),
         }
         resp = self._request("POST", "/v3/order", params, signed=True)
         return self._parse_order_result(resp)

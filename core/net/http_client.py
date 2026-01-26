@@ -1,6 +1,8 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T12:30:00Z
+# Modified by: Claude (opus-4)
+# Modified at (UTC): 2026-01-26T04:30:00Z
 # Purpose: HTTP Client wrapper with egress enforcement (stdlib-only, fail-closed)
 # === END SIGNATURE ===
 """
@@ -434,3 +436,353 @@ def http_head(
             process=process,
         )
         raise EgressError(host, reason, e)
+
+
+def http_post(
+    url: str,
+    *,
+    data: Optional[bytes] = None,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    process: str = "http_post",
+    extra_headers: Optional[dict] = None,
+) -> Tuple[int, bytes, str]:
+    """
+    Perform HTTP POST with egress policy enforcement.
+
+    Args:
+        url: Target URL (must be in AllowList)
+        data: Request body (bytes, already encoded)
+        timeout_sec: Request timeout in seconds
+        user_agent: User-Agent header
+        max_bytes: Maximum response size
+        process: Process name for audit log
+        extra_headers: Additional HTTP headers (e.g., API keys, Content-Type)
+
+    Returns:
+        Tuple of (status_code, body_bytes, final_url)
+
+    Raises:
+        EgressDeniedError: If host not in AllowList
+        EgressError: If network/timeout error after allow
+        FatalPolicyError: If AllowList cannot be loaded
+    """
+    start_time = time.time()
+
+    # === STEP 1: Parse URL and extract host ===
+    try:
+        host = _extract_host(url)
+    except ValueError as e:
+        request_id = append_audit_record(
+            action=AuditAction.DENY,
+            host="",
+            reason=AuditReason.INVALID_URL,
+            url=url,
+            latency_ms=0,
+            process=process,
+            notes=str(e),
+        )
+        raise EgressDeniedError("", AuditReason.INVALID_URL, request_id)
+
+    # === STEP 2: Load AllowList (fail-closed) ===
+    try:
+        allowlist = get_allowlist()
+    except FatalPolicyError as e:
+        request_id = append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.POLICY_LOAD_FAILED,
+            url=url,
+            latency_ms=0,
+            process=process,
+            notes=str(e)[:100],
+        )
+        raise EgressDeniedError(host, AuditReason.POLICY_LOAD_FAILED, request_id)
+
+    # === STEP 3: Check AllowList ===
+    if not allowlist.is_allowed(host):
+        latency_ms = int((time.time() - start_time) * 1000)
+        request_id = append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.HOST_NOT_IN_ALLOWLIST,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+        )
+        raise EgressDeniedError(host, AuditReason.HOST_NOT_IN_ALLOWLIST, request_id)
+
+    # === STEP 4: Build and execute POST request ===
+    headers = {'User-Agent': user_agent}
+    if extra_headers:
+        headers.update(extra_headers)
+
+    req = Request(
+        url,
+        data=data,
+        headers=headers,
+        method='POST',
+    )
+
+    ssl_context = ssl.create_default_context()
+
+    try:
+        with urlopen(req, timeout=timeout_sec, context=ssl_context) as response:
+            status_code = response.status
+            final_url = response.url
+
+            # Read response with size limit
+            body_bytes = b''
+            bytes_read = 0
+            while bytes_read < max_bytes:
+                chunk = response.read(8192)
+                if not chunk:
+                    break
+                body_bytes += chunk
+                bytes_read += len(chunk)
+
+            latency_ms = int((time.time() - start_time) * 1000)
+            append_audit_record(
+                action=AuditAction.ALLOW,
+                host=host,
+                reason=AuditReason.HOST_IN_ALLOWLIST,
+                url=url,
+                latency_ms=latency_ms,
+                process=process,
+                notes="POST",
+            )
+
+            return (status_code, body_bytes, final_url)
+
+    except HTTPError as e:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.ALLOW,
+            host=host,
+            reason=AuditReason.HOST_IN_ALLOWLIST,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes=f"POST HTTP {e.code}",
+        )
+        body_bytes = b''
+        if hasattr(e, 'read'):
+            try:
+                body_bytes = e.read(max_bytes)
+            except Exception:
+                pass
+        return (e.code, body_bytes, url)
+
+    except socket.timeout:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.TIMEOUT,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes="POST",
+        )
+        raise EgressError(host, AuditReason.TIMEOUT, socket.timeout())
+
+    except URLError as e:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.NETWORK_ERROR,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes=f"POST: {str(e.reason)[:80]}" if hasattr(e, 'reason') else f"POST: {str(e)[:80]}",
+        )
+        raise EgressError(host, AuditReason.NETWORK_ERROR, e)
+
+    except Exception as e:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.UNKNOWN,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes=f"POST {type(e).__name__}: {str(e)[:60]}",
+        )
+        raise EgressError(host, AuditReason.UNKNOWN, e)
+
+
+def http_delete(
+    url: str,
+    *,
+    data: Optional[bytes] = None,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    user_agent: str = DEFAULT_USER_AGENT,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    process: str = "http_delete",
+    extra_headers: Optional[dict] = None,
+) -> Tuple[int, bytes, str]:
+    """
+    Perform HTTP DELETE with egress policy enforcement.
+
+    Args:
+        url: Target URL (must be in AllowList)
+        data: Request body (bytes, optional)
+        timeout_sec: Request timeout in seconds
+        user_agent: User-Agent header
+        max_bytes: Maximum response size
+        process: Process name for audit log
+        extra_headers: Additional HTTP headers
+
+    Returns:
+        Tuple of (status_code, body_bytes, final_url)
+
+    Raises:
+        EgressDeniedError: If host not in AllowList
+        EgressError: If network/timeout error after allow
+    """
+    start_time = time.time()
+
+    # === STEP 1: Parse URL and extract host ===
+    try:
+        host = _extract_host(url)
+    except ValueError as e:
+        request_id = append_audit_record(
+            action=AuditAction.DENY,
+            host="",
+            reason=AuditReason.INVALID_URL,
+            url=url,
+            latency_ms=0,
+            process=process,
+            notes=str(e),
+        )
+        raise EgressDeniedError("", AuditReason.INVALID_URL, request_id)
+
+    # === STEP 2: Load AllowList (fail-closed) ===
+    try:
+        allowlist = get_allowlist()
+    except FatalPolicyError as e:
+        request_id = append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.POLICY_LOAD_FAILED,
+            url=url,
+            latency_ms=0,
+            process=process,
+            notes=str(e)[:100],
+        )
+        raise EgressDeniedError(host, AuditReason.POLICY_LOAD_FAILED, request_id)
+
+    # === STEP 3: Check AllowList ===
+    if not allowlist.is_allowed(host):
+        latency_ms = int((time.time() - start_time) * 1000)
+        request_id = append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.HOST_NOT_IN_ALLOWLIST,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+        )
+        raise EgressDeniedError(host, AuditReason.HOST_NOT_IN_ALLOWLIST, request_id)
+
+    # === STEP 4: Build and execute DELETE request ===
+    headers = {'User-Agent': user_agent}
+    if extra_headers:
+        headers.update(extra_headers)
+
+    req = Request(
+        url,
+        data=data,
+        headers=headers,
+        method='DELETE',
+    )
+
+    ssl_context = ssl.create_default_context()
+
+    try:
+        with urlopen(req, timeout=timeout_sec, context=ssl_context) as response:
+            status_code = response.status
+            final_url = response.url
+
+            body_bytes = b''
+            bytes_read = 0
+            while bytes_read < max_bytes:
+                chunk = response.read(8192)
+                if not chunk:
+                    break
+                body_bytes += chunk
+                bytes_read += len(chunk)
+
+            latency_ms = int((time.time() - start_time) * 1000)
+            append_audit_record(
+                action=AuditAction.ALLOW,
+                host=host,
+                reason=AuditReason.HOST_IN_ALLOWLIST,
+                url=url,
+                latency_ms=latency_ms,
+                process=process,
+                notes="DELETE",
+            )
+
+            return (status_code, body_bytes, final_url)
+
+    except HTTPError as e:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.ALLOW,
+            host=host,
+            reason=AuditReason.HOST_IN_ALLOWLIST,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes=f"DELETE HTTP {e.code}",
+        )
+        body_bytes = b''
+        if hasattr(e, 'read'):
+            try:
+                body_bytes = e.read(max_bytes)
+            except Exception:
+                pass
+        return (e.code, body_bytes, url)
+
+    except socket.timeout:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.TIMEOUT,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes="DELETE",
+        )
+        raise EgressError(host, AuditReason.TIMEOUT, socket.timeout())
+
+    except URLError as e:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.NETWORK_ERROR,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes=f"DELETE: {str(e.reason)[:80]}" if hasattr(e, 'reason') else f"DELETE: {str(e)[:80]}",
+        )
+        raise EgressError(host, AuditReason.NETWORK_ERROR, e)
+
+    except Exception as e:
+        latency_ms = int((time.time() - start_time) * 1000)
+        append_audit_record(
+            action=AuditAction.DENY,
+            host=host,
+            reason=AuditReason.UNKNOWN,
+            url=url,
+            latency_ms=latency_ms,
+            process=process,
+            notes=f"DELETE {type(e).__name__}: {str(e)[:60]}",
+        )
+        raise EgressError(host, AuditReason.UNKNOWN, e)
