@@ -55,6 +55,7 @@ from .guards import (
 )
 from .roles import build_prompt, get_agent_for_phase
 from .templates import get_template, TEMPLATES
+from .persistence import save_ddo_result, PersistenceAdapter
 
 _log = logging.getLogger("ddo.orchestrator")
 
@@ -362,6 +363,13 @@ class DDOOrchestrator:
         # Success!
         fsm.transition(DiscussionPhase.DONE, "Discussion completed successfully")
         context.consensus_reached = True
+
+        # Auto-save results
+        try:
+            jsonl_path, md_path = save_ddo_result(context)
+            _log.info(f"DDO results saved: {md_path}")
+        except Exception as e:
+            _log.warning(f"Failed to save DDO results: {e}")
 
         yield CompletedEvent(context=context, success=True)
 

@@ -132,3 +132,20 @@ tmpclaude-*
 core/order_router.py
 core/risk_engine.py
 tools/test_mainnet_key.py
+
+# === OMNI-CHAT TEMPORARY FILES ===
+*_inbox.json
+*_resp.json
+*_full.json
+inbox_*.json
+test_*.py
+
+# === DDO RESULTS (local only) ===
+omnichat/ddo_results/
+
+# === LOCAL SCRIPTS (not for repo) ===
+scripts/Kill-OrphanedCmd.ps1
+scripts/install_tunnel_autostart.cmd
+scripts/start_omnichat.cmd
+omnichat/run_chat.bat
+config/task_scheduler_tunnel.xml

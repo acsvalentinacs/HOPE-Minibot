@@ -2,10 +2,10 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-26T17:20:00Z
-# Purpose: AI Agent connectors for HOPE OMNI-CHAT v1.2
+# Modified at: 2026-01-27T13:30:00Z
+# Purpose: AI Agent connectors for HOPE OMNI-CHAT v1.5
 # Security: Secrets masking implemented
-# Changes: gemini-1.5-pro + auto-retry on 429 quota errors
+# Changes: DDO results persistence, suppressed deprecation warning
 # === END SIGNATURE ===
 """
 AI Agent Connectors - Async wrappers for Gemini, GPT, and Claude APIs.
@@ -133,7 +133,7 @@ class GeminiAgent(BaseAgent):
     name = "Gemini"
     color = "magenta"
 
-    # Model to use (gemini-2.5-flash - original working model)
+    # Model to use (gemini-2.5-flash - stable model)
     MODEL_NAME = "gemini-2.5-flash"
 
     # Retry settings for 429 quota errors
@@ -164,7 +164,12 @@ class GeminiAgent(BaseAgent):
             return
 
         try:
-            import google.generativeai as genai
+            # Suppress deprecation warning (will migrate to google-genai when stable)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                import google.generativeai as genai
+
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(
                 self.MODEL_NAME,
