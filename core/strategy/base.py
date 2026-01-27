@@ -53,6 +53,7 @@ class StrategyConfig:
     min_confidence: float = 0.60
     use_trailing_stop: bool = False
     trailing_stop_percent: float = 0.02
+    spot_only: bool = True  # CRITICAL: No SHORT positions on Spot
 
 class BaseStrategy(ABC):
     def __init__(self, config: Optional[StrategyConfig] = None):
@@ -102,6 +103,9 @@ class BaseStrategy(ABC):
             return None
         if signal.confidence < self.config.min_confidence:
             return None
+        # SPOT-ONLY ENFORCEMENT: Block SHORT positions
+        if self.config.spot_only and signal.direction == SignalDirection.SHORT:
+            return None  # CRITICAL: No SHORT on Spot
         size = self.calculate_position_size(signal.entry_price, signal.stop_loss, signal)
         if size <= 0:
             return None
