@@ -804,19 +804,23 @@ class HopeOmniChat(App):
     TITLE = "HOPE OMNI-CHAT v1.5"
 
     BINDINGS = [
+        # Main actions (shown in footer)
+        Binding("ctrl+q", "quit", "Выход", show=True, priority=True),
+        Binding("f5", "send_all", "Всем", show=True, priority=True),
+        Binding("ctrl+d", "open_ddo", "DDO", show=True, priority=True),
+        Binding("ctrl+f", "open_search", "Поиск", show=True, priority=True),
+        # Agent keys (shown)
         Binding("f1", "send_gemini", "Gemini", show=True),
         Binding("f2", "send_gpt", "GPT", show=True),
         Binding("f3", "send_claude", "Claude", show=True),
-        Binding("f5", "send_all", "Send All", show=True),
-        Binding("f6", "copy_gemini", "📋Gem"),
-        Binding("f7", "copy_gpt", "📋GPT"),
-        Binding("f8", "copy_claude", "📋Cld"),
-        Binding("ctrl+d", "open_ddo", "🎯DDO"),
-        Binding("ctrl+f", "open_search", "🔍Search"),
-        Binding("ctrl+h", "load_history", "History"),
-        Binding("ctrl+l", "load_file", "Load"),
-        Binding("ctrl+e", "export", "Export"),
-        Binding("ctrl+q", "quit", "Quit"),
+        # Copy (hidden from footer)
+        Binding("f6", "copy_gemini", "Copy Gem", show=False),
+        Binding("f7", "copy_gpt", "Copy GPT", show=False),
+        Binding("f8", "copy_claude", "Copy Cld", show=False),
+        # Other (hidden)
+        Binding("ctrl+h", "load_history", "History", show=False),
+        Binding("ctrl+l", "load_file", "Load", show=False),
+        Binding("ctrl+e", "export", "Export", show=False),
         Binding("escape", "clear_input", "Clear", show=False),
     ]
 
