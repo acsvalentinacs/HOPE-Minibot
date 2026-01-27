@@ -4,12 +4,12 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-27T15:00:00Z
-# Purpose: HOPE OMNI-CHAT v1.5.1 - Trinity AI Chat TUI with Search + DDO
-# FIX: DDO uses run_worker instead of asyncio.create_task
+# Modified at: 2026-01-27T16:30:00Z
+# Purpose: HOPE OMNI-CHAT v1.6 - Trinity AI Chat TUI with Search + DDO
+# FIX: DDO uses run_worker with call_from_thread for UI updates
 # === END SIGNATURE ===
 """
-HOPE OMNI-CHAT v1.5 - Trinity AI Chat System
+HOPE OMNI-CHAT v1.6 - Trinity AI Chat System
 
 A professional TUI (Text User Interface) for real-time chat with
 multiple AI agents: Gemini (Strategist), GPT (Analyst), Claude (Developer).
@@ -416,7 +416,7 @@ class DDOScreen(ModalScreen):
         super().__init__()
         self.agents = agents
         self._running = False
-        self._ddo_task: Optional[asyncio.Task] = None
+        self._log_text = ""
 
     def compose(self) -> ComposeResult:
         with Container(id="ddo-modal"):
@@ -425,6 +425,13 @@ class DDOScreen(ModalScreen):
             yield Static(
                 "Автоматическая дискуссия между Gemini, GPT и Claude",
                 classes="ddo-subtitle"
+            )
+
+            # Status indicators
+            yield Static(
+                "🟢 ГОТОВ | 🟡 ДУМАЕТ | 🔴 РАБОТАЕТ | ✅ ГОТОВО",
+                id="ddo-status-legend",
+                classes="ddo-status-legend"
             )
 
             # Topic input
@@ -444,6 +451,9 @@ class DDOScreen(ModalScreen):
                 yield Button("💡 BRAINSTORM", id="mode-brainstorm")
                 yield Button("⚡ QUICK", id="mode-quick")
                 yield Button("🔧 TROUBLESHOOT", id="mode-troubleshoot")
+
+            # Current status
+            yield Static("🟢 ГОТОВ к запуску", id="ddo-status", classes="ddo-status")
 
             # Progress section
             yield Static("", id="ddo-progress")
@@ -502,15 +512,9 @@ class DDOScreen(ModalScreen):
             self.action_close_ddo()
 
     def _do_start_discussion(self) -> None:
-        """Start DDO discussion (wrapper for async)."""
+        """Start DDO discussion."""
         if self._running:
             return
-        # Use Textual's run_worker with thread=False for async
-        self.run_worker(self._start_discussion(), exclusive=True, thread=False)
-
-    async def _start_discussion(self) -> None:
-        """Start the DDO discussion."""
-        import traceback
 
         topic_widget = self.query_one("#ddo-topic", TextArea)
         topic = topic_widget.text.strip()
@@ -519,28 +523,34 @@ class DDOScreen(ModalScreen):
             self.query_one("#ddo-progress", Static).update("❌ Введите тему дискуссии!")
             return
 
-        if self._running:
-            return
-
         self._running = True
+        self._log_text = ""
 
         # Update UI state
         self.query_one("#ddo-start", Button).disabled = True
         self.query_one("#ddo-stop", Button).disabled = False
-
-        # Clear log
-        log = self.query_one("#ddo-log-content", Static)
-        log.update("")
+        self.query_one("#ddo-status", Static).update("🔴 РАБОТАЕТ")
 
         mode = self._get_selected_mode()
+        self._log_text = f"🚀 Начинаем дискуссию...\nТема: {topic}\nРежим: {mode.display_name}\n"
+        self.query_one("#ddo-log-content", Static).update(self._log_text)
         self.query_one("#ddo-progress", Static).update(f"🚀 Запуск DDO: {mode.display_name}")
-        log.update(f"🚀 Начинаем дискуссию...\nТема: {topic}\nРежим: {mode.display_name}\n")
 
-        # Create orchestrator and run
+        # Start async worker
+        self.run_worker(
+            self._run_ddo(topic, mode),
+            name="ddo_worker",
+            exclusive=True,
+        )
+
+    async def _run_ddo(self, topic: str, mode: DiscussionMode) -> None:
+        """Run DDO discussion in background worker."""
+        import traceback
+
+        self._add_log("\n📡 Подключение к агентам...")
         orchestrator = DDOOrchestrator(self.agents)
 
         try:
-            log.update(log.renderable + "\n📡 Подключение к агентам...")
             async for event in orchestrator.run_discussion(
                 topic=topic,
                 mode=mode,
@@ -549,54 +559,55 @@ class DDOScreen(ModalScreen):
             ):
                 if not self._running:
                     break
-                self._handle_ddo_event(event)
+                # Process event and update UI
+                self._process_event(event)
+
         except Exception as e:
             error_trace = traceback.format_exc()
-            log.update(log.renderable + f"\n❌ ОШИБКА: {e}\n\nTraceback:\n{error_trace}")
-            self.query_one("#ddo-progress", Static).update(f"❌ Ошибка: {type(e).__name__}")
+            self._add_log(f"\n❌ ОШИБКА: {e}\n\nTraceback:\n{error_trace}")
+            self.call_from_thread(self._set_status, "❌ Ошибка")
 
+        # Finish
         self._running = False
-        self.query_one("#ddo-start", Button).disabled = False
-        self.query_one("#ddo-stop", Button).disabled = True
+        self.call_from_thread(self._finish_discussion)
 
-    def _stop_discussion(self) -> None:
-        """Stop the running discussion."""
-        self._running = False
-        self._update_progress("⏹️ Дискуссия остановлена")
-
-    def _handle_ddo_event(self, event: DDOEvent) -> None:
-        """Handle a DDO event."""
+    def _process_event(self, event: DDOEvent) -> None:
+        """Process DDO event and update UI."""
         if isinstance(event, PhaseStartEvent):
-            self._update_phase(f"📍 {event.phase.display_name} ({event.agent.upper()})")
-            self._append_log(f"\n{'='*40}\n📍 ФАЗА: {event.phase.display_name}\n{'='*40}")
+            self.call_from_thread(
+                self._set_phase,
+                f"📍 {event.phase.display_name} ({event.agent.upper()})"
+            )
+            self._add_log(f"\n{'='*40}\n📍 ФАЗА: {event.phase.display_name}\n{'='*40}")
+            self.call_from_thread(self._set_status, "🟡 ДУМАЕТ")
 
         elif isinstance(event, ResponseEvent):
             if event.response:
                 agent = event.response.agent.upper()
                 content = event.response.content
-                # Truncate for log (first 500 chars)
                 preview = content[:500] + "..." if len(content) > 500 else content
-                self._append_log(f"\n💬 {agent}:\n{preview}")
+                self._add_log(f"\n💬 {agent}:\n{preview}")
 
         elif isinstance(event, GuardFailEvent):
-            self._append_log(f"\n⚠️ GUARD FAIL: {event.guard_name}\n   {event.reason}")
+            self._add_log(f"\n⚠️ GUARD FAIL: {event.guard_name}\n   {event.reason}")
 
         elif isinstance(event, ProgressEvent):
-            self._update_progress(
+            self.call_from_thread(
+                self._set_progress,
                 f"📊 Фаза {event.current_phase}/{event.total_phases}: {event.message}"
             )
-            self._update_cost(event.cost_cents, event.elapsed_seconds)
+            self.call_from_thread(self._set_cost, event.cost_cents, event.elapsed_seconds)
 
         elif isinstance(event, CompletedEvent):
             if event.success:
-                self._update_progress("✅ Дискуссия завершена успешно!")
-                self._append_log(f"\n{'='*40}\n✅ УСПЕХ! Консенсус достигнут.\n{'='*40}")
+                self.call_from_thread(self._set_status, "✅ ГОТОВО")
+                self._add_log(f"\n{'='*40}\n✅ УСПЕХ! Консенсус достигнут.\n{'='*40}")
             else:
-                self._update_progress("❌ Дискуссия завершена с ошибкой")
-                self._append_log(f"\n{'='*40}\n❌ FAIL: Консенсус не достигнут.\n{'='*40}")
+                self.call_from_thread(self._set_status, "❌ FAIL")
+                self._add_log(f"\n{'='*40}\n❌ FAIL: Консенсус не достигнут.\n{'='*40}")
 
             if event.context:
-                self._append_log(
+                self._add_log(
                     f"\n📊 Статистика:\n"
                     f"   Стоимость: ${event.context.cost_usd:.4f}\n"
                     f"   Время: {event.context.elapsed_str}\n"
@@ -604,24 +615,44 @@ class DDOScreen(ModalScreen):
                 )
 
         elif isinstance(event, ErrorEvent):
-            self._append_log(f"\n❌ ОШИБКА: {event.error}")
+            self._add_log(f"\n❌ ОШИБКА: {event.error}")
 
-    def _update_progress(self, text: str) -> None:
-        """Update progress display."""
+    def _add_log(self, text: str) -> None:
+        """Add text to log (thread-safe)."""
+        self._log_text += text
+        self.call_from_thread(self._update_log_display)
+
+    def _update_log_display(self) -> None:
+        """Update log display on main thread."""
         try:
-            self.query_one("#ddo-progress", Static).update(text)
+            self.query_one("#ddo-log-content", Static).update(self._log_text)
+            self.query_one("#ddo-log", VerticalScroll).scroll_end(animate=False)
         except Exception:
             pass
 
-    def _update_phase(self, text: str) -> None:
-        """Update phase display."""
+    def _set_status(self, text: str) -> None:
+        """Set status text."""
+        try:
+            self.query_one("#ddo-status", Static).update(text)
+        except Exception:
+            pass
+
+    def _set_phase(self, text: str) -> None:
+        """Set phase text."""
         try:
             self.query_one("#ddo-phase", Static).update(text)
         except Exception:
             pass
 
-    def _update_cost(self, cost_cents: float, elapsed_seconds: float) -> None:
-        """Update cost display."""
+    def _set_progress(self, text: str) -> None:
+        """Set progress text."""
+        try:
+            self.query_one("#ddo-progress", Static).update(text)
+        except Exception:
+            pass
+
+    def _set_cost(self, cost_cents: float, elapsed_seconds: float) -> None:
+        """Set cost display."""
         try:
             mins = int(elapsed_seconds) // 60
             secs = int(elapsed_seconds) % 60
@@ -631,18 +662,21 @@ class DDOScreen(ModalScreen):
         except Exception:
             pass
 
-    def _append_log(self, text: str) -> None:
-        """Append text to log."""
+    def _finish_discussion(self) -> None:
+        """Finish discussion and reset UI."""
         try:
-            log = self.query_one("#ddo-log-content", Static)
-            current = str(log.renderable) if log.renderable else ""
-            log.update(current + text)
-
-            # Scroll to bottom
-            scroll = self.query_one("#ddo-log", VerticalScroll)
-            scroll.scroll_end(animate=False)
+            self.query_one("#ddo-start", Button).disabled = False
+            self.query_one("#ddo-stop", Button).disabled = True
+            if "ГОТОВО" not in self.query_one("#ddo-status", Static).renderable:
+                self.query_one("#ddo-status", Static).update("🟢 ГОТОВ")
         except Exception:
             pass
+
+    def _stop_discussion(self) -> None:
+        """Stop the running discussion."""
+        self._running = False
+        self._set_progress("⏹️ Дискуссия остановлена")
+        self._set_status("🟢 ГОТОВ")
 
     def action_close_ddo(self) -> None:
         """Close DDO screen."""
@@ -651,8 +685,7 @@ class DDOScreen(ModalScreen):
 
     def action_start_discussion(self) -> None:
         """Start discussion on Enter."""
-        if not self._running:
-            asyncio.create_task(self._start_discussion())
+        self._do_start_discussion()
 
 
 # === MAIN WIDGETS ===
@@ -801,26 +834,27 @@ class HopeOmniChat(App):
     """HOPE OMNI-CHAT - Trinity AI Chat Application."""
 
     CSS_PATH = "src/styles.tcss"
-    TITLE = "HOPE OMNI-CHAT v1.5"
+    TITLE = "HOPE OMNI-CHAT v1.6"
 
     BINDINGS = [
-        # Main actions (shown in footer)
+        # Primary actions
         Binding("ctrl+q", "quit", "Выход", show=True, priority=True),
-        Binding("f5", "send_all", "Всем", show=True, priority=True),
-        Binding("ctrl+d", "open_ddo", "DDO", show=True, priority=True),
-        Binding("ctrl+f", "open_search", "Поиск", show=True, priority=True),
-        # Agent keys (shown)
-        Binding("f1", "send_gemini", "Gemini", show=True),
+        # Send to agents
+        Binding("f1", "send_gemini", "Gem", show=True),
         Binding("f2", "send_gpt", "GPT", show=True),
-        Binding("f3", "send_claude", "Claude", show=True),
-        # Copy (hidden from footer)
-        Binding("f6", "copy_gemini", "Copy Gem", show=False),
-        Binding("f7", "copy_gpt", "Copy GPT", show=False),
-        Binding("f8", "copy_claude", "Copy Cld", show=False),
-        # Other (hidden)
-        Binding("ctrl+h", "load_history", "History", show=False),
-        Binding("ctrl+l", "load_file", "Load", show=False),
-        Binding("ctrl+e", "export", "Export", show=False),
+        Binding("f3", "send_claude", "Cld", show=True),
+        Binding("f5", "send_all", "Всем", show=True),
+        # Copy responses
+        Binding("f6", "copy_gemini", "📋G", show=True),
+        Binding("f7", "copy_gpt", "📋P", show=True),
+        Binding("f8", "copy_claude", "📋C", show=True),
+        # Features
+        Binding("ctrl+d", "open_ddo", "DDO", show=True),
+        Binding("ctrl+f", "open_search", "🔍", show=True),
+        Binding("ctrl+h", "load_history", "Hist", show=True),
+        Binding("ctrl+l", "load_file", "Load", show=True),
+        Binding("ctrl+e", "export", "Exp", show=True),
+        # Hidden
         Binding("escape", "clear_input", "Clear", show=False),
     ]
 
@@ -873,7 +907,7 @@ class HopeOmniChat(App):
             # Chat log
             with VerticalScroll(id="chat-log"):
                 yield Static(
-                    "🚀 HOPE OMNI-CHAT v1.5 - DDO + Search\n\n"
+                    "🚀 HOPE OMNI-CHAT v1.6 - DDO + Search\n\n"
                     "F1/F2/F3 — отправить агенту | F5 — всем\n"
                     "Ctrl+D — 🎯 DDO (автоматическая дискуссия агентов)\n"
                     "Ctrl+F — 🔍 ПОИСК по истории\n"

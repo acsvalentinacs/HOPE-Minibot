@@ -389,6 +389,24 @@ VerticalScroll > ScrollBar > .scrollbar--bar {
     margin-bottom: 1;
 }
 
+/* === DDO STATUS INDICATORS === */
+#ddo-status-legend {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#ddo-status {
+    text-align: center;
+    text-style: bold;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.ddo-status {
+    text-align: center;
+}
+
 .ddo-label {
     color: $primary;
     text-style: bold;
