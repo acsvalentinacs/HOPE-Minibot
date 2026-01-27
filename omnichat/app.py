@@ -5,11 +5,11 @@
 # Created at: 2026-01-26T11:00:00Z
 # Modified by: Claude (opus-4)
 # Modified at: 2026-01-27T15:00:00Z
-# Purpose: HOPE OMNI-CHAT v1.4.1 - Trinity AI Chat TUI with Search + DDO
+# Purpose: HOPE OMNI-CHAT v1.5.1 - Trinity AI Chat TUI with Search + DDO
 # FIX: DDO uses run_worker instead of asyncio.create_task
 # === END SIGNATURE ===
 """
-HOPE OMNI-CHAT v1.4 - Trinity AI Chat System
+HOPE OMNI-CHAT v1.5 - Trinity AI Chat System
 
 A professional TUI (Text User Interface) for real-time chat with
 multiple AI agents: Gemini (Strategist), GPT (Analyst), Claude (Developer).
@@ -801,7 +801,7 @@ class HopeOmniChat(App):
     """HOPE OMNI-CHAT - Trinity AI Chat Application."""
 
     CSS_PATH = "src/styles.tcss"
-    TITLE = "HOPE OMNI-CHAT v1.4"
+    TITLE = "HOPE OMNI-CHAT v1.5"
 
     BINDINGS = [
         Binding("f1", "send_gemini", "Gemini", show=True),
@@ -869,7 +869,7 @@ class HopeOmniChat(App):
             # Chat log
             with VerticalScroll(id="chat-log"):
                 yield Static(
-                    "🚀 HOPE OMNI-CHAT v1.4 - DDO + Search\n\n"
+                    "🚀 HOPE OMNI-CHAT v1.5 - DDO + Search\n\n"
                     "F1/F2/F3 — отправить агенту | F5 — всем\n"
                     "Ctrl+D — 🎯 DDO (автоматическая дискуссия агентов)\n"
                     "Ctrl+F — 🔍 ПОИСК по истории\n"
