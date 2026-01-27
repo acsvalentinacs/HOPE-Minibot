@@ -33,6 +33,7 @@ from core.event_classifier import EventClassifier
 from core.market_intel import MarketIntel, get_market_intel, TradingSignal
 from core.telegram_signals import SignalPublisher, get_signal_publisher, PublishResult
 from core.signal_outcomes import OutcomeTracker, TrackedSignal, get_outcome_tracker
+from core.strategy_integration import StrategyIntegration, get_strategy_integration, IntegrationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +86,21 @@ class SignalsPipeline:
         journal: Optional[EventJournal] = None,
         publisher: Optional[SignalPublisher] = None,
         outcome_tracker: Optional[OutcomeTracker] = None,
+        strategy_integration: Optional[StrategyIntegration] = None,
+        use_strategy_orchestrator: bool = True,  # Phase 2.5: use new orchestrator
     ):
         self._intel = market_intel or get_market_intel()
         self._journal = journal or get_event_journal()
         self._publisher = publisher or get_signal_publisher()
         self._outcome_tracker = outcome_tracker or get_outcome_tracker()
         self._classifier = EventClassifier()
+
+        # Phase 2.5: Strategy orchestrator integration (Spot-only)
+        self._use_orchestrator = use_strategy_orchestrator
+        if self._use_orchestrator:
+            self._strategy = strategy_integration or get_strategy_integration()
+        else:
+            self._strategy = None
 
         self._last_cycle_result: Optional[CycleResult] = None
         self._consecutive_errors = 0
@@ -326,9 +336,15 @@ class SignalsPipeline:
 
             # 3. Generate trading signals
             logger.info("Generating signals...")
-            signals = self._intel.get_trading_signals()
+            if self._use_orchestrator and self._strategy:
+                # Phase 2.5: Use StrategyOrchestrator (Spot-only enforced)
+                signals = self._strategy.generate_signals(snapshot)
+                logger.info("Generated %d signals via StrategyOrchestrator", len(signals))
+            else:
+                # Legacy: Use MarketIntel signals
+                signals = self._intel.get_trading_signals()
             signals_count = len(signals)
-            logger.info("Generated %d signals", signals_count)
+            logger.info("Generated %d signals total", signals_count)
 
             # 4. Collect and classify events
             logger.info("Classifying events...")
