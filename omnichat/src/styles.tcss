@@ -2,8 +2,8 @@
  * Created by: Claude (opus-4)
  * Created at: 2026-01-26T11:00:00Z
  * Modified by: Claude (opus-4)
- * Modified at: 2026-01-26T17:00:00Z
- * Purpose: HOPE OMNI-CHAT TUI Styles v1.3 - Search Modal
+ * Modified at: 2026-01-27T13:00:00Z
+ * Purpose: HOPE OMNI-CHAT TUI Styles v1.4 - Search Modal + DDO Modal
  * === END SIGNATURE === */
 
 /* ============================================================
@@ -359,4 +359,125 @@ VerticalScroll > ScrollBar > .scrollbar--bar {
 .search-hint {
     color: $text-muted;
     text-style: italic;
+}
+
+/* ============================================================
+   DDO MODAL STYLES
+   ============================================================ */
+
+/* === DDO MODAL CONTAINER === */
+#ddo-modal {
+    width: 90%;
+    height: 90%;
+    background: $surface;
+    border: thick $accent;
+    padding: 1 2;
+}
+
+#ddo-title {
+    text-style: bold;
+    color: $accent;
+    text-align: center;
+    padding-bottom: 1;
+    border-bottom: solid $accent-darken-2;
+}
+
+.ddo-subtitle {
+    text-align: center;
+    color: $text-muted;
+    text-style: italic;
+    margin-bottom: 1;
+}
+
+.ddo-label {
+    color: $primary;
+    text-style: bold;
+    margin-top: 1;
+}
+
+/* === DDO TOPIC INPUT === */
+#ddo-topic {
+    height: 5;
+    border: solid $primary;
+    margin-top: 0;
+}
+
+#ddo-topic:focus {
+    border: solid $accent;
+}
+
+/* === DDO MODE BUTTONS === */
+#ddo-modes {
+    height: 3;
+    margin-top: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+#ddo-modes Button {
+    margin-right: 1;
+}
+
+/* === DDO PROGRESS === */
+#ddo-progress {
+    height: 1;
+    margin-top: 1;
+    color: $warning;
+    text-style: bold;
+}
+
+#ddo-phase {
+    height: 1;
+    color: $primary;
+}
+
+#ddo-cost {
+    height: 1;
+    color: $success;
+}
+
+/* === DDO LOG === */
+#ddo-log {
+    height: 1fr;
+    margin-top: 1;
+    border: solid $primary-darken-2;
+    padding: 1;
+    background: $surface-darken-2;
+}
+
+#ddo-log-content {
+    color: $text;
+}
+
+/* === DDO ACTIONS === */
+#ddo-actions {
+    height: 3;
+    margin-top: 1;
+    layout: horizontal;
+    align: center middle;
+}
+
+#ddo-actions Button {
+    margin: 0 1;
+    width: 15;
+}
+
+#ddo-start {
+    background: $success;
+}
+
+#ddo-start:hover {
+    background: $success-lighten-1;
+}
+
+#ddo-stop {
+    background: $error;
+}
+
+#ddo-stop:hover {
+    background: $error-lighten-1;
+}
+
+#ddo-close {
+    background: $surface-lighten-1;
 }

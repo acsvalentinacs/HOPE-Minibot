@@ -4,14 +4,20 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-26T17:00:00Z
-# Purpose: HOPE OMNI-CHAT v1.3 - Trinity AI Chat TUI with Search
+# Modified at: 2026-01-27T13:00:00Z
+# Purpose: HOPE OMNI-CHAT v1.4 - Trinity AI Chat TUI with Search + DDO
 # === END SIGNATURE ===
 """
-HOPE OMNI-CHAT v1.3 - Trinity AI Chat System
+HOPE OMNI-CHAT v1.4 - Trinity AI Chat System
 
 A professional TUI (Text User Interface) for real-time chat with
 multiple AI agents: Gemini (Strategist), GPT (Analyst), Claude (Developer).
+
+NEW in v1.4: DDO - Dynamic Discussion Orchestrator
+- Ctrl+D - Launch DDO (multi-agent discussion)
+- Automated phases: ARCHITECT → ANALYZE → IMPLEMENT → REVIEW
+- Fail-closed guards at every step
+- Real-time progress and cost tracking
 
 NEW in v1.3: Full-text Search
 - Ctrl+F - Open search panel
@@ -28,6 +34,7 @@ Hotkeys:
     F6 - Copy last Gemini response
     F7 - Copy last GPT response
     F8 - Copy last Claude response
+    Ctrl+D - DDO Discussion (NEW!)
     Ctrl+F - Search history
     Ctrl+H - Load history on startup
     Ctrl+L - Load message from file
@@ -66,6 +73,21 @@ from textual.message import Message
 
 from src.bus import EventBus, ChatMessage, MessageRole, SessionStats, TaskStatus, AgentTaskState
 from src.search import SearchEngine, SearchQuery, SearchResult, SearchResults, parse_date_input
+from src.connectors import create_all_agents
+from src.ddo import (
+    DDOOrchestrator,
+    DiscussionMode,
+    DiscussionPhase,
+)
+from src.ddo.orchestrator import (
+    DDOEvent,
+    PhaseStartEvent,
+    ResponseEvent,
+    GuardFailEvent,
+    ProgressEvent,
+    CompletedEvent,
+    ErrorEvent,
+)
 
 
 # === CLIPBOARD HELPER ===
@@ -374,6 +396,250 @@ class SearchScreen(ModalScreen):
             asyncio.create_task(self._execute_search(self.current_results.page + 1))
 
 
+# === DDO SCREEN ===
+
+class DDOScreen(ModalScreen):
+    """
+    Modal screen for DDO (Dynamic Discussion Orchestrator).
+
+    Allows user to input topic and select discussion mode,
+    then runs the multi-agent discussion with real-time updates.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close_ddo", "Закрыть"),
+        Binding("enter", "start_discussion", "Начать", show=False),
+    ]
+
+    def __init__(self, agents: dict) -> None:
+        super().__init__()
+        self.agents = agents
+        self._running = False
+        self._ddo_task: Optional[asyncio.Task] = None
+
+    def compose(self) -> ComposeResult:
+        with Container(id="ddo-modal"):
+            # Header
+            yield Static("🎯 DDO - Dynamic Discussion Orchestrator", id="ddo-title")
+            yield Static(
+                "Автоматическая дискуссия между Gemini, GPT и Claude",
+                classes="ddo-subtitle"
+            )
+
+            # Topic input
+            yield Static("📝 Тема дискуссии:", classes="ddo-label")
+            yield TextArea(
+                id="ddo-topic",
+                language=None,
+                soft_wrap=True,
+                show_line_numbers=False,
+            )
+
+            # Mode selection
+            yield Static("📋 Режим:", classes="ddo-label")
+            with Horizontal(id="ddo-modes"):
+                yield Button("🏗️ ARCHITECTURE", id="mode-architecture", variant="primary")
+                yield Button("🔍 CODE_REVIEW", id="mode-code_review")
+                yield Button("💡 BRAINSTORM", id="mode-brainstorm")
+                yield Button("⚡ QUICK", id="mode-quick")
+                yield Button("🔧 TROUBLESHOOT", id="mode-troubleshoot")
+
+            # Progress section
+            yield Static("", id="ddo-progress")
+            yield Static("", id="ddo-phase")
+            yield Static("", id="ddo-cost")
+
+            # Output log
+            with VerticalScroll(id="ddo-log"):
+                yield Static("💬 Лог дискуссии появится здесь...", id="ddo-log-content")
+
+            # Actions
+            with Horizontal(id="ddo-actions"):
+                yield Button("▶️ Запустить", id="ddo-start", variant="success")
+                yield Button("⏹️ Стоп", id="ddo-stop", variant="error", disabled=True)
+                yield Button("❌ Закрыть", id="ddo-close")
+
+    def on_mount(self) -> None:
+        """Focus topic input on mount."""
+        self.query_one("#ddo-topic", TextArea).focus()
+
+    def _get_selected_mode(self) -> DiscussionMode:
+        """Get currently selected mode from button states."""
+        # Check which button has 'primary' variant
+        for mode_name in ["architecture", "code_review", "brainstorm", "quick", "troubleshoot"]:
+            btn = self.query_one(f"#mode-{mode_name}", Button)
+            if btn.variant == "primary":
+                return DiscussionMode(mode_name)
+        return DiscussionMode.ARCHITECTURE
+
+    def _select_mode(self, mode_name: str) -> None:
+        """Select a mode button."""
+        for name in ["architecture", "code_review", "brainstorm", "quick", "troubleshoot"]:
+            btn = self.query_one(f"#mode-{name}", Button)
+            if name == mode_name:
+                btn.variant = "primary"
+            else:
+                btn.variant = "default"
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button clicks."""
+        btn_id = event.button.id
+
+        # Mode selection
+        if btn_id and btn_id.startswith("mode-"):
+            mode_name = btn_id.replace("mode-", "")
+            self._select_mode(mode_name)
+            return
+
+        # Actions
+        if btn_id == "ddo-start":
+            asyncio.create_task(self._start_discussion())
+        elif btn_id == "ddo-stop":
+            self._stop_discussion()
+        elif btn_id == "ddo-close":
+            self.action_close_ddo()
+
+    async def _start_discussion(self) -> None:
+        """Start the DDO discussion."""
+        topic_widget = self.query_one("#ddo-topic", TextArea)
+        topic = topic_widget.text.strip()
+
+        if not topic:
+            self._update_progress("❌ Введите тему дискуссии!")
+            return
+
+        if self._running:
+            return
+
+        self._running = True
+
+        # Update UI state
+        self.query_one("#ddo-start", Button).disabled = True
+        self.query_one("#ddo-stop", Button).disabled = False
+
+        # Clear log
+        log = self.query_one("#ddo-log-content", Static)
+        log.update("")
+
+        mode = self._get_selected_mode()
+        self._update_progress(f"🚀 Запуск DDO: {mode.display_name}")
+
+        # Create orchestrator and run
+        orchestrator = DDOOrchestrator(self.agents)
+
+        try:
+            async for event in orchestrator.run_discussion(
+                topic=topic,
+                mode=mode,
+                cost_limit=100.0,  # $1.00 limit
+                time_limit=600,    # 10 minutes
+            ):
+                if not self._running:
+                    break
+                self._handle_ddo_event(event)
+        except Exception as e:
+            self._append_log(f"❌ ОШИБКА: {e}")
+
+        self._running = False
+        self.query_one("#ddo-start", Button).disabled = False
+        self.query_one("#ddo-stop", Button).disabled = True
+
+    def _stop_discussion(self) -> None:
+        """Stop the running discussion."""
+        self._running = False
+        self._update_progress("⏹️ Дискуссия остановлена")
+
+    def _handle_ddo_event(self, event: DDOEvent) -> None:
+        """Handle a DDO event."""
+        if isinstance(event, PhaseStartEvent):
+            self._update_phase(f"📍 {event.phase.display_name} ({event.agent.upper()})")
+            self._append_log(f"\n{'='*40}\n📍 ФАЗА: {event.phase.display_name}\n{'='*40}")
+
+        elif isinstance(event, ResponseEvent):
+            if event.response:
+                agent = event.response.agent.upper()
+                content = event.response.content
+                # Truncate for log (first 500 chars)
+                preview = content[:500] + "..." if len(content) > 500 else content
+                self._append_log(f"\n💬 {agent}:\n{preview}")
+
+        elif isinstance(event, GuardFailEvent):
+            self._append_log(f"\n⚠️ GUARD FAIL: {event.guard_name}\n   {event.reason}")
+
+        elif isinstance(event, ProgressEvent):
+            self._update_progress(
+                f"📊 Фаза {event.current_phase}/{event.total_phases}: {event.message}"
+            )
+            self._update_cost(event.cost_cents, event.elapsed_seconds)
+
+        elif isinstance(event, CompletedEvent):
+            if event.success:
+                self._update_progress("✅ Дискуссия завершена успешно!")
+                self._append_log(f"\n{'='*40}\n✅ УСПЕХ! Консенсус достигнут.\n{'='*40}")
+            else:
+                self._update_progress("❌ Дискуссия завершена с ошибкой")
+                self._append_log(f"\n{'='*40}\n❌ FAIL: Консенсус не достигнут.\n{'='*40}")
+
+            if event.context:
+                self._append_log(
+                    f"\n📊 Статистика:\n"
+                    f"   Стоимость: ${event.context.cost_usd:.4f}\n"
+                    f"   Время: {event.context.elapsed_str}\n"
+                    f"   Сообщений: {event.context.response_count}"
+                )
+
+        elif isinstance(event, ErrorEvent):
+            self._append_log(f"\n❌ ОШИБКА: {event.error}")
+
+    def _update_progress(self, text: str) -> None:
+        """Update progress display."""
+        try:
+            self.query_one("#ddo-progress", Static).update(text)
+        except Exception:
+            pass
+
+    def _update_phase(self, text: str) -> None:
+        """Update phase display."""
+        try:
+            self.query_one("#ddo-phase", Static).update(text)
+        except Exception:
+            pass
+
+    def _update_cost(self, cost_cents: float, elapsed_seconds: float) -> None:
+        """Update cost display."""
+        try:
+            mins = int(elapsed_seconds) // 60
+            secs = int(elapsed_seconds) % 60
+            self.query_one("#ddo-cost", Static).update(
+                f"💰 ${cost_cents/100:.4f} | ⏱️ {mins:02d}:{secs:02d}"
+            )
+        except Exception:
+            pass
+
+    def _append_log(self, text: str) -> None:
+        """Append text to log."""
+        try:
+            log = self.query_one("#ddo-log-content", Static)
+            current = str(log.renderable) if log.renderable else ""
+            log.update(current + text)
+
+            # Scroll to bottom
+            scroll = self.query_one("#ddo-log", VerticalScroll)
+            scroll.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    def action_close_ddo(self) -> None:
+        """Close DDO screen."""
+        self._running = False
+        self.dismiss(None)
+
+    def action_start_discussion(self) -> None:
+        """Start discussion on Enter."""
+        if not self._running:
+            asyncio.create_task(self._start_discussion())
+
+
 # === MAIN WIDGETS ===
 
 class MessageWidget(Static):
@@ -520,7 +786,7 @@ class HopeOmniChat(App):
     """HOPE OMNI-CHAT - Trinity AI Chat Application."""
 
     CSS_PATH = "src/styles.tcss"
-    TITLE = "HOPE OMNI-CHAT v1.3"
+    TITLE = "HOPE OMNI-CHAT v1.4"
 
     BINDINGS = [
         Binding("f1", "send_gemini", "Gemini", show=True),
@@ -530,6 +796,7 @@ class HopeOmniChat(App):
         Binding("f6", "copy_gemini", "📋Gem"),
         Binding("f7", "copy_gpt", "📋GPT"),
         Binding("f8", "copy_claude", "📋Cld"),
+        Binding("ctrl+d", "open_ddo", "🎯DDO"),
         Binding("ctrl+f", "open_search", "🔍Search"),
         Binding("ctrl+h", "load_history", "History"),
         Binding("ctrl+l", "load_file", "Load"),
@@ -552,6 +819,9 @@ class HopeOmniChat(App):
 
         # Search engine
         self.search_engine = SearchEngine(self._history_path)
+
+        # DDO agents (separate instances for DDO)
+        self._ddo_agents = create_all_agents()
 
         # Message counter for IDs
         self._message_counter = 0
@@ -584,8 +854,9 @@ class HopeOmniChat(App):
             # Chat log
             with VerticalScroll(id="chat-log"):
                 yield Static(
-                    "🚀 HOPE OMNI-CHAT v1.3 - Full-text Search\n\n"
+                    "🚀 HOPE OMNI-CHAT v1.4 - DDO + Search\n\n"
                     "F1/F2/F3 — отправить агенту | F5 — всем\n"
+                    "Ctrl+D — 🎯 DDO (автоматическая дискуссия агентов)\n"
                     "Ctrl+F — 🔍 ПОИСК по истории\n"
                     "Ctrl+H — загрузить историю при старте\n"
                     "F6/F7/F8 — копировать ответ | Ctrl+E — экспорт\n\n"
@@ -742,6 +1013,19 @@ class HopeOmniChat(App):
         input_widget.text = ""
         input_widget.focus()
         asyncio.create_task(self.bus.send_user_message(text, target))
+
+    # === DDO ===
+
+    def action_open_ddo(self) -> None:
+        """Open DDO (Dynamic Discussion Orchestrator) modal."""
+        def handle_ddo_result(result) -> None:
+            if result:
+                self._handle_chat_message(ChatMessage(
+                    role=MessageRole.SYSTEM,
+                    content=f"🎯 DDO дискуссия завершена",
+                ))
+
+        self.push_screen(DDOScreen(self._ddo_agents), handle_ddo_result)
 
     # === SEARCH ===
 
