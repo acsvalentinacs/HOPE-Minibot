@@ -499,3 +499,70 @@ VerticalScroll > ScrollBar > .scrollbar--bar {
 #ddo-close {
     background: $surface-lighten-1;
 }
+
+/* ============================================================
+   MARKET INTEL MODAL STYLES
+   ============================================================ */
+
+#intel-modal {
+    width: 90%;
+    height: 90%;
+    background: $surface;
+    border: thick $success;
+    padding: 1 2;
+}
+
+#intel-title {
+    text-style: bold;
+    color: $success;
+    text-align: center;
+    padding-bottom: 1;
+    border-bottom: solid $success-darken-2;
+}
+
+.intel-subtitle {
+    text-align: center;
+    color: $text-muted;
+    text-style: italic;
+    margin-bottom: 1;
+}
+
+#intel-status {
+    text-align: center;
+    color: $warning;
+    text-style: bold;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#intel-content {
+    height: 1fr;
+    margin-top: 1;
+    border: solid $success-darken-2;
+    padding: 1;
+    background: $surface-darken-2;
+}
+
+#intel-data {
+    color: $text;
+}
+
+#intel-actions {
+    height: 3;
+    margin-top: 1;
+    layout: horizontal;
+    align: center middle;
+}
+
+#intel-actions Button {
+    margin: 0 1;
+    width: 15;
+}
+
+#intel-refresh {
+    background: $success;
+}
+
+#intel-refresh:hover {
+    background: $success-lighten-1;
+}

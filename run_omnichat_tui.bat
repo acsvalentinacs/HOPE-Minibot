@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ========================================
-echo  HOPE OMNI-CHAT v1.5
+echo  HOPE OMNI-CHAT v1.8
 echo ========================================
 echo.
 

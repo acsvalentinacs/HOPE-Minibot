@@ -4,12 +4,12 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-27T16:30:00Z
-# Purpose: HOPE OMNI-CHAT v1.6 - Trinity AI Chat TUI with Search + DDO
-# FIX: DDO uses run_worker with call_from_thread for UI updates
+# Modified at: 2026-01-27T21:30:00Z
+# Purpose: HOPE OMNI-CHAT v1.8 - Trinity AI Chat TUI with Search + DDO + Market Intel
+# NEW: Ctrl+M Market Intelligence (Binance, CoinGecko, RSS news)
 # === END SIGNATURE ===
 """
-HOPE OMNI-CHAT v1.6 - Trinity AI Chat System
+HOPE OMNI-CHAT v1.8 - Trinity AI Chat System
 
 A professional TUI (Text User Interface) for real-time chat with
 multiple AI agents: Gemini (Strategist), GPT (Analyst), Claude (Developer).
@@ -89,6 +89,7 @@ from src.ddo.orchestrator import (
     CompletedEvent,
     ErrorEvent,
 )
+from src.market_intel import MarketIntel, MarketSnapshot
 
 
 # === CLIPBOARD HELPER ===
@@ -221,8 +222,16 @@ class SearchScreen(ModalScreen):
                 yield Static("↑↓ навигация | Enter выбрать | Esc закрыть", classes="search-hint")
 
     def on_mount(self) -> None:
-        """Focus search input on mount."""
-        self.query_one("#search-input", Input).focus()
+        """Defer focus until screen is fully ready."""
+        # Use call_after_refresh to avoid SignalError
+        self.call_after_refresh(self._focus_input)
+
+    def _focus_input(self) -> None:
+        """Focus search input after screen is fully mounted."""
+        try:
+            self.query_one("#search-input", Input).focus()
+        except Exception:
+            pass  # Screen may have been dismissed
 
     async def _debounced_search(self, delay: float = 0.3) -> None:
         """Execute search after debounce delay."""
@@ -410,6 +419,8 @@ class DDOScreen(ModalScreen):
     BINDINGS = [
         Binding("escape", "close_ddo", "Закрыть"),
         Binding("enter", "start_discussion", "Начать", show=False),
+        Binding("f9", "copy_log", "📋 Копировать"),
+        Binding("f10", "save_log", "💾 Сохранить"),
     ]
 
     def __init__(self, agents: dict) -> None:
@@ -468,11 +479,33 @@ class DDOScreen(ModalScreen):
             with Horizontal(id="ddo-actions"):
                 yield Button("▶️ Запустить", id="ddo-start", variant="success")
                 yield Button("⏹️ Стоп", id="ddo-stop", variant="error", disabled=True)
+                yield Button("📋 Копировать", id="ddo-copy", disabled=True)
+                yield Button("💾 Сохранить", id="ddo-save", disabled=True)
                 yield Button("❌ Закрыть", id="ddo-close")
 
     def on_mount(self) -> None:
-        """Focus topic input on mount."""
-        self.query_one("#ddo-topic", TextArea).focus()
+        """Defer initialization until screen is fully ready."""
+        # Use call_after_refresh to avoid SignalError
+        self.call_after_refresh(self._initialize_screen)
+
+    def _initialize_screen(self) -> None:
+        """Initialize screen after it's fully mounted."""
+        # ALWAYS reset state when screen is opened
+        self._running = False
+        self._log_text = ""
+        self._topic = ""
+        self._mode = DiscussionMode.QUICK
+        try:
+            self.query_one("#ddo-topic", TextArea).focus()
+            self.query_one("#ddo-start", Button).disabled = False
+            self.query_one("#ddo-stop", Button).disabled = True
+            self.query_one("#ddo-copy", Button).disabled = True
+            self.query_one("#ddo-save", Button).disabled = True
+            self.query_one("#ddo-status", Static).update("🟢 ГОТОВ к запуску")
+            self.query_one("#ddo-progress", Static).update("")
+            self.query_one("#ddo-log-content", Static).update("💬 Лог дискуссии появится здесь...")
+        except Exception:
+            pass  # Screen may have been dismissed
 
     def _get_selected_mode(self) -> DiscussionMode:
         """Get currently selected mode from button states."""
@@ -508,12 +541,17 @@ class DDOScreen(ModalScreen):
             self._do_start_discussion()
         elif btn_id == "ddo-stop":
             self._stop_discussion()
+        elif btn_id == "ddo-copy":
+            self._copy_log()
+        elif btn_id == "ddo-save":
+            self._save_log()
         elif btn_id == "ddo-close":
             self.action_close_ddo()
 
     def _do_start_discussion(self) -> None:
         """Start DDO discussion."""
         if self._running:
+            self.query_one("#ddo-progress", Static).update("⚠️ Дискуссия уже запущена!")
             return
 
         topic_widget = self.query_one("#ddo-topic", TextArea)
@@ -523,8 +561,30 @@ class DDOScreen(ModalScreen):
             self.query_one("#ddo-progress", Static).update("❌ Введите тему дискуссии!")
             return
 
+        # Check agent connections BEFORE starting
+        agents_status = []
+        for name, agent in self.agents.items():
+            status = "✅" if agent.is_connected else "❌"
+            err = f" ({agent.error_message})" if agent.error_message else ""
+            agents_status.append(f"{status} {name.upper()}{err}")
+
+        connected_count = sum(1 for a in self.agents.values() if a.is_connected)
+        if connected_count == 0:
+            self.query_one("#ddo-progress", Static).update("❌ Нет подключённых агентов!")
+            self.query_one("#ddo-log-content", Static).update(
+                "❌ ОШИБКА: Ни один агент не подключён!\n\n"
+                "Статус агентов:\n" + "\n".join(agents_status) + "\n\n"
+                "Проверьте API ключи в .env файле:\n"
+                "- GEMINI_API_KEY\n"
+                "- OPENAI_API_KEY\n"
+                "- ANTHROPIC_API_KEY"
+            )
+            return
+
         self._running = True
         self._log_text = ""
+        self._topic = topic
+        self._mode = self._get_selected_mode()
 
         # Update UI state
         self.query_one("#ddo-start", Button).disabled = True
@@ -532,7 +592,12 @@ class DDOScreen(ModalScreen):
         self.query_one("#ddo-status", Static).update("🔴 РАБОТАЕТ")
 
         mode = self._get_selected_mode()
-        self._log_text = f"🚀 Начинаем дискуссию...\nТема: {topic}\nРежим: {mode.display_name}\n"
+        self._log_text = (
+            f"🚀 Начинаем дискуссию...\n"
+            f"Тема: {topic}\n"
+            f"Режим: {mode.display_name}\n\n"
+            f"📡 Статус агентов:\n" + "\n".join(agents_status) + "\n"
+        )
         self.query_one("#ddo-log-content", Static).update(self._log_text)
         self.query_one("#ddo-progress", Static).update(f"🚀 Запуск DDO: {mode.display_name}")
 
@@ -543,43 +608,59 @@ class DDOScreen(ModalScreen):
             exclusive=True,
         )
 
+    def on_worker_state_changed(self, event) -> None:
+        """Handle worker state changes (Textual standard method)."""
+        if event.worker.name == "ddo_worker":
+            if event.worker.state.name in ("SUCCESS", "ERROR", "CANCELLED"):
+                if event.worker.error:
+                    self._log_text += f"\n\n❌ WORKER ERROR: {event.worker.error}"
+                    self._update_log_display()
+                    self._set_status("❌ Ошибка worker")
+                self._running = False
+                self._finish_discussion()
+
     async def _run_ddo(self, topic: str, mode: DiscussionMode) -> None:
         """Run DDO discussion in background worker."""
         import traceback
 
-        self._add_log("\n📡 Подключение к агентам...")
-        orchestrator = DDOOrchestrator(self.agents)
+        self._add_log("\n" + "="*40)
+        self._add_log("\n🔄 Создание DDO Orchestrator...")
 
         try:
+            orchestrator = DDOOrchestrator(self.agents)
+            self._add_log("\n✅ Orchestrator создан")
+            self._add_log(f"\n📋 Запуск дискуссии: режим={mode.value}")
+            self._add_log("\n" + "-"*40)
+
+            event_count = 0
             async for event in orchestrator.run_discussion(
                 topic=topic,
                 mode=mode,
                 cost_limit=100.0,  # $1.00 limit
                 time_limit=600,    # 10 minutes
             ):
+                event_count += 1
                 if not self._running:
+                    self._add_log("\n⏹️ Дискуссия остановлена пользователем")
                     break
                 # Process event and update UI
                 self._process_event(event)
 
+            self._add_log(f"\n\n📊 Всего событий: {event_count}")
+
         except Exception as e:
             error_trace = traceback.format_exc()
-            self._add_log(f"\n❌ ОШИБКА: {e}\n\nTraceback:\n{error_trace}")
-            self.call_from_thread(self._set_status, "❌ Ошибка")
+            self._add_log(f"\n\n❌ КРИТИЧЕСКАЯ ОШИБКА:\n{e}\n\nTraceback:\n{error_trace}")
+            self._set_status("❌ Ошибка")
 
-        # Finish
-        self._running = False
-        self.call_from_thread(self._finish_discussion)
+        # Note: _finish_discussion is called by on_worker_state_changed callback
 
     def _process_event(self, event: DDOEvent) -> None:
-        """Process DDO event and update UI."""
+        """Process DDO event and update UI (async worker - direct calls)."""
         if isinstance(event, PhaseStartEvent):
-            self.call_from_thread(
-                self._set_phase,
-                f"📍 {event.phase.display_name} ({event.agent.upper()})"
-            )
+            self._set_phase(f"📍 {event.phase.display_name} ({event.agent.upper()})")
             self._add_log(f"\n{'='*40}\n📍 ФАЗА: {event.phase.display_name}\n{'='*40}")
-            self.call_from_thread(self._set_status, "🟡 ДУМАЕТ")
+            self._set_status("🟡 ДУМАЕТ")
 
         elif isinstance(event, ResponseEvent):
             if event.response:
@@ -592,18 +673,15 @@ class DDOScreen(ModalScreen):
             self._add_log(f"\n⚠️ GUARD FAIL: {event.guard_name}\n   {event.reason}")
 
         elif isinstance(event, ProgressEvent):
-            self.call_from_thread(
-                self._set_progress,
-                f"📊 Фаза {event.current_phase}/{event.total_phases}: {event.message}"
-            )
-            self.call_from_thread(self._set_cost, event.cost_cents, event.elapsed_seconds)
+            self._set_progress(f"📊 Фаза {event.current_phase}/{event.total_phases}: {event.message}")
+            self._set_cost(event.cost_cents, event.elapsed_seconds)
 
         elif isinstance(event, CompletedEvent):
             if event.success:
-                self.call_from_thread(self._set_status, "✅ ГОТОВО")
+                self._set_status("✅ ГОТОВО")
                 self._add_log(f"\n{'='*40}\n✅ УСПЕХ! Консенсус достигнут.\n{'='*40}")
             else:
-                self.call_from_thread(self._set_status, "❌ FAIL")
+                self._set_status("❌ FAIL")
                 self._add_log(f"\n{'='*40}\n❌ FAIL: Консенсус не достигнут.\n{'='*40}")
 
             if event.context:
@@ -618,9 +696,9 @@ class DDOScreen(ModalScreen):
             self._add_log(f"\n❌ ОШИБКА: {event.error}")
 
     def _add_log(self, text: str) -> None:
-        """Add text to log (thread-safe)."""
+        """Add text to log (async worker - direct update)."""
         self._log_text += text
-        self.call_from_thread(self._update_log_display)
+        self._update_log_display()
 
     def _update_log_display(self) -> None:
         """Update log display on main thread."""
@@ -667,10 +745,76 @@ class DDOScreen(ModalScreen):
         try:
             self.query_one("#ddo-start", Button).disabled = False
             self.query_one("#ddo-stop", Button).disabled = True
+            # Enable copy/save if there's content
+            has_content = len(self._log_text) > 100
+            self.query_one("#ddo-copy", Button).disabled = not has_content
+            self.query_one("#ddo-save", Button).disabled = not has_content
             if "ГОТОВО" not in self.query_one("#ddo-status", Static).renderable:
                 self.query_one("#ddo-status", Static).update("🟢 ГОТОВ")
         except Exception:
             pass
+
+    def _copy_log(self) -> None:
+        """Copy discussion log to clipboard."""
+        if not self._log_text:
+            self._set_progress("⚠️ Нет данных для копирования")
+            return
+
+        if copy_to_clipboard(self._log_text):
+            self._set_progress(f"📋 Скопировано ({len(self._log_text)} символов)")
+        else:
+            self._set_progress("❌ Ошибка копирования. pip install pyperclip")
+
+    def _save_log(self) -> None:
+        """Save discussion log to file."""
+        if not self._log_text:
+            self._set_progress("⚠️ Нет данных для сохранения")
+            return
+
+        try:
+            # Create state/ddo folder
+            state_dir = Path(__file__).parent / "state" / "ddo"
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate filename with timestamp
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            mode_name = self._mode.value if hasattr(self, '_mode') else "unknown"
+            filename = f"ddo_{ts}_{mode_name}.md"
+            filepath = state_dir / filename
+
+            # Format as Markdown
+            content = self._format_log_as_markdown()
+
+            # Atomic write
+            tmp = filepath.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+                f.flush()
+                import os
+                os.fsync(f.fileno())
+            import os
+            os.replace(tmp, filepath)
+
+            self._set_progress(f"💾 Сохранено: {filename}")
+        except Exception as e:
+            self._set_progress(f"❌ Ошибка сохранения: {e}")
+
+    def _format_log_as_markdown(self) -> str:
+        """Format log as Markdown document."""
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        topic = getattr(self, '_topic', 'Unknown')
+        mode = getattr(self, '_mode', DiscussionMode.QUICK)
+
+        header = f"""# DDO Discussion Log
+
+**Дата:** {ts}
+**Тема:** {topic}
+**Режим:** {mode.display_name}
+
+---
+
+"""
+        return header + self._log_text
 
     def _stop_discussion(self) -> None:
         """Stop the running discussion."""
@@ -686,6 +830,194 @@ class DDOScreen(ModalScreen):
     def action_start_discussion(self) -> None:
         """Start discussion on Enter."""
         self._do_start_discussion()
+
+    def action_copy_log(self) -> None:
+        """Copy log on F9."""
+        self._copy_log()
+
+    def action_save_log(self) -> None:
+        """Save log on F10."""
+        self._save_log()
+
+
+# === MARKET INTEL SCREEN ===
+
+class MarketIntelScreen(ModalScreen):
+    """
+    Modal screen for Market Intelligence.
+
+    Displays real-time market data, news, and alerts.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close_intel", "Закрыть"),
+        Binding("r", "refresh", "Обновить"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._intel = MarketIntel()
+        self._snapshot: Optional[MarketSnapshot] = None
+        self._loading = False
+
+    def compose(self) -> ComposeResult:
+        with Container(id="intel-modal"):
+            yield Static("📊 MARKET INTELLIGENCE", id="intel-title")
+            yield Static(
+                "Реальные данные с Binance, CoinGecko, новостных RSS",
+                classes="intel-subtitle"
+            )
+
+            # Status bar
+            yield Static("⏳ Загрузка данных...", id="intel-status")
+
+            # Main content
+            with VerticalScroll(id="intel-content"):
+                yield Static("", id="intel-data")
+
+            # Actions
+            with Horizontal(id="intel-actions"):
+                yield Button("🔄 Обновить", id="intel-refresh", variant="primary")
+                yield Button("❌ Закрыть", id="intel-close")
+
+    def on_mount(self) -> None:
+        """Defer data loading until screen is fully ready."""
+        # Use call_after_refresh to avoid SignalError
+        self.call_after_refresh(self._start_loading)
+
+    def _start_loading(self) -> None:
+        """Start loading data after screen is fully mounted."""
+        try:
+            self.run_worker(self._load_data(), name="intel_loader", exclusive=True)
+        except Exception:
+            pass  # Screen may have been dismissed
+
+    async def _load_data(self) -> None:
+        """Load market data (async worker - direct UI updates)."""
+        self._loading = True
+        self._update_status("⏳ Загрузка данных с Binance...")
+
+        try:
+            self._snapshot = await self._intel.get_snapshot(max_age_seconds=60)
+            self._display_data()
+        except Exception as e:
+            self._update_status(f"❌ Ошибка: {e}")
+
+        self._loading = False
+
+    def _update_status(self, text: str) -> None:
+        """Update status line."""
+        try:
+            self.query_one("#intel-status", Static).update(text)
+        except Exception:
+            pass
+
+    def _display_data(self) -> None:
+        """Display market data."""
+        if not self._snapshot:
+            return
+
+        s = self._snapshot
+        lines = []
+
+        # Header
+        age = (datetime.utcnow() - s.timestamp).total_seconds()
+        lines.append(f"📅 Обновлено: {s.timestamp.strftime('%H:%M:%S')} UTC (возраст: {age:.0f}s)")
+        lines.append(f"🔑 ID: {s.snapshot_id}")
+        lines.append("")
+
+        # Prices
+        lines.append("═" * 45)
+        lines.append("💰 ЦЕНЫ ТОП АКТИВОВ")
+        lines.append("═" * 45)
+
+        for symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]:
+            ticker = s.tickers.get(symbol)
+            if ticker:
+                arrow = "🟢" if ticker.is_bullish else "🔴"
+                name = symbol.replace("USDT", "")
+                lines.append(
+                    f"{arrow} {name:6} ${ticker.price:>10,.2f}  "
+                    f"{ticker.price_change_pct:>+6.2f}%"
+                )
+
+        # Global metrics
+        if s.global_metrics:
+            m = s.global_metrics
+            lines.append("")
+            lines.append("═" * 45)
+            lines.append("🌍 ГЛОБАЛЬНЫЕ МЕТРИКИ")
+            lines.append("═" * 45)
+            lines.append(f"Market Cap:  ${m.total_market_cap_usd/1e12:.2f}T")
+            lines.append(f"24h Volume:  ${m.total_volume_24h_usd/1e9:.1f}B")
+            lines.append(f"BTC Dom:     {m.btc_dominance_pct:.1f}%")
+            lines.append(f"ETH Dom:     {m.eth_dominance_pct:.1f}%")
+            lines.append(f"24h Change:  {m.market_cap_change_24h_pct:+.2f}%")
+            lines.append(f"Sentiment:   {m.sentiment.value.upper()}")
+
+        # News
+        if s.news:
+            lines.append("")
+            lines.append("═" * 45)
+            lines.append(f"📰 НОВОСТИ ({len(s.news)} шт)")
+            lines.append("═" * 45)
+
+            for news in s.news[:7]:
+                impact = "🔴" if news.is_market_moving else "🔵"
+                age_min = news.age_minutes
+                if age_min < 60:
+                    age_str = f"{age_min:.0f}m"
+                else:
+                    age_str = f"{age_min/60:.0f}h"
+                lines.append(f"{impact} [{news.source[:12]:12}] {news.title[:45]}...")
+                lines.append(f"   ⏱️ {age_str} ago | Impact: {news.impact.name}")
+
+        # Alerts
+        alerts = self._intel.get_alerts(s)
+        if alerts:
+            lines.append("")
+            lines.append("═" * 45)
+            lines.append(f"⚠️ АЛЕРТЫ ({len(alerts)})")
+            lines.append("═" * 45)
+            for alert in alerts[:5]:
+                lines.append(f"[{alert.severity.name}] {alert.message}")
+
+        # Summary
+        summary = self._intel.get_summary(s)
+        lines.append("")
+        lines.append("═" * 45)
+        lines.append("📈 СВОДКА")
+        lines.append("═" * 45)
+        lines.append(f"Sentiment: {summary['overall_sentiment'].upper()}")
+        lines.append(f"Confidence: {summary['confidence']*100:.0f}%")
+        lines.append(f"Рекомендация: {summary['recommendation']}")
+
+        if s.errors:
+            lines.append("")
+            lines.append(f"⚠️ Ошибки загрузки: {len(s.errors)}")
+
+        # Update display
+        self.query_one("#intel-data", Static).update("\n".join(lines))
+        self._update_status(f"✅ Данные загружены ({s.fetch_duration_ms}ms)")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button clicks."""
+        btn_id = event.button.id
+
+        if btn_id == "intel-refresh":
+            self.action_refresh()
+        elif btn_id == "intel-close":
+            self.action_close_intel()
+
+    def action_refresh(self) -> None:
+        """Refresh market data."""
+        if self._loading:
+            return
+        self.run_worker(self._load_data(), name="intel_loader", exclusive=True)
+
+    def action_close_intel(self) -> None:
+        """Close intel screen."""
+        self.dismiss(None)
 
 
 # === MAIN WIDGETS ===
@@ -834,7 +1166,7 @@ class HopeOmniChat(App):
     """HOPE OMNI-CHAT - Trinity AI Chat Application."""
 
     CSS_PATH = "src/styles.tcss"
-    TITLE = "HOPE OMNI-CHAT v1.6"
+    TITLE = "HOPE OMNI-CHAT v1.8"
 
     BINDINGS = [
         # Primary actions
@@ -850,6 +1182,7 @@ class HopeOmniChat(App):
         Binding("f8", "copy_claude", "📋C", show=True),
         # Features
         Binding("ctrl+d", "open_ddo", "DDO", show=True),
+        Binding("ctrl+m", "open_intel", "📊", show=True),
         Binding("ctrl+f", "open_search", "🔍", show=True),
         Binding("ctrl+h", "load_history", "Hist", show=True),
         Binding("ctrl+l", "load_file", "Load", show=True),
@@ -907,14 +1240,11 @@ class HopeOmniChat(App):
             # Chat log
             with VerticalScroll(id="chat-log"):
                 yield Static(
-                    "🚀 HOPE OMNI-CHAT v1.6 - DDO + Search\n\n"
+                    "🚀 HOPE OMNI-CHAT v1.8 - DDO + Market Intel\n\n"
                     "F1/F2/F3 — отправить агенту | F5 — всем\n"
                     "Ctrl+D — 🎯 DDO (автоматическая дискуссия агентов)\n"
-                    "Ctrl+F — 🔍 ПОИСК по истории\n"
-                    "Ctrl+H — загрузить историю при старте\n"
-                    "F6/F7/F8 — копировать ответ | Ctrl+E — экспорт\n\n"
-                    "📋 Статус задач отображается в панели сверху\n"
-                    "🟢 ГОТОВ | 🟡 ДУМАЕТ | 🔴 РАБОТАЕТ | ✅ ГОТОВО\n\n"
+                    "Ctrl+M — 📊 MARKET INTEL (Binance, CoinGecko, новости)\n"
+                    "Ctrl+F — 🔍 ПОИСК | Ctrl+H — история | Ctrl+E — экспорт\n\n"
                     "💜 Gemini (стратег) | 💛 GPT (аналитик) | 💙 Claude (разработчик)",
                     classes="message message-system",
                     id="welcome-message"
@@ -1079,6 +1409,12 @@ class HopeOmniChat(App):
                 ))
 
         self.push_screen(DDOScreen(self._ddo_agents), handle_ddo_result)
+
+    # === MARKET INTEL ===
+
+    def action_open_intel(self) -> None:
+        """Open Market Intelligence modal."""
+        self.push_screen(MarketIntelScreen())
 
     # === SEARCH ===
 
