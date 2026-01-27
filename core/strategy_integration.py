@@ -1,8 +1,10 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-27T20:00:00Z
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-27T21:05:00Z
 # Purpose: Integration bridge between StrategyOrchestrator and SignalsPipeline
-# Security: Spot-only enforcement, fail-closed
+# Security: Spot-only enforcement, fail-closed, real OHLCV required
 # === END SIGNATURE ===
 from __future__ import annotations
 import logging
@@ -18,6 +20,7 @@ from core.strategy.momentum import MomentumStrategy
 from core.strategy.mean_reversion import MeanReversionStrategy
 from core.strategy.breakout import BreakoutStrategy
 from core.strategy.base import Position
+from core.market.klines_provider import KlinesProvider, get_klines_provider, KlinesResult
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,8 @@ class IntegrationConfig:
     enable_breakout: bool = True
     candle_count: int = 100
     timeframe: str = '15m'
+    use_real_ohlcv: bool = True  # Phase 2.5: require real OHLCV (fail-closed if unavailable)
+    allow_synthetic_fallback: bool = False  # Set True for testing only
 
 class StrategyIntegration:
     def __init__(self, config: Optional[IntegrationConfig] = None):
@@ -46,6 +51,10 @@ class StrategyIntegration:
         orch_config = OrchestratorConfig(spot_only=self.config.spot_only, min_confidence=self.config.min_confidence)
         self._orchestrator = StrategyOrchestrator(strategies, orch_config)
         self._positions: List[Position] = []
+        # Phase 2.5: Real OHLCV provider
+        self._klines_provider: Optional[KlinesProvider] = None
+        if self.config.use_real_ohlcv:
+            self._klines_provider = get_klines_provider()
     
     def generate_signals(self, snapshot: Any, symbols: Optional[List[str]] = None) -> List[SimpleSignal]:
         signals: List[SimpleSignal] = []
@@ -73,17 +82,60 @@ class StrategyIntegration:
         return signals
     
     def _build_market_data(self, symbol: str, tickers: Dict[str, Any]) -> Optional[MarketData]:
+        """
+        Build MarketData from real OHLCV or fallback to synthetic (fail-closed).
+
+        Phase 2.5: Prefers real klines from Binance API.
+        If use_real_ohlcv=True and klines unavailable: returns None (fail-closed).
+        """
         ticker = tickers.get(symbol)
         if ticker is None:
             return None
         price = getattr(ticker, 'price', 0.0)
+        if price <= 0:
+            return None
+
+        ts = int(time.time())
+        n = self.config.candle_count
+
+        # Phase 2.5: Try real OHLCV first
+        if self._klines_provider is not None:
+            klines = self._klines_provider.get_klines(
+                symbol=symbol,
+                timeframe=self.config.timeframe,
+                limit=n,
+            )
+            if klines is not None and not klines.is_stale and klines.candle_count >= 35:
+                logger.debug("Using real OHLCV for %s (%d candles)", symbol, klines.candle_count)
+                try:
+                    return MarketData(
+                        symbol=symbol,
+                        timestamp=ts,
+                        opens=klines.opens,
+                        highs=klines.highs,
+                        lows=klines.lows,
+                        closes=klines.closes,
+                        volumes=klines.volumes,
+                    )
+                except ValueError as e:
+                    logger.warning("MarketData validation failed for %s: %s", symbol, e)
+                    return None
+
+            # Real OHLCV required but unavailable
+            if self.config.use_real_ohlcv and not self.config.allow_synthetic_fallback:
+                logger.warning("Real OHLCV unavailable for %s, fail-closed", symbol)
+                return None
+
+            logger.debug("Real OHLCV unavailable for %s, falling back to synthetic", symbol)
+
+        # Fallback: Synthetic OHLCV (only if allow_synthetic_fallback=True or use_real_ohlcv=False)
+        if not self.config.allow_synthetic_fallback and self.config.use_real_ohlcv:
+            return None  # Fail-closed
+
         high = getattr(ticker, 'high_24h', price * 1.02)
         low = getattr(ticker, 'low_24h', price * 0.98)
         volume = getattr(ticker, 'volume_24h', 1000000.0)
-        if price <= 0:
-            return None
-        n = self.config.candle_count
-        ts = int(time.time())
+
         np.random.seed(int(price * 1000) % (2**31))
         noise = np.random.randn(n) * (high - low) * 0.1
         closes = np.array([price + noise[i] * (i - n/2) / n for i in range(n)])
@@ -92,6 +144,8 @@ class StrategyIntegration:
         lows = closes - np.abs(np.random.randn(n)) * (high - low) * 0.05
         opens = (closes + lows) / 2
         volumes = np.abs(np.array([volume / n + np.random.randn() * volume * 0.1 for _ in range(n)]))
+
+        logger.debug("Using synthetic OHLCV for %s (fallback)", symbol)
         try:
             return MarketData(symbol=symbol, timestamp=ts, opens=opens, highs=highs, lows=lows, closes=closes, volumes=volumes)
         except ValueError:

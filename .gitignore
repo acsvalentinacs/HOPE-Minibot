@@ -138,7 +138,8 @@ tools/test_mainnet_key.py
 *_resp.json
 *_full.json
 inbox_*.json
-test_*.py
+# NOTE: test_*.py NOT ignored - tests must be tracked in git
+# test_*.py  # REMOVED: tests must be in repo for CI
 
 # === DDO RESULTS (local only) ===
 omnichat/ddo_results/
