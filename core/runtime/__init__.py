@@ -1,8 +1,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-27T23:45:00Z
-# Modified at: 2026-01-27T23:55:00Z
-# Purpose: Runtime module exports
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-28T02:10:00Z
+# Purpose: Runtime module exports (added Gatekeeper)
 # === END SIGNATURE ===
 """
 HOPE Runtime Module.
@@ -49,6 +50,13 @@ from .circuit_breaker import (
     get_trade_circuit,
 )
 
+from .gatekeeper import (
+    Gatekeeper,
+    GateResult,
+    ExitCode as GateExitCode,
+    GateStatus,
+)
+
 __all__ = [
     # Lockfile
     "RuntimeLockfile",
@@ -69,4 +77,9 @@ __all__ = [
     "get_binance_circuit",
     "get_news_circuit",
     "get_trade_circuit",
+    # Gatekeeper
+    "Gatekeeper",
+    "GateResult",
+    "GateExitCode",
+    "GateStatus",
 ]

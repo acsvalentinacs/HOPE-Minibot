@@ -328,13 +328,13 @@ class PreflightGate:
             )
 
     def _check_lockfile(self) -> tuple[bool, str]:
-        """Check RuntimeLockfile is acquired."""
+        """Check RuntimeLockfile is held (by gatekeeper)."""
         try:
             from core.runtime.lockfile import check_runtime_lock
-            result = check_runtime_lock()
-            if result.acquired:
-                return True, "Lock acquired"
-            return False, result.reason
+            status = check_runtime_lock()
+            if status.get("is_held", False):
+                return True, "Lock is held"
+            return False, "Lock not held (run via entrypoint)"
         except ImportError:
             # Lockfile module not available - allow in dev mode
             logger.warning("RuntimeLockfile not available, skipping check")
