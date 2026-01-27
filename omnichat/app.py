@@ -494,24 +494,19 @@ class DDOScreen(ModalScreen):
 
         # Actions
         if btn_id == "ddo-start":
-            # Schedule the discussion task
-            self._schedule_discussion()
+            # Start discussion using Textual's async pattern
+            self._do_start_discussion()
         elif btn_id == "ddo-stop":
             self._stop_discussion()
         elif btn_id == "ddo-close":
             self.action_close_ddo()
 
-    def _schedule_discussion(self) -> None:
-        """Schedule the DDO discussion to run."""
-        # Use call_later to ensure we're in the right context
-        self.call_later(self._run_discussion_task)
-
-    def _run_discussion_task(self) -> None:
-        """Create and run the discussion task."""
-        if self._ddo_task and not self._ddo_task.done():
-            return  # Already running
-
-        self._ddo_task = asyncio.create_task(self._start_discussion())
+    def _do_start_discussion(self) -> None:
+        """Start DDO discussion (wrapper for async)."""
+        if self._running:
+            return
+        # Use Textual's run_worker with thread=False for async
+        self.run_worker(self._start_discussion(), exclusive=True, thread=False)
 
     async def _start_discussion(self) -> None:
         """Start the DDO discussion."""
