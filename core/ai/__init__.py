@@ -16,24 +16,30 @@ Modules:
 
 from .technical_indicators import (
     TechnicalIndicators,
+    IndicatorResult,
     MACDResult,
-    BollingerBandsResult,
+    BollingerResult,
     VolumeProfile,
 )
 from .signal_engine import (
     SignalEngine,
     SignalEngineConfig,
-    create_signal_engine,
+    SignalDirection,
+    TradingSignal,
+    MarketData,
 )
 
 __all__ = [
     # Technical Indicators
     "TechnicalIndicators",
+    "IndicatorResult",
     "MACDResult",
-    "BollingerBandsResult",
+    "BollingerResult",
     "VolumeProfile",
     # Signal Engine
     "SignalEngine",
     "SignalEngineConfig",
-    "create_signal_engine",
+    "SignalDirection",
+    "TradingSignal",
+    "MarketData",
 ]

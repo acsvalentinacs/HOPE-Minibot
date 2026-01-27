@@ -1,349 +1,147 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
-# Created at: 2026-01-27T14:00:00Z
-# Purpose: Main signal generation engine combining TA, ML, and sentiment
+# Created at: 2026-01-27T18:35:00Z
+# Purpose: Signal generation engine combining multiple data sources
+# Security: Fail-closed on any error, input validation
 # === END SIGNATURE ===
-"""
-Signal Engine Module.
-
-Central hub for trading signal generation.
-Combines:
-1. Technical Analysis (RSI, MACD, Bollinger Bands)
-2. Strategy signals (Momentum, Mean Reversion, Breakout)
-3. News sentiment (from event_classifier) - optional
-4. Volume analysis
-
-Fail-closed: No signal generated if data is stale or invalid.
-"""
 from __future__ import annotations
-
-import asyncio
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Optional
-
+import hashlib
+from dataclasses import dataclass
+from typing import Optional
+from enum import Enum
 import numpy as np
-
-from core.ai.technical_indicators import TechnicalIndicators
-from core.strategy.base import (
-    BaseStrategy,
-    StrategySignal,
-    MarketData,
-    SignalDirection,
+from core.ai.technical_indicators import (
+    TechnicalIndicators, IndicatorResult, MACDResult, BollingerResult, VolumeProfile,
 )
-from core.strategy.momentum import MomentumStrategy, MomentumConfig
 
+class SignalDirection(Enum):
+    LONG = 'LONG'
+    SHORT = 'SHORT'
+    NEUTRAL = 'NEUTRAL'
 
-_log = logging.getLogger("hope.signal_engine")
+@dataclass(frozen=True)
+class MarketData:
+    symbol: str
+    timestamp: int
+    opens: np.ndarray
+    highs: np.ndarray
+    lows: np.ndarray
+    closes: np.ndarray
+    volumes: np.ndarray
+    def __post_init__(self):
+        if len(self.closes) < 35:
+            raise ValueError('MarketData requires at least 35 candles')
+        if not all(len(arr) == len(self.closes) for arr in [self.opens, self.highs, self.lows, self.volumes]):
+            raise ValueError('All price arrays must have same length')
 
-# State directory for persisting signals
-STATE_DIR = Path(__file__).resolve().parent.parent.parent / "state"
-
+@dataclass(frozen=True)
+class TradingSignal:
+    signal_id: str
+    symbol: str
+    direction: SignalDirection
+    confidence: float
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    timestamp: int
+    technical_score: float
+    ml_score: float
+    sentiment_score: float
+    volume_score: float
+    rsi: float
+    macd_histogram: float
+    bollinger_position: float
+    atr: float
+    invalidation_price: Optional[float] = None
+    notes: str = ''
 
 @dataclass
 class SignalEngineConfig:
-    """
-    Signal Engine configuration.
-    """
-    # Minimum thresholds
-    min_signal_strength: float = 0.5
-    min_confidence: float = 0.5
-
-    # Enabled strategies
-    enable_momentum: bool = True
-    enable_mean_reversion: bool = False  # Phase 2
-    enable_breakout: bool = False  # Phase 2
-
-    # Data staleness (seconds)
-    max_data_age_seconds: int = 300  # 5 minutes
-
-    # Rate limiting
-    min_signal_interval_seconds: int = 60  # Min time between signals per symbol
-
-    # Market scan settings
-    default_symbols: list[str] = field(default_factory=lambda: [
-        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-        "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "MATICUSDT",
-    ])
-
+    technical_weight: float = 0.40
+    ml_weight: float = 0.35
+    sentiment_weight: float = 0.15
+    volume_weight: float = 0.10
+    min_confidence: float = 0.60
+    rsi_period: int = 14
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    bb_period: int = 20
+    bb_std: float = 2.0
+    atr_period: int = 14
+    volume_period: int = 20
+    stop_loss_atr_mult: float = 1.5
+    take_profit_atr_mult: float = 3.0
+    def __post_init__(self):
+        total = self.technical_weight + self.ml_weight + self.sentiment_weight + self.volume_weight
+        if abs(total - 1.0) > 0.001:
+            raise ValueError(f'Weights must sum to 1.0, got {total}')
 
 class SignalEngine:
-    """
-    Main signal generation engine.
-
-    Orchestrates multiple strategies and combines signals.
-    Thread-safe for async operations.
-    """
-
-    def __init__(
-        self,
-        config: SignalEngineConfig | None = None,
-        strategies: list[BaseStrategy] | None = None,
-    ):
-        """
-        Initialize signal engine.
-
-        Args:
-            config: Engine configuration
-            strategies: List of strategies to use (default: Momentum only)
-        """
+    def __init__(self, config: Optional[SignalEngineConfig] = None):
         self.config = config or SignalEngineConfig()
-        self.indicators = TechnicalIndicators()
-
-        # Initialize strategies
-        if strategies:
-            self.strategies = strategies
-        else:
-            self.strategies = []
-            if self.config.enable_momentum:
-                self.strategies.append(MomentumStrategy())
-
-        # State tracking
-        self._last_signals: dict[str, datetime] = {}  # symbol -> last signal time
-        self._signal_history: list[StrategySignal] = []
-
-        _log.info(
-            f"SignalEngine initialized with {len(self.strategies)} strategies: "
-            f"{[s.name for s in self.strategies]}"
-        )
-
-    async def generate_signal(
-        self,
-        symbol: str,
-        ohlcv_data: dict[str, Any],
-        current_price: float,
-        timeframe: str = "1h",
-    ) -> StrategySignal | None:
-        """
-        Generate trading signal for a symbol.
-
-        Args:
-            symbol: Trading pair (e.g., "BTCUSDT")
-            ohlcv_data: Dictionary with 'open', 'high', 'low', 'close', 'volume' lists
-            current_price: Current market price
-            timeframe: Candle timeframe
-
-        Returns:
-            Best StrategySignal or None if no valid signal
-        """
-        # Check rate limiting
-        if not self._check_rate_limit(symbol):
-            _log.debug(f"Rate limited: {symbol}")
-            return None
-
-        # Prepare market data
+        self._ml_model = None
+    
+    def generate_signal(self, market_data: MarketData, sentiment_score: Optional[float] = None, ml_prediction: Optional[float] = None) -> Optional[TradingSignal]:
         try:
-            market_data = self._prepare_market_data(
-                symbol=symbol,
-                ohlcv_data=ohlcv_data,
-                current_price=current_price,
-                timeframe=timeframe,
-            )
-        except ValueError as e:
-            _log.warning(f"Invalid data for {symbol}: {e}")
+            return self._generate_signal_impl(market_data, sentiment_score, ml_prediction)
+        except Exception:
             return None
-
-        # Run all strategies
-        signals: list[StrategySignal] = []
-
-        for strategy in self.strategies:
-            try:
-                signal = strategy.analyze(market_data)
-                if signal and self._validate_signal(signal):
-                    signals.append(signal)
-                    _log.info(
-                        f"Strategy '{strategy.name}' generated {signal.direction.value} "
-                        f"signal for {symbol} (strength={signal.strength:.2f})"
-                    )
-            except Exception as e:
-                _log.error(f"Strategy '{strategy.name}' failed for {symbol}: {e}")
-                continue
-
-        if not signals:
+    
+    def _generate_signal_impl(self, market_data: MarketData, sentiment_score: Optional[float], ml_prediction: Optional[float]) -> Optional[TradingSignal]:
+        rsi_result = TechnicalIndicators.rsi(market_data.closes, self.config.rsi_period)
+        macd_result = TechnicalIndicators.macd(market_data.closes, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal)
+        bb_result = TechnicalIndicators.bollinger_bands(market_data.closes, self.config.bb_period, self.config.bb_std)
+        atr_value = TechnicalIndicators.atr(market_data.highs, market_data.lows, market_data.closes, self.config.atr_period)
+        volume_result = TechnicalIndicators.volume_profile(market_data.volumes, self.config.volume_period)
+        technical_score = self._calc_technical_score(rsi_result, macd_result, bb_result)
+        volume_score = self._calc_volume_score(volume_result, technical_score)
+        sent_score = max(-1.0, min(1.0, sentiment_score or 0.0))
+        ml_score = max(-1.0, min(1.0, ml_prediction or 0.0))
+        combined_score = (technical_score * self.config.technical_weight + ml_score * self.config.ml_weight + sent_score * self.config.sentiment_weight + volume_score * self.config.volume_weight)
+        confidence = abs(combined_score)
+        if confidence < self.config.min_confidence:
             return None
-
-        # Select best signal (highest strength * confidence)
-        best_signal = max(signals, key=lambda s: s.strength * s.confidence)
-
-        # Update state
-        self._last_signals[symbol] = datetime.now(timezone.utc)
-        self._signal_history.append(best_signal)
-
-        # Keep history bounded
-        if len(self._signal_history) > 1000:
-            self._signal_history = self._signal_history[-500:]
-
-        return best_signal
-
-    async def scan_market(
-        self,
-        symbols: list[str] | None = None,
-        ohlcv_fetcher: Any = None,
-        price_fetcher: Any = None,
-    ) -> list[StrategySignal]:
-        """
-        Scan multiple symbols for signals.
-
-        Args:
-            symbols: List of symbols to scan (default: config.default_symbols)
-            ohlcv_fetcher: Async function(symbol, timeframe) -> ohlcv_data
-            price_fetcher: Async function(symbol) -> current_price
-
-        Returns:
-            List of signals sorted by strength (descending)
-        """
-        if symbols is None:
-            symbols = self.config.default_symbols
-
-        if ohlcv_fetcher is None or price_fetcher is None:
-            _log.error("Market scan requires ohlcv_fetcher and price_fetcher")
-            return []
-
-        signals: list[StrategySignal] = []
-
-        # Process symbols concurrently with semaphore
-        semaphore = asyncio.Semaphore(5)  # Max 5 concurrent
-
-        async def process_symbol(symbol: str) -> StrategySignal | None:
-            async with semaphore:
-                try:
-                    ohlcv = await ohlcv_fetcher(symbol, "1h")
-                    price = await price_fetcher(symbol)
-                    return await self.generate_signal(
-                        symbol=symbol,
-                        ohlcv_data=ohlcv,
-                        current_price=price,
-                        timeframe="1h",
-                    )
-                except Exception as e:
-                    _log.warning(f"Failed to process {symbol}: {e}")
-                    return None
-
-        tasks = [process_symbol(s) for s in symbols]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for result in results:
-            if isinstance(result, StrategySignal):
-                signals.append(result)
-            elif isinstance(result, Exception):
-                _log.warning(f"Scan task failed: {result}")
-
-        # Sort by strength descending
-        signals.sort(key=lambda s: s.strength * s.confidence, reverse=True)
-
-        _log.info(f"Market scan complete: {len(signals)} signals from {len(symbols)} symbols")
-        return signals
-
-    def _prepare_market_data(
-        self,
-        symbol: str,
-        ohlcv_data: dict[str, Any],
-        current_price: float,
-        timeframe: str,
-    ) -> MarketData:
-        """
-        Prepare market data from raw OHLCV.
-
-        Raises:
-            ValueError: If data is invalid or insufficient
-        """
-        required_keys = ["open", "high", "low", "close", "volume"]
-        for key in required_keys:
-            if key not in ohlcv_data:
-                raise ValueError(f"Missing required key: {key}")
-
-        opens = ohlcv_data["open"]
-        highs = ohlcv_data["high"]
-        lows = ohlcv_data["low"]
-        closes = ohlcv_data["close"]
-        volumes = ohlcv_data["volume"]
-
-        # Validate lengths match
-        lengths = [len(opens), len(highs), len(lows), len(closes), len(volumes)]
-        if len(set(lengths)) != 1:
-            raise ValueError(f"OHLCV arrays have different lengths: {lengths}")
-
-        min_bars = 100  # Need at least 100 bars for indicators
-        if lengths[0] < min_bars:
-            raise ValueError(f"Insufficient data: {lengths[0]} bars, need {min_bars}")
-
-        return MarketData(
-            symbol=symbol,
-            timeframe=timeframe,
-            timestamp=datetime.now(timezone.utc),
-            opens=list(opens),
-            highs=list(highs),
-            lows=list(lows),
-            closes=list(closes),
-            volumes=list(volumes),
-            current_price=current_price,
-        )
-
-    def _validate_signal(self, signal: StrategySignal) -> bool:
-        """Validate signal meets engine thresholds."""
-        if signal.strength < self.config.min_signal_strength:
-            return False
-        if signal.confidence < self.config.min_confidence:
-            return False
-        if signal.direction == SignalDirection.NEUTRAL:
-            return False
-        return True
-
-    def _check_rate_limit(self, symbol: str) -> bool:
-        """Check if enough time has passed since last signal."""
-        last_time = self._last_signals.get(symbol)
-        if last_time is None:
-            return True
-
-        elapsed = (datetime.now(timezone.utc) - last_time).total_seconds()
-        return elapsed >= self.config.min_signal_interval_seconds
-
-    def get_active_strategies(self) -> list[str]:
-        """Get list of active strategy names."""
-        return [s.name for s in self.strategies]
-
-    def get_signal_history(self, limit: int = 100) -> list[StrategySignal]:
-        """Get recent signal history."""
-        return self._signal_history[-limit:]
-
-    def add_strategy(self, strategy: BaseStrategy) -> None:
-        """Add a new strategy."""
-        self.strategies.append(strategy)
-        _log.info(f"Added strategy: {strategy.name}")
-
-    def remove_strategy(self, name: str) -> bool:
-        """Remove a strategy by name."""
-        for i, s in enumerate(self.strategies):
-            if s.name == name:
-                self.strategies.pop(i)
-                _log.info(f"Removed strategy: {name}")
-                return True
-        return False
-
-
-# === STANDALONE HELPERS ===
-
-def create_signal_engine(
-    enable_momentum: bool = True,
-    enable_mean_reversion: bool = False,
-    enable_breakout: bool = False,
-) -> SignalEngine:
-    """
-    Factory function to create configured signal engine.
-
-    Args:
-        enable_momentum: Enable momentum strategy
-        enable_mean_reversion: Enable mean reversion (Phase 2)
-        enable_breakout: Enable breakout (Phase 2)
-
-    Returns:
-        Configured SignalEngine instance
-    """
-    config = SignalEngineConfig(
-        enable_momentum=enable_momentum,
-        enable_mean_reversion=enable_mean_reversion,
-        enable_breakout=enable_breakout,
-    )
-    return SignalEngine(config=config)
+        direction = SignalDirection.LONG if combined_score > 0 else SignalDirection.SHORT if combined_score < 0 else None
+        if direction is None:
+            return None
+        current_price = float(market_data.closes[-1])
+        if direction == SignalDirection.LONG:
+            stop_loss = current_price - (atr_value * self.config.stop_loss_atr_mult)
+            take_profit = current_price + (atr_value * self.config.take_profit_atr_mult)
+        else:
+            stop_loss = current_price + (atr_value * self.config.stop_loss_atr_mult)
+            take_profit = current_price - (atr_value * self.config.take_profit_atr_mult)
+        signal_id = self._generate_signal_id(market_data, combined_score)
+        return TradingSignal(signal_id=signal_id, symbol=market_data.symbol, direction=direction, confidence=confidence, entry_price=current_price, stop_loss=stop_loss, take_profit=take_profit, timestamp=market_data.timestamp, technical_score=technical_score, ml_score=ml_score, sentiment_score=sent_score, volume_score=volume_score, rsi=rsi_result.value, macd_histogram=macd_result.histogram, bollinger_position=bb_result.position, atr=atr_value, invalidation_price=stop_loss)
+    
+    def _calc_technical_score(self, rsi: IndicatorResult, macd: MACDResult, bb: BollingerResult) -> float:
+        score = 0.0
+        if rsi.signal == 'BUY':
+            score += 0.3 * rsi.strength
+        elif rsi.signal == 'SELL':
+            score -= 0.3 * rsi.strength
+        if macd.crossover == 'BULLISH':
+            score += 0.4 * macd.trend_strength
+        elif macd.crossover == 'BEARISH':
+            score -= 0.4 * macd.trend_strength
+        else:
+            score += 0.2 * min(1.0, abs(macd.histogram) / 0.01) * (1 if macd.histogram > 0 else -1)
+        bb_signal = 0.5 - bb.position
+        score += 0.3 * (bb_signal * 2)
+        return max(-1.0, min(1.0, score))
+    
+    def _calc_volume_score(self, volume: VolumeProfile, direction: float) -> float:
+        if volume.spike:
+            return direction * 0.8
+        if volume.trend == 'INCREASING':
+            return direction * 0.5
+        elif volume.trend == 'DECREASING':
+            return direction * 0.2
+        return direction * 0.3
+    
+    @staticmethod
+    def _generate_signal_id(market_data: MarketData, score: float) -> str:
+        content = f'{market_data.symbol}:{market_data.timestamp}:{score:.6f}'
+        hash_val = hashlib.sha256(content.encode()).hexdigest()[:16]
+        return f'sha256:{hash_val}'
