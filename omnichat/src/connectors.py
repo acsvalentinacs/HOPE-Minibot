@@ -1,9 +1,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
-# Modified at: 2026-01-26T12:55:00Z
-# Purpose: AI Agent connectors for HOPE OMNI-CHAT
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-26T17:20:00Z
+# Purpose: AI Agent connectors for HOPE OMNI-CHAT v1.2
 # Security: Secrets masking implemented
+# Changes: gemini-1.5-pro + auto-retry on 429 quota errors
 # === END SIGNATURE ===
 """
 AI Agent Connectors - Async wrappers for Gemini, GPT, and Claude APIs.
@@ -131,9 +133,16 @@ class GeminiAgent(BaseAgent):
     name = "Gemini"
     color = "magenta"
 
+    # Model to use (gemini-2.5-flash - original working model)
+    MODEL_NAME = "gemini-2.5-flash"
+
+    # Retry settings for 429 quota errors
+    MAX_RETRIES = 3
+    RETRY_BASE_DELAY = 15.0  # seconds
+
     # TUNED SYSTEM PROMPT (by Gemini Architect)
     SYSTEM_PROMPT = (
-        "Ты — Gemini 1.5, Главный Архитектор и Стратег системы HOPE.\n"
+        "Ты — Gemini 2.5, Главный Архитектор и Стратег системы HOPE.\n"
         "Твои задачи:\n"
         "1. Оценивать риски предложений GPT и кода Claude.\n"
         "2. Следить за безопасностью (Security First).\n"
@@ -158,11 +167,12 @@ class GeminiAgent(BaseAgent):
             import google.generativeai as genai
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(
-                'gemini-2.5-flash',
+                self.MODEL_NAME,
                 system_instruction=self.SYSTEM_PROMPT
             )
             self.chat_session = self.model.start_chat(history=[])
             self.is_connected = True
+            _log.info(f"Gemini initialized with model: {self.MODEL_NAME}")
         except Exception as e:
             self.is_connected = False
             self.error_message = str(e)
@@ -171,23 +181,41 @@ class GeminiAgent(BaseAgent):
         if not self.is_connected or not self.chat_session:
             return f"❌ Gemini недоступен: {self.error_message}"
 
-        try:
-            response = await self.chat_session.send_message_async(text)
+        last_error = None
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                response = await self.chat_session.send_message_async(text)
 
-            # Track token usage
-            if hasattr(response, 'usage_metadata'):
-                self.usage.add(
-                    response.usage_metadata.prompt_token_count or 0,
-                    response.usage_metadata.candidates_token_count or 0
-                )
+                # Track token usage
+                if hasattr(response, 'usage_metadata'):
+                    self.usage.add(
+                        response.usage_metadata.prompt_token_count or 0,
+                        response.usage_metadata.candidates_token_count or 0
+                    )
 
-            return response.text
-        except Exception as e:
-            # SECURITY: mask any secrets in error message
-            safe_error = mask_secret(str(e))
-            self.error_message = safe_error
-            _log.error(f"Gemini error: {safe_error}")
-            return f"❌ Ошибка Gemini: {safe_error}"
+                return response.text
+
+            except Exception as e:
+                error_str = str(e)
+                last_error = e
+
+                # Check if it's a quota error (429)
+                if "429" in error_str or "quota" in error_str.lower():
+                    if attempt < self.MAX_RETRIES:
+                        # Exponential backoff
+                        delay = self.RETRY_BASE_DELAY * (2 ** attempt)
+                        _log.warning(f"Gemini quota exceeded, retry {attempt + 1}/{self.MAX_RETRIES} in {delay}s")
+                        await asyncio.sleep(delay)
+                        continue
+
+                # Non-quota error or max retries exceeded
+                break
+
+        # SECURITY: mask any secrets in error message
+        safe_error = mask_secret(str(last_error))
+        self.error_message = safe_error
+        _log.error(f"Gemini error: {safe_error}")
+        return f"❌ Ошибка Gemini: {safe_error}"
 
     def get_usage(self) -> TokenUsage:
         return self.usage
@@ -198,6 +226,13 @@ class GPTAgent(BaseAgent):
 
     name = "GPT"
     color = "yellow"
+
+    # Model to use
+    MODEL_NAME = "gpt-4o"
+
+    # Retry settings for rate limit errors
+    MAX_RETRIES = 3
+    RETRY_BASE_DELAY = 10.0  # seconds
 
     # TUNED SYSTEM PROMPT
     SYSTEM_PROMPT = (
@@ -226,6 +261,7 @@ class GPTAgent(BaseAgent):
             from openai import AsyncOpenAI
             self.client = AsyncOpenAI(api_key=api_key)
             self.is_connected = True
+            _log.info(f"GPT initialized with model: {self.MODEL_NAME}")
         except Exception as e:
             self.is_connected = False
             self.error_message = str(e)
@@ -234,32 +270,51 @@ class GPTAgent(BaseAgent):
         if not self.is_connected or not self.client:
             return f"❌ GPT недоступен: {self.error_message}"
 
-        try:
-            self.messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text})
+        last_error = None
 
-            response = await self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=self.messages,
-                max_tokens=2048,
-            )
-
-            assistant_message = response.choices[0].message.content
-            self.messages.append({"role": "assistant", "content": assistant_message})
-
-            # Track token usage
-            if response.usage:
-                self.usage.add(
-                    response.usage.prompt_tokens or 0,
-                    response.usage.completion_tokens or 0
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.MODEL_NAME,
+                    messages=self.messages,
+                    max_tokens=2048,
                 )
 
-            return assistant_message
-        except Exception as e:
-            # SECURITY: mask any secrets in error message
-            safe_error = mask_secret(str(e))
-            self.error_message = safe_error
-            _log.error(f"GPT error: {safe_error}")
-            return f"❌ Ошибка GPT: {safe_error}"
+                assistant_message = response.choices[0].message.content
+                self.messages.append({"role": "assistant", "content": assistant_message})
+
+                # Track token usage
+                if response.usage:
+                    self.usage.add(
+                        response.usage.prompt_tokens or 0,
+                        response.usage.completion_tokens or 0
+                    )
+
+                return assistant_message
+
+            except Exception as e:
+                error_str = str(e)
+                last_error = e
+
+                # Check if it's a rate limit error (429)
+                if "429" in error_str or "rate" in error_str.lower():
+                    if attempt < self.MAX_RETRIES:
+                        delay = self.RETRY_BASE_DELAY * (2 ** attempt)
+                        _log.warning(f"GPT rate limit, retry {attempt + 1}/{self.MAX_RETRIES} in {delay}s")
+                        await asyncio.sleep(delay)
+                        continue
+                break
+
+        # Remove failed user message
+        if self.messages and self.messages[-1]["role"] == "user":
+            self.messages.pop()
+
+        # SECURITY: mask any secrets in error message
+        safe_error = mask_secret(str(last_error))
+        self.error_message = safe_error
+        _log.error(f"GPT error: {safe_error}")
+        return f"❌ Ошибка GPT: {safe_error}"
 
     def get_usage(self) -> TokenUsage:
         return self.usage
@@ -270,6 +325,13 @@ class ClaudeAgent(BaseAgent):
 
     name = "Claude"
     color = "cyan"
+
+    # Model to use
+    MODEL_NAME = "claude-3-haiku-20240307"
+
+    # Retry settings for rate limit errors
+    MAX_RETRIES = 3
+    RETRY_BASE_DELAY = 10.0  # seconds
 
     # TUNED SYSTEM PROMPT
     SYSTEM_PROMPT = (
@@ -299,6 +361,7 @@ class ClaudeAgent(BaseAgent):
             from anthropic import AsyncAnthropic
             self.client = AsyncAnthropic(api_key=api_key)
             self.is_connected = True
+            _log.info(f"Claude initialized with model: {self.MODEL_NAME}")
         except Exception as e:
             self.is_connected = False
             self.error_message = str(e)
@@ -307,33 +370,52 @@ class ClaudeAgent(BaseAgent):
         if not self.is_connected or not self.client:
             return f"❌ Claude недоступен: {self.error_message}"
 
-        try:
-            self.messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text})
+        last_error = None
 
-            response = await self.client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=2048,
-                system=self.SYSTEM_PROMPT,
-                messages=self.messages,
-            )
-
-            assistant_message = response.content[0].text
-            self.messages.append({"role": "assistant", "content": assistant_message})
-
-            # Track token usage
-            if response.usage:
-                self.usage.add(
-                    response.usage.input_tokens or 0,
-                    response.usage.output_tokens or 0
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                response = await self.client.messages.create(
+                    model=self.MODEL_NAME,
+                    max_tokens=2048,
+                    system=self.SYSTEM_PROMPT,
+                    messages=self.messages,
                 )
 
-            return assistant_message
-        except Exception as e:
-            # SECURITY: mask any secrets in error message
-            safe_error = mask_secret(str(e))
-            self.error_message = safe_error
-            _log.error(f"Claude error: {safe_error}")
-            return f"❌ Ошибка Claude: {safe_error}"
+                assistant_message = response.content[0].text
+                self.messages.append({"role": "assistant", "content": assistant_message})
+
+                # Track token usage
+                if response.usage:
+                    self.usage.add(
+                        response.usage.input_tokens or 0,
+                        response.usage.output_tokens or 0
+                    )
+
+                return assistant_message
+
+            except Exception as e:
+                error_str = str(e)
+                last_error = e
+
+                # Check if it's a rate limit error (429)
+                if "429" in error_str or "rate" in error_str.lower():
+                    if attempt < self.MAX_RETRIES:
+                        delay = self.RETRY_BASE_DELAY * (2 ** attempt)
+                        _log.warning(f"Claude rate limit, retry {attempt + 1}/{self.MAX_RETRIES} in {delay}s")
+                        await asyncio.sleep(delay)
+                        continue
+                break
+
+        # Remove failed user message
+        if self.messages and self.messages[-1]["role"] == "user":
+            self.messages.pop()
+
+        # SECURITY: mask any secrets in error message
+        safe_error = mask_secret(str(last_error))
+        self.error_message = safe_error
+        _log.error(f"Claude error: {safe_error}")
+        return f"❌ Ошибка Claude: {safe_error}"
 
     def get_usage(self) -> TokenUsage:
         return self.usage

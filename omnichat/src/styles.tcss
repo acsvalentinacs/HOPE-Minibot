@@ -1,7 +1,9 @@
 /* === AI SIGNATURE ===
  * Created by: Claude (opus-4)
  * Created at: 2026-01-26T11:00:00Z
- * Purpose: HOPE OMNI-CHAT TUI Styles
+ * Modified by: Claude (opus-4)
+ * Modified at: 2026-01-26T17:00:00Z
+ * Purpose: HOPE OMNI-CHAT TUI Styles v1.3 - Search Modal
  * === END SIGNATURE === */
 
 /* ============================================================
@@ -29,10 +31,37 @@ Screen {
 }
 
 #cost-display {
-    dock: right;
-    width: auto;
-    padding-right: 2;
+    width: 15;
+    padding: 0 1;
     color: $success;
+    text-align: right;
+}
+
+/* === TOP BAR === */
+#top-bar {
+    dock: top;
+    height: 5;
+    layout: horizontal;
+    background: $surface-darken-1;
+    border-bottom: solid $primary;
+}
+
+/* === TASK PANEL === */
+#task-panel {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+}
+
+.task-panel-header {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 0;
+}
+
+.task-line {
+    height: 1;
+    color: $text;
 }
 
 /* === MAIN CONTAINER === */
@@ -126,7 +155,7 @@ Screen {
 /* === INPUT AREA === */
 #input-area {
     dock: bottom;
-    height: 5;
+    height: 15;
     layout: horizontal;
     padding: 1;
     background: $surface-darken-1;
@@ -181,4 +210,153 @@ VerticalScroll > ScrollBar {
 
 VerticalScroll > ScrollBar > .scrollbar--bar {
     background: $primary;
+}
+
+/* ============================================================
+   SEARCH MODAL STYLES
+   ============================================================ */
+
+/* === SEARCH MODAL CONTAINER === */
+#search-modal {
+    width: 80%;
+    height: 80%;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+#search-title {
+    text-style: bold;
+    color: $primary;
+    text-align: center;
+    padding-bottom: 1;
+    border-bottom: solid $primary-darken-2;
+}
+
+/* === SEARCH INPUT ROW === */
+#search-input-row {
+    height: 3;
+    margin-top: 1;
+    layout: horizontal;
+}
+
+#search-input {
+    width: 1fr;
+    height: 100%;
+}
+
+#search-btn {
+    width: 12;
+    margin-left: 1;
+}
+
+/* === FILTER ROW === */
+#search-filters {
+    height: 3;
+    margin-top: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+.filter-label {
+    width: auto;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#search-filters Checkbox {
+    width: auto;
+    padding: 0 1;
+}
+
+/* === DATE FILTERS === */
+#search-date-filters {
+    height: 3;
+    margin-top: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+.date-input {
+    width: 15;
+    margin: 0 1;
+}
+
+#clear-filters-btn {
+    width: 10;
+    margin-left: 2;
+}
+
+/* === STATUS LINE === */
+#search-status {
+    height: 1;
+    margin-top: 1;
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* === SEARCH RESULTS === */
+#search-results {
+    height: 1fr;
+    margin-top: 1;
+    border: solid $primary-darken-2;
+    padding: 1;
+}
+
+.search-result {
+    padding: 1;
+    margin-bottom: 1;
+    background: $surface-darken-1;
+    border: solid $primary-darken-3;
+}
+
+.search-result:hover {
+    background: $surface-lighten-1;
+    border: solid $primary;
+}
+
+.search-result.selected {
+    background: $primary-darken-2;
+    border: solid $primary;
+}
+
+.search-result-header {
+    text-style: bold;
+    color: $accent;
+}
+
+.search-result-content {
+    color: $text-muted;
+    margin-top: 0;
+}
+
+/* === PAGINATION === */
+#search-pagination {
+    height: 3;
+    margin-top: 1;
+    layout: horizontal;
+    align: center middle;
+}
+
+#page-info {
+    width: auto;
+    padding: 0 2;
+    color: $text-muted;
+}
+
+#prev-page-btn, #next-page-btn {
+    width: 12;
+}
+
+/* === SEARCH FOOTER === */
+#search-footer {
+    height: 2;
+    margin-top: 1;
+    align: center middle;
+    border-top: solid $primary-darken-2;
+}
+
+.search-hint {
+    color: $text-muted;
+    text-style: italic;
 }

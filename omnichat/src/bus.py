@@ -1,7 +1,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
-# Purpose: Event Bus for HOPE OMNI-CHAT message routing
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-26T15:15:00Z
+# Purpose: Event Bus for HOPE OMNI-CHAT message routing + Task Status
 # === END SIGNATURE ===
 """
 Event Bus - Central message router for HOPE OMNI-CHAT.
@@ -12,6 +14,7 @@ Handles:
 - Sequential execution (one agent at a time)
 - History tracking
 - Cost aggregation
+- Task status tracking (NEW in v1.1)
 """
 
 from __future__ import annotations
@@ -33,6 +36,79 @@ class MessageRole(Enum):
     GPT = "gpt"
     CLAUDE = "claude"
     SYSTEM = "system"
+
+
+class TaskStatus(Enum):
+    """Task execution status."""
+    IDLE = "idle"           # Ready for new task
+    THINKING = "thinking"   # Processing request (< 60 sec)
+    WORKING = "working"     # Long task (> 60 sec)
+    DONE = "done"           # Task completed
+
+
+@dataclass
+class AgentTaskState:
+    """Track individual agent's task state."""
+    status: TaskStatus = TaskStatus.IDLE
+    task_name: str = ""
+    stage: str = ""
+    stage_num: int = 0
+    total_stages: int = 0
+    started_at: Optional[datetime] = None
+    last_update: Optional[datetime] = None
+
+    def start_task(self, task_name: str = "Обработка запроса") -> None:
+        """Start a new task."""
+        self.status = TaskStatus.THINKING
+        self.task_name = task_name
+        self.stage = "Получение ответа"
+        self.stage_num = 1
+        self.total_stages = 1
+        self.started_at = datetime.utcnow()
+        self.last_update = datetime.utcnow()
+
+    def update_stage(self, stage: str, stage_num: int = 0, total_stages: int = 0) -> None:
+        """Update task stage."""
+        self.stage = stage
+        if stage_num > 0:
+            self.stage_num = stage_num
+        if total_stages > 0:
+            self.total_stages = total_stages
+        self.last_update = datetime.utcnow()
+
+        # Upgrade to WORKING if > 5 seconds
+        if self.started_at:
+            elapsed = (datetime.utcnow() - self.started_at).total_seconds()
+            if elapsed > 5:
+                self.status = TaskStatus.WORKING
+
+    def finish_task(self) -> None:
+        """Mark task as done."""
+        self.status = TaskStatus.DONE
+        self.last_update = datetime.utcnow()
+
+    def reset(self) -> None:
+        """Reset to idle."""
+        self.status = TaskStatus.IDLE
+        self.task_name = ""
+        self.stage = ""
+        self.stage_num = 0
+        self.total_stages = 0
+        self.started_at = None
+        self.last_update = None
+
+    @property
+    def elapsed_seconds(self) -> int:
+        """Get elapsed time in seconds."""
+        if self.started_at:
+            return int((datetime.utcnow() - self.started_at).total_seconds())
+        return 0
+
+    @property
+    def elapsed_str(self) -> str:
+        """Get elapsed time as string MM:SS."""
+        secs = self.elapsed_seconds
+        return f"{secs // 60:02d}:{secs % 60:02d}"
 
 
 @dataclass
@@ -83,6 +159,7 @@ class EventBus:
     - Broadcast to all agents (parallel)
     - Send to specific agent
     - Message history with JSONL persistence
+    - Task status tracking (v1.1)
     """
 
     def __init__(self, history_path: Optional[Path] = None):
@@ -91,21 +168,31 @@ class EventBus:
         self.stats = SessionStats()
         self.history_path = history_path
 
+        # Task states for each agent
+        self.task_states: dict[str, AgentTaskState] = {
+            "gemini": AgentTaskState(),
+            "gpt": AgentTaskState(),
+            "claude": AgentTaskState(),
+        }
+
         # Callbacks for UI updates
         self._on_message: Optional[Callable[[ChatMessage], None]] = None
         self._on_typing: Optional[Callable[[str, bool], None]] = None
         self._on_stats_update: Optional[Callable[[SessionStats], None]] = None
+        self._on_task_update: Optional[Callable[[str, AgentTaskState], None]] = None
 
     def set_callbacks(
         self,
         on_message: Optional[Callable[[ChatMessage], None]] = None,
         on_typing: Optional[Callable[[str, bool], None]] = None,
         on_stats_update: Optional[Callable[[SessionStats], None]] = None,
+        on_task_update: Optional[Callable[[str, AgentTaskState], None]] = None,
     ) -> None:
         """Set UI callback functions."""
         self._on_message = on_message
         self._on_typing = on_typing
         self._on_stats_update = on_stats_update
+        self._on_task_update = on_task_update
 
     def _emit_message(self, msg: ChatMessage) -> None:
         """Emit message to UI."""
@@ -119,6 +206,13 @@ class EventBus:
         """Emit typing indicator to UI."""
         if self._on_typing:
             self._on_typing(agent_name, is_typing)
+
+    def _emit_task_update(self, agent_key: str) -> None:
+        """Emit task status update to UI."""
+        if self._on_task_update:
+            state = self.task_states.get(agent_key)
+            if state:
+                self._on_task_update(agent_key, state)
 
     def _update_stats(self) -> None:
         """Update and emit session stats."""
@@ -137,6 +231,14 @@ class EventBus:
             except Exception:
                 pass  # Fail silently for history
 
+    def get_task_state(self, agent_key: str) -> Optional[AgentTaskState]:
+        """Get task state for an agent."""
+        return self.task_states.get(agent_key)
+
+    def get_all_task_states(self) -> dict[str, AgentTaskState]:
+        """Get all task states."""
+        return self.task_states.copy()
+
     async def send_to_agent(self, agent_key: str, text: str) -> None:
         """Send message to a specific agent."""
         agent = self.agents.get(agent_key)
@@ -154,6 +256,11 @@ class EventBus:
             ))
             return
 
+        # Start task tracking
+        task_state = self.task_states[agent_key]
+        task_state.start_task("Обработка запроса")
+        self._emit_task_update(agent_key)
+
         # Show typing indicator
         self._emit_typing(agent.name, True)
 
@@ -166,6 +273,10 @@ class EventBus:
             role = MessageRole[agent_key.upper()]
             usage = agent.get_usage()
 
+            # Mark task as done
+            task_state.finish_task()
+            self._emit_task_update(agent_key)
+
             self._emit_message(ChatMessage(
                 role=role,
                 content=response,
@@ -173,11 +284,15 @@ class EventBus:
                 cost_cents=usage.total_cost_cents,
             ))
         except asyncio.TimeoutError:
+            task_state.reset()
+            self._emit_task_update(agent_key)
             self._emit_message(ChatMessage(
                 role=MessageRole.SYSTEM,
                 content=f"⏱️ Таймаут: {agent.name} не ответил за 60 секунд",
             ))
         except Exception as e:
+            task_state.reset()
+            self._emit_task_update(agent_key)
             self._emit_message(ChatMessage(
                 role=MessageRole.SYSTEM,
                 content=f"❌ Ошибка {agent.name}: {e}",
@@ -185,6 +300,11 @@ class EventBus:
         finally:
             self._emit_typing(agent.name, False)
             self._update_stats()
+
+            # Reset to IDLE after 3 seconds
+            await asyncio.sleep(3)
+            task_state.reset()
+            self._emit_task_update(agent_key)
 
     async def broadcast(self, text: str, agents_keys: Optional[list[str]] = None) -> None:
         """

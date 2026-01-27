@@ -1,8 +1,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T12:30:00Z
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-26T17:00:00Z
 # Approved by: Gemini (Architect), GPT (Analyst)
-# Purpose: Centralized secrets redaction - FAIL-CLOSED
+# Purpose: Centralized secrets redaction - FAIL-CLOSED v1.1
+# Changes: Named patterns + detect_secret_type() + AWS patterns
 # === END SIGNATURE ===
 """
 HOPE OMNI-CHAT Security Module
@@ -20,20 +23,25 @@ import logging
 import re
 from typing import Any
 
-# Fail-closed patterns (extend as needed)
-_SECRET_PATTERNS = [
-    r"AIza[0-9A-Za-z_\-]{20,}",             # Google/Gemini API keys
-    r"sk-[A-Za-z0-9]{16,}",                 # OpenAI API keys
-    r"sk-proj-[A-Za-z0-9_\-]{20,}",         # OpenAI project keys
-    r"sk-ant-[A-Za-z0-9_\-]{16,}",          # Anthropic API keys
-    r"Bearer\s+[A-Za-z0-9_\-\.]{16,}",      # Bearer tokens
-    r"\b[a-f0-9]{64}\b",                    # 64-char hex tokens
-    r"ghp_[A-Za-z0-9]{36,}",                # GitHub personal tokens
-    r"gho_[A-Za-z0-9]{36,}",                # GitHub OAuth tokens
-    r"bot[0-9]{8,}:[A-Za-z0-9_\-]{30,}",    # Telegram bot tokens
-]
+# Fail-closed patterns with metadata for debugging
+_SECRET_PATTERNS: dict[str, str] = {
+    "google_api": r"AIza[0-9A-Za-z_\-]{20,}",
+    "openai_api": r"sk-[A-Za-z0-9]{16,}",
+    "openai_proj": r"sk-proj-[A-Za-z0-9_\-]{20,}",
+    "anthropic_api": r"sk-ant-[A-Za-z0-9_\-]{16,}",
+    "bearer_token": r"Bearer\s+[A-Za-z0-9_\-\.]{16,}",
+    "hex_token_64": r"\b[a-f0-9]{64}\b",
+    "github_pat": r"ghp_[A-Za-z0-9]{36,}",
+    "github_oauth": r"gho_[A-Za-z0-9]{36,}",
+    "telegram_bot": r"bot[0-9]{8,}:[A-Za-z0-9_\-]{30,}",
+    "aws_access": r"AKIA[0-9A-Z]{16}",
+    "aws_secret": r"[A-Za-z0-9/+=]{40}(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])",
+}
 
-_COMPILED = [re.compile(p, re.IGNORECASE) for p in _SECRET_PATTERNS]
+_COMPILED: dict[str, re.Pattern] = {
+    name: re.compile(pattern, re.IGNORECASE)
+    for name, pattern in _SECRET_PATTERNS.items()
+}
 
 
 def redact(text: str) -> str:
@@ -50,7 +58,7 @@ def redact(text: str) -> str:
         return ""
 
     out = text
-    for rx in _COMPILED:
+    for rx in _COMPILED.values():
         out = rx.sub(lambda m: m.group(0)[:4] + "***", out)
     return out
 
@@ -59,10 +67,24 @@ def contains_secret(text: str) -> bool:
     """Check if text contains any secret pattern."""
     if not isinstance(text, str):
         return False
-    for rx in _COMPILED:
+    for rx in _COMPILED.values():
         if rx.search(text):
             return True
     return False
+
+
+def detect_secret_type(text: str) -> str | None:
+    """
+    Detect which type of secret is in text.
+    Returns pattern name or None.
+    Useful for debugging and audit logs.
+    """
+    if not isinstance(text, str):
+        return None
+    for name, rx in _COMPILED.items():
+        if rx.search(text):
+            return name
+    return None
 
 
 def redact_any(value: Any) -> Any:
@@ -138,6 +160,8 @@ __all__ = [
     "redact",
     "redact_any",
     "contains_secret",
+    "detect_secret_type",
     "configure_safe_logging",
     "RedactingFilter",
+    "_SECRET_PATTERNS",  # For external audit/config
 ]
