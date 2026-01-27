@@ -4,8 +4,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-26T11:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-27T13:00:00Z
-# Purpose: HOPE OMNI-CHAT v1.4 - Trinity AI Chat TUI with Search + DDO
+# Modified at: 2026-01-27T15:00:00Z
+# Purpose: HOPE OMNI-CHAT v1.4.1 - Trinity AI Chat TUI with Search + DDO
+# FIX: DDO uses run_worker instead of asyncio.create_task
 # === END SIGNATURE ===
 """
 HOPE OMNI-CHAT v1.4 - Trinity AI Chat System
@@ -493,19 +494,34 @@ class DDOScreen(ModalScreen):
 
         # Actions
         if btn_id == "ddo-start":
-            asyncio.create_task(self._start_discussion())
+            # Schedule the discussion task
+            self._schedule_discussion()
         elif btn_id == "ddo-stop":
             self._stop_discussion()
         elif btn_id == "ddo-close":
             self.action_close_ddo()
 
+    def _schedule_discussion(self) -> None:
+        """Schedule the DDO discussion to run."""
+        # Use call_later to ensure we're in the right context
+        self.call_later(self._run_discussion_task)
+
+    def _run_discussion_task(self) -> None:
+        """Create and run the discussion task."""
+        if self._ddo_task and not self._ddo_task.done():
+            return  # Already running
+
+        self._ddo_task = asyncio.create_task(self._start_discussion())
+
     async def _start_discussion(self) -> None:
         """Start the DDO discussion."""
+        import traceback
+
         topic_widget = self.query_one("#ddo-topic", TextArea)
         topic = topic_widget.text.strip()
 
         if not topic:
-            self._update_progress("❌ Введите тему дискуссии!")
+            self.query_one("#ddo-progress", Static).update("❌ Введите тему дискуссии!")
             return
 
         if self._running:
@@ -522,12 +538,14 @@ class DDOScreen(ModalScreen):
         log.update("")
 
         mode = self._get_selected_mode()
-        self._update_progress(f"🚀 Запуск DDO: {mode.display_name}")
+        self.query_one("#ddo-progress", Static).update(f"🚀 Запуск DDO: {mode.display_name}")
+        log.update(f"🚀 Начинаем дискуссию...\nТема: {topic}\nРежим: {mode.display_name}\n")
 
         # Create orchestrator and run
         orchestrator = DDOOrchestrator(self.agents)
 
         try:
+            log.update(log.renderable + "\n📡 Подключение к агентам...")
             async for event in orchestrator.run_discussion(
                 topic=topic,
                 mode=mode,
@@ -538,7 +556,9 @@ class DDOScreen(ModalScreen):
                     break
                 self._handle_ddo_event(event)
         except Exception as e:
-            self._append_log(f"❌ ОШИБКА: {e}")
+            error_trace = traceback.format_exc()
+            log.update(log.renderable + f"\n❌ ОШИБКА: {e}\n\nTraceback:\n{error_trace}")
+            self.query_one("#ddo-progress", Static).update(f"❌ Ошибка: {type(e).__name__}")
 
         self._running = False
         self.query_one("#ddo-start", Button).disabled = False
