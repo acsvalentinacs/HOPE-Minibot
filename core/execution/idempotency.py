@@ -18,8 +18,49 @@ The "H" prefix indicates HOPE system orders for easy identification.
 """
 import hashlib
 import json
+import sys
+import ctypes
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
+
+
+def get_command_line_w_ssot() -> str:
+    """
+    Get command line from Windows GetCommandLineW (SSoT).
+
+    On Windows: Uses kernel32.GetCommandLineW() for exact command line.
+    On Unix: Falls back to reconstructed sys.argv (less precise).
+
+    Returns:
+        Full command line string.
+    """
+    if sys.platform == "win32":
+        try:
+            kernel32 = ctypes.windll.kernel32
+            GetCommandLineW = kernel32.GetCommandLineW
+            GetCommandLineW.restype = ctypes.c_wchar_p
+            cmdline = GetCommandLineW()
+            return cmdline if cmdline else ""
+        except Exception:
+            pass
+    # Fallback for non-Windows or error
+    import shlex
+    return " ".join(shlex.quote(arg) for arg in sys.argv)
+
+
+def cmdline_sha256_id() -> str:
+    """
+    Generate deterministic session ID from command line (SSoT).
+
+    Uses GetCommandLineW on Windows for exact command line.
+    Returns sha256:<64hex> format.
+
+    Returns:
+        Session ID in format "sha256:<64hex>".
+    """
+    cmdline = get_command_line_w_ssot()
+    hash_hex = hashlib.sha256(cmdline.encode("utf-8")).hexdigest()
+    return f"sha256:{hash_hex}"
 
 
 def canonical_payload(

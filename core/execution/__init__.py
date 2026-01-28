@@ -27,6 +27,8 @@ from core.execution.idempotency import (
     generate_client_order_id,
     canonical_payload,
     verify_idempotency_key,
+    cmdline_sha256_id,
+    get_command_line_w_ssot,
 )
 from core.execution.journal import (
     AtomicJournal,
@@ -56,6 +58,8 @@ __all__ = [
     "generate_client_order_id",
     "canonical_payload",
     "verify_idempotency_key",
+    "cmdline_sha256_id",
+    "get_command_line_w_ssot",
     # Journal
     "AtomicJournal",
     "JournalEntry",

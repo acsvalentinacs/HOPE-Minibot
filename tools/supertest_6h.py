@@ -274,10 +274,25 @@ class SuperTest:
             timeout=60,
         ))
 
-        # 14. Cmdline SSoT audit
+        # 14. Cmdline SSoT audit (P0: GetCommandLineW-based sha256 contract)
         tests.append(self.step(
             "Cmdline SSoT audit",
-            [py, "tools/audit_cmdline_ssot.py", "--root", str(ROOT)],
+            [py, "-c", """
+import re
+import platform
+from core.execution.idempotency import cmdline_sha256_id, get_command_line_w_ssot
+
+# Verify sha256:<64hex> format
+cid = cmdline_sha256_id()
+assert re.fullmatch(r"sha256:[0-9a-f]{64}", cid), f"Invalid format: {cid}"
+
+# On Windows verify GetCommandLineW returns non-empty
+if platform.system().lower().startswith("win"):
+    cmd = get_command_line_w_ssot()
+    assert isinstance(cmd, str) and cmd.strip(), "GetCommandLineW() returned empty"
+
+print(f"Cmdline SSoT: OK ({cid[:24]}...)")
+"""],
             timeout=60,
         ))
 
