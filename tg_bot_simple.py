@@ -124,40 +124,63 @@ HEALTH_TGBOT = MINIBOT_STATE_DIR / "health_tgbot.json"
 ENGINE_STDERR = LOGS_DIR / "engine_stderr.log"
 STOP_FLAG = ROOT / "STOP.flag"
 
-# === TGBOT HEALTH HEARTBEAT (v2.3.3) ===
+# === TGBOT HEALTH HEARTBEAT (v2.3.5 - NON-BLOCKING) ===
 _TGBOT_START_TIME: float = time.time()
 _TGBOT_HEALTH_INTERVAL: int = 10  # seconds
 
 
-def _write_tgbot_health() -> None:
-    """Write health_tgbot.json for PowerShell detection."""
+def _write_tgbot_health_sync() -> None:
+    """
+    SYNC file write - runs in thread pool.
+    Atomic: temp -> fsync -> replace.
+    """
     try:
         from datetime import datetime, timezone
+        import tempfile
+
         HEALTH_TGBOT.parent.mkdir(parents=True, exist_ok=True)
         health = {
             "component": "TGBOT",
-            "version": "2.3.3",
+            "version": "2.3.5",
             "hb_ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "uptime_sec": int(time.time() - _TGBOT_START_TIME),
             "pid": os.getpid(),
         }
-        tmp = HEALTH_TGBOT.with_suffix(".tmp")
-        tmp.write_text(json.dumps(health, indent=2), encoding="utf-8")
-        tmp.replace(HEALTH_TGBOT)
+        content = json.dumps(health, indent=2)
+
+        # Atomic write via temp file with fsync
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(HEALTH_TGBOT.parent),
+            prefix=".hb_",
+            suffix=".tmp"
+        )
+        try:
+            os.write(fd, content.encode("utf-8"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+        os.replace(tmp_path, str(HEALTH_TGBOT))
     except Exception:
-        pass  # Fail silently - health is non-critical
-
-
-async def _tgbot_heartbeat_task() -> None:
-    """Background task: update health_tgbot.json every 10 seconds."""
-    while True:
-        _write_tgbot_health()
-        await asyncio.sleep(_TGBOT_HEALTH_INTERVAL)
+        pass  # Fail silently - watchdog handles stale HB
 
 
 async def _heartbeat_job_callback(context) -> None:
-    """Job callback for heartbeat - runs within Application's event loop."""
-    _write_tgbot_health()
+    """
+    Job callback with TIMEOUT and THREAD ISOLATION.
+    File I/O runs in thread pool to prevent event loop blocking.
+    """
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(_write_tgbot_health_sync),
+            timeout=8.0
+        )
+    except asyncio.TimeoutError:
+        logging.getLogger("tg_bot").warning("Heartbeat TIMEOUT (>8s)")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logging.getLogger("tg_bot").error("Heartbeat error: %s", e)
 
 HUNTERS_SIGNALS_CANDIDATES = [
     STATE_DIR / "hunters_signals_scored.jsonl",
@@ -2427,7 +2450,17 @@ class HopeMiniBot:
             raise RuntimeError(
                 "No TELEGRAM_TOKEN_MINI/TELEGRAM_TOKEN loaded (check C:\\secrets\\hope\\.env)"
             )
-        app = Application.builder().token(self.token).post_init(self._post_init).build()
+        # v2.3.5: Add network timeouts to prevent hanging on slow connections
+        app = (
+            Application.builder()
+            .token(self.token)
+            .read_timeout(10)
+            .write_timeout(10)
+            .connect_timeout(5)
+            .pool_timeout(3)
+            .post_init(self._post_init)
+            .build()
+        )
 
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
@@ -2482,8 +2515,8 @@ def main() -> None:
     _hope_acquire_pid_lock(root / "state" / "pids" / "tg_bot_simple.lock")
     _hope_install_log_redaction()
 
-    # v2.3.4: Write initial health, job scheduled via post_init
-    _write_tgbot_health()
+    # v2.3.5: Write initial health, job scheduled via post_init
+    _write_tgbot_health_sync()
     logger.info("health_tgbot.json created: %s", HEALTH_TGBOT)
 
     app.run_polling(close_loop=False)
