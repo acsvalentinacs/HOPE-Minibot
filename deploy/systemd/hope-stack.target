@@ -1,0 +1,19 @@
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-29T00:10:00Z
+# Purpose: HOPE Stack target - start/stop all services together
+# === END SIGNATURE ===
+#
+# Usage:
+#   sudo systemctl start hope-stack.target   # Start all
+#   sudo systemctl stop hope-stack.target    # Stop all
+#   sudo systemctl restart hope-stack.target # Restart all
+
+[Unit]
+Description=HOPE Trading Stack (Core + TgBot)
+Documentation=https://github.com/hope-trading/minibot
+Wants=hope-core.service hope-tgbot.service
+After=hope-core.service hope-tgbot.service
+
+[Install]
+WantedBy=multi-user.target

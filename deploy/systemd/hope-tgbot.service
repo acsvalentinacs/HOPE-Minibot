@@ -1,0 +1,84 @@
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-29T00:10:00Z
+# Purpose: HOPE Telegram Bot systemd service with watchdog
+# Security: Fail-closed, restart limits, proper isolation
+# === END SIGNATURE ===
+#
+# Installation:
+#   sudo cp hope-tgbot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable hope-tgbot
+#   sudo systemctl start hope-tgbot
+#
+# Logs:
+#   journalctl -u hope-tgbot -f
+
+[Unit]
+Description=HOPE Telegram Bot - Admin Interface
+Documentation=https://github.com/hope-trading/minibot
+After=network-online.target
+Wants=network-online.target
+
+# TgBot can run independently but prefers Core
+Wants=hope-core.service
+
+# Prevent start if critical env missing
+ConditionPathExists=/etc/hope/.env
+
+[Service]
+Type=notify
+NotifyAccess=main
+
+# User isolation
+User=hope
+Group=hope
+
+# Working directory
+WorkingDirectory=/opt/hope/minibot
+
+# Environment
+EnvironmentFile=/etc/hope/.env
+Environment="PYTHONUNBUFFERED=1"
+Environment="HOPE_ENV=production"
+
+# Command
+ExecStart=/opt/hope/venv/bin/python tg_bot_simple.py
+
+# Graceful shutdown
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=15
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=42
+
+# Restart limits
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Watchdog (60s timeout - TgBot has 10s heartbeat interval)
+WatchdogSec=60
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=25%
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/opt/hope/minibot/state
+ReadOnlyPaths=/etc/hope
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hope-tgbot
+
+[Install]
+WantedBy=multi-user.target

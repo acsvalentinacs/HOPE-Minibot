@@ -2,9 +2,10 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T02:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-28T11:10:00Z
+# Modified at: 2026-01-29T00:20:00Z
 # Purpose: Unified Live Trading Entrypoint - single path to production
 # Security: Gatekeeper must pass, STOP.flag halts trading, health_v5.json updated
+# Change: Added systemd watchdog integration (sd_notify)
 # === END SIGNATURE ===
 """
 HOPE Live Trading Entrypoint.
@@ -52,6 +53,17 @@ from typing import Any, Dict, List, Optional
 STATE_DIR = Path(__file__).resolve().parent.parent / "state"
 HEALTH_FILE = STATE_DIR / "health_v5.json"
 STOP_FLAG = Path(__file__).resolve().parent.parent / "STOP.flag"
+
+# Systemd watchdog integration (fail-open: works without systemd)
+try:
+    from core.runtime.systemd_notify import sd_ready, sd_watchdog, sd_stopping, sd_status
+    SYSTEMD_AVAILABLE = True
+except ImportError:
+    SYSTEMD_AVAILABLE = False
+    def sd_ready() -> bool: return False
+    def sd_watchdog() -> bool: return False
+    def sd_stopping() -> bool: return False
+    def sd_status(s: str) -> bool: return False
 
 # Configure logging FIRST (before any imports that might log)
 logging.basicConfig(
@@ -353,10 +365,14 @@ class TradingContext:
             daily_stop_hit=self._daily_stop_hit,
             last_error=self._last_error,
         )
+        # Systemd watchdog keepalive
+        sd_watchdog()
+        sd_status(f"{self.mode} | pos={len(self._open_positions)} | pnl=${self._daily_pnl_usd:.2f}")
 
     def shutdown(self) -> None:
         """Clean shutdown of all components."""
         logger.info("Shutting down trading context...")
+        sd_stopping()  # Notify systemd
 
         # Save performance snapshot
         if self._performance_tracker:
@@ -853,6 +869,10 @@ def main() -> int:
             last_error=None,
         )
         logger.info("health_v5.json created: %s", HEALTH_FILE)
+
+        # Notify systemd we're ready
+        if sd_ready():
+            logger.info("Systemd READY notification sent")
 
     except Exception as e:
         logger.exception("Gatekeeper failed with exception: %s", e)

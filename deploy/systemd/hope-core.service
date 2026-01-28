@@ -1,0 +1,94 @@
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-29T00:10:00Z
+# Purpose: HOPE Trade Core systemd service with watchdog
+# Security: Fail-closed, restart limits, proper isolation
+# === END SIGNATURE ===
+#
+# Installation:
+#   sudo cp hope-core.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable hope-core
+#   sudo systemctl start hope-core
+#
+# Logs:
+#   journalctl -u hope-core -f
+#
+# Status:
+#   systemctl status hope-core
+
+[Unit]
+Description=HOPE Trade Core - Live Trading Engine
+Documentation=https://github.com/hope-trading/minibot
+After=network-online.target
+Wants=network-online.target
+
+# Dependency on TgBot (optional but recommended)
+# Wants=hope-tgbot.service
+
+# Prevent start if critical env missing
+ConditionPathExists=/etc/hope/.env
+
+[Service]
+Type=notify
+NotifyAccess=main
+
+# User isolation (never root)
+User=hope
+Group=hope
+
+# Working directory
+WorkingDirectory=/opt/hope/minibot
+
+# Environment
+EnvironmentFile=/etc/hope/.env
+Environment="PYTHONUNBUFFERED=1"
+Environment="HOPE_ENV=production"
+Environment="HOPE_LOG_LEVEL=INFO"
+
+# Command: DRY mode by default (override via drop-in)
+# To change mode: create /etc/systemd/system/hope-core.service.d/mode.conf
+# [Service]
+# Environment="HOPE_MODE=TESTNET"
+ExecStart=/opt/hope/venv/bin/python -m core.entrypoint \
+    --mode ${HOPE_MODE:-DRY} \
+    --symbol ${HOPE_SYMBOL:-BTCUSDT} \
+    --amount ${HOPE_AMOUNT:-11}
+
+# Graceful shutdown
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+RestartPreventExitStatus=2
+
+# Restart limits (fail-closed: max 5 restarts in 5 minutes)
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Watchdog (30s timeout, Core must call sd_notify every 15s)
+WatchdogSec=30
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=50%
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/opt/hope/minibot/state
+ReadOnlyPaths=/etc/hope
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hope-core
+
+[Install]
+WantedBy=multi-user.target

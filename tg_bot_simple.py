@@ -5,6 +5,7 @@
 # Modified by: Claude (opus-4)
 # Modified at: 2026-01-28T16:30:00Z
 # v2.3.5: Added /mode command for DRY/LIVE switching with confirmation
+# v2.3.6: Added systemd watchdog integration (sd_notify)
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -75,6 +76,16 @@ try:
     CCXT_AVAILABLE = True
 except ImportError:
     CCXT_AVAILABLE = False
+
+# Systemd watchdog integration (fail-open: works without systemd)
+try:
+    from core.runtime.systemd_notify import sd_ready, sd_watchdog, sd_stopping
+    SYSTEMD_AVAILABLE = True
+except ImportError:
+    SYSTEMD_AVAILABLE = False
+    def sd_ready() -> bool: return False
+    def sd_watchdog() -> bool: return False
+    def sd_stopping() -> bool: return False
 
 THIS_FILE = Path(__file__).resolve()
 if THIS_FILE.parent.name.lower() == "minibot":
@@ -161,6 +172,8 @@ def _write_tgbot_health_sync() -> None:
             os.close(fd)
 
         os.replace(tmp_path, str(HEALTH_TGBOT))
+        # Systemd watchdog keepalive
+        sd_watchdog()
     except Exception:
         pass  # Fail silently - watchdog handles stale HB
 
@@ -2518,6 +2531,10 @@ def main() -> None:
     # v2.3.5: Write initial health, job scheduled via post_init
     _write_tgbot_health_sync()
     logger.info("health_tgbot.json created: %s", HEALTH_TGBOT)
+
+    # Notify systemd we're ready
+    if sd_ready():
+        logger.info("Systemd READY notification sent")
 
     app.run_polling(close_loop=False)
 
