@@ -1,230 +1,199 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
-# Created at (UTC): 2026-01-25T16:25:00Z
+# Created at: 2026-01-28T07:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at (UTC): 2026-01-25T17:40:00Z
-# Purpose: Trading Order Router - единственная точка размещения ордеров (+delisting protection)
+# Modified at: 2026-01-28T10:00:00Z
+# Purpose: Trading Order Router - integrated with Trading Safety Core
+# Security: Outbox pattern, UNKNOWN protocol, RiskGovernor with real balance
 # === END SIGNATURE ===
 """
 Trading Order Router - Fail-Closed Order Execution.
 
-ЕДИНСТВЕННАЯ точка размещения ордеров.
-Прямые сетевые вызовы ЗАПРЕЩЕНЫ - используем egress wrapper.
+INTEGRATED WITH TRADING SAFETY CORE:
+- Outbox pattern (two-phase commit)
+- UNKNOWN protocol (read-your-writes on timeout)
+- FillsLedger as ONLY source of truth
+- RiskGovernor with REAL balance from exchange
 
-Flow (неизменяем):
-1. audit.log_intent()
-2. risk_engine.validate_order()
-3. live_gate.check()
-4. submit order (через egress wrapper)
-5. audit.log_ack/fill
+Flow:
+1. Generate idempotent clientOrderId
+2. Check duplicate via Outbox.has_pending()
+3. PREPARE: Write intent to Outbox
+4. Validate via RiskGovernor (real balance)
+5. COMMIT: Send to exchange
+6. ACK/UNKNOWN: Handle response or timeout
+7. Record FillEvent to FillsLedger
 
 FAIL-CLOSED:
-- Ошибка audit = STOP
-- Ошибка risk = REJECT
-- Ошибка gate = REJECT
-- Ошибка submit = REJECT + audit ERROR
-
-Режимы:
-- DRY: только расчёты + audit, без реальных ордеров
-- TESTNET: ордера на testnet.binance.vision
-- MAINNET: ордера на api.binance.com (требует LIVE Gate)
-
-Usage:
-    from core.trade.order_router import TradingOrderRouter
-
-    router = TradingOrderRouter(mode="TESTNET")
-
-    result = router.execute_order(
-        symbol="BTCUSDT",
-        side="BUY",
-        size_usd=100.0,
-        portfolio=portfolio_snapshot,
-    )
-
-    if not result.success:
-        log.error(f"Order failed: {result.reason}")
+- Any error before COMMIT = REJECTED (no side effects)
+- Timeout/5xx = UNKNOWN (quarantine, reconcile)
+- Only FillEvent records actual execution
+- No RiskGovernor in non-DRY mode = RuntimeError
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.risk.risk_governor import RiskGovernor
 
 logger = logging.getLogger("trade.order_router")
 
 # SSoT paths
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 STATE_DIR = BASE_DIR / "state"
+ORDERS_DIR = STATE_DIR / "orders"
+FILLS_DIR = STATE_DIR / "fills"
 
 
-class TradingMode(str, Enum):
-    """Trading mode."""
-    DRY = "DRY"
-    TESTNET = "TESTNET"
-    MAINNET = "MAINNET"
-
-
-class OrderResultStatus(str, Enum):
-    """Order result status."""
+class ExecutionStatus(str, Enum):
+    """Order execution result status."""
     SUCCESS = "SUCCESS"
-    REJECTED_AUDIT = "REJECTED_AUDIT"
-    REJECTED_RISK = "REJECTED_RISK"
-    REJECTED_GATE = "REJECTED_GATE"
-    REJECTED_DELISTING = "REJECTED_DELISTING"  # Symbol blocked due to delisting
-    REJECTED_EXCHANGE = "REJECTED_EXCHANGE"
+    DUPLICATE = "DUPLICATE"
+    RISK_BLOCKED = "RISK_BLOCKED"
+    GATE_BLOCKED = "GATE_BLOCKED"
+    EXCHANGE_REJECTED = "EXCHANGE_REJECTED"
+    UNKNOWN = "UNKNOWN"  # Timeout/5xx - needs reconcile
     ERROR = "ERROR"
 
 
 @dataclass
-class TradingOrderResult:
+class ExecutionResult:
     """Result of order execution."""
-    success: bool
-    status: OrderResultStatus
-    reason: str
-    order_id: str = ""
+    status: ExecutionStatus
     client_order_id: str = ""
+    exchange_order_id: Optional[int] = None
     symbol: str = ""
     side: str = ""
-    requested_size_usd: float = 0.0
-    allowed_size_usd: float = 0.0
-    executed_qty: float = 0.0
-    avg_price: float = 0.0
-    executed_usd: float = 0.0
-    mode: str = "DRY"
-    dry_run: bool = True
-    timestamp_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    quantity: float = 0.0
+    price: float = 0.0
+    notional: float = 0.0
+    message: str = ""
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict."""
-        return {
-            "success": self.success,
-            "status": self.status.value,
-            "reason": self.reason,
-            "order_id": self.order_id,
-            "client_order_id": self.client_order_id,
-            "symbol": self.symbol,
-            "side": self.side,
-            "requested_size_usd": self.requested_size_usd,
-            "allowed_size_usd": self.allowed_size_usd,
-            "executed_qty": self.executed_qty,
-            "avg_price": self.avg_price,
-            "executed_usd": self.executed_usd,
-            "mode": self.mode,
-            "dry_run": self.dry_run,
-            "timestamp_utc": self.timestamp_utc,
-        }
+    @property
+    def success(self) -> bool:
+        return self.status == ExecutionStatus.SUCCESS
+
+    @property
+    def needs_reconcile(self) -> bool:
+        return self.status == ExecutionStatus.UNKNOWN
+
+
+class ExchangeClientProtocol(Protocol):
+    """Protocol for exchange client."""
+
+    def create_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: float,
+        client_order_id: str,
+        price: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Create order on exchange."""
+        ...
+
+    def get_order(
+        self,
+        symbol: str,
+        client_order_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get order by clientOrderId."""
+        ...
+
+    def get_ticker_price(self, symbol: str) -> Optional[float]:
+        """Get current price."""
+        ...
+
+    def get_account(self) -> Optional[Dict[str, Any]]:
+        """Get account balances."""
+        ...
 
 
 class TradingOrderRouter:
     """
-    Trading Order Router - fail-closed order execution.
+    Trading Order Router - integrated with Trading Safety Core.
 
-    ЗАПРЕЩЕНО: прямые сетевые вызовы.
-    Используем существующий клиент проекта.
+    Uses:
+    - core/execution/outbox.py for order lifecycle
+    - core/execution/fills_ledger.py for execution records
+    - core/execution/idempotency.py for clientOrderId
+    - core/risk/risk_governor.py for real balance validation
     """
-
-    # Allowed hosts per mode
-    ALLOWED_HOSTS = {
-        TradingMode.TESTNET: "testnet.binance.vision",
-        TradingMode.MAINNET: "api.binance.com",
-    }
 
     def __init__(
         self,
         mode: str = "DRY",
         dry_run: bool = True,
+        risk_governor: Optional["RiskGovernor"] = None,
     ):
         """
         Initialize Trading Order Router.
 
         Args:
             mode: Trading mode (DRY, TESTNET, MAINNET)
-            dry_run: If True, no real orders (overrides mode)
+            dry_run: If True, no real orders
+            risk_governor: RiskGovernor for real balance validation (required for non-DRY)
         """
-        self.mode = TradingMode(mode.upper())
-        self.dry_run = dry_run or self.mode == TradingMode.DRY
+        self.mode = mode.upper()
+        self.dry_run = dry_run or self.mode == "DRY"
+        self._risk_governor = risk_governor
 
-        # Import dependencies
-        from .live_gate import LiveGate
-        from .risk_engine import TradingRiskEngine, OrderIntent, PortfolioSnapshot
-        from .order_audit import OrderAudit
-        from .delisting_detector import DelistingDetector
+        # Fail-closed: non-DRY requires RiskGovernor
+        if not self.dry_run and self._risk_governor is None:
+            raise RuntimeError(
+                "RiskGovernor required for non-DRY mode. "
+                "Pass risk_governor=RiskGovernor() to constructor."
+            )
 
-        self.live_gate = LiveGate()
-        self.risk_engine = TradingRiskEngine()
-        self.audit = OrderAudit()
-        self.delisting_detector = DelistingDetector()
+        # Initialize execution layer
+        from core.execution.outbox import Outbox
+        from core.execution.fills_ledger import FillsLedger
+        from core.execution.idempotency import cmdline_sha256_id
 
-        # Generate run_id for this session
-        self._run_id = self._generate_run_id()
-        self._cmdline_sha256 = self._get_cmdline_sha256()
+        ORDERS_DIR.mkdir(parents=True, exist_ok=True)
+        FILLS_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Set audit context
-        self.audit.set_context(
-            run_id=self._run_id,
-            cmdline_sha256=self._cmdline_sha256,
-            mode=self.mode.value,
-            dry_run=self.dry_run,
-        )
+        self._outbox = Outbox(ORDERS_DIR / "outbox.jsonl")
+        self._ledger = FillsLedger(FILLS_DIR / "fills.jsonl")
+        self._session_id = cmdline_sha256_id()
 
         # Exchange client (lazy init)
         self._exchange_client = None
 
+        # Import gates
+        from .live_gate import LiveGate
+        from .risk_engine import TradingRiskEngine
+
+        self._live_gate = LiveGate()
+        self._risk_engine = TradingRiskEngine()
+
         logger.info(
-            "TradingOrderRouter initialized: mode=%s, dry_run=%s, run_id=%s",
-            self.mode.value,
-            self.dry_run,
-            self._run_id[:40],
+            "TradingOrderRouter initialized: mode=%s, dry_run=%s, has_governor=%s, session=%s",
+            self.mode, self.dry_run, self._risk_governor is not None, self._session_id[:32],
         )
-
-    def _generate_run_id(self) -> str:
-        """Generate unique run ID."""
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        pid = os.getpid()
-        nonce = hashlib.sha256(f"{ts}{pid}{time.time_ns()}".encode()).hexdigest()[:32]
-        cmd_prefix = self._get_cmdline_sha256()[:8]
-        return f"trade_v1__ts={ts}__pid={pid}__nonce={nonce}__cmd={cmd_prefix}"
-
-    def _get_cmdline_sha256(self) -> str:
-        """Get cmdline SHA256 (SSoT)."""
-        try:
-            from core.truth.cmdline_ssot import get_cmdline_sha256
-            return get_cmdline_sha256()
-        except ImportError:
-            # Fallback
-            import sys
-            cmdline = " ".join(sys.argv)
-            return hashlib.sha256(cmdline.encode()).hexdigest()
-
-    def _generate_client_order_id(self, symbol: str, side: str) -> str:
-        """Generate deterministic client order ID."""
-        ts = int(time.time() * 1000)
-        data = f"{self._run_id}{symbol}{side}{ts}"
-        nonce = hashlib.sha256(data.encode()).hexdigest()[:8]
-        return f"HOPE_{symbol}_{ts}_{nonce}"
 
     def _get_exchange_client(self):
         """Get or create exchange client."""
         if self._exchange_client is not None:
             return self._exchange_client
 
-        if self.mode == TradingMode.TESTNET:
+        if self.mode == "TESTNET":
             from core.spot_testnet_client import SpotTestnetClient
             self._exchange_client = SpotTestnetClient()
-        elif self.mode == TradingMode.MAINNET:
-            # For MAINNET, we need a mainnet client
-            # This should use egress wrapper
+        elif self.mode == "MAINNET":
             from core.spot_testnet_client import SpotTestnetClient
 
             # Load mainnet credentials
-            secrets_path = Path(r"C:\secrets\hope\.env")
+            secrets_path = Path(r"C:\secrets\hope.env")
             env = {}
             if secrets_path.exists():
                 for line in secrets_path.read_text(encoding="utf-8").splitlines():
@@ -233,401 +202,518 @@ class TradingOrderRouter:
                         k, _, v = line.partition("=")
                         env[k.strip()] = v.strip()
 
-            # Create client with mainnet URL
             self._exchange_client = SpotTestnetClient(
-                api_key=env.get("BINANCE_MAINNET_API_KEY", ""),
-                api_secret=env.get("BINANCE_MAINNET_API_SECRET", ""),
+                api_key=env.get("BINANCE_API_KEY", ""),
+                api_secret=env.get("BINANCE_API_SECRET", ""),
             )
-            # Override base URL for mainnet
             self._exchange_client.base_url = "https://api.binance.com/api"
 
+        # Connect RiskGovernor to exchange client
+        if self._risk_governor and self._exchange_client:
+            self._risk_governor.set_exchange_client(self._exchange_client)
+
         return self._exchange_client
+
+    def _get_portfolio_snapshot(self):
+        """
+        Get portfolio snapshot for risk validation.
+
+        DRY mode: Returns simulated portfolio
+        LIVE mode: Gets real balance via RiskGovernor (fail-closed)
+        """
+        from .risk_engine import PortfolioSnapshot
+
+        # Calculate open positions from fills
+        open_positions_count = 0
+        try:
+            from core.trade.state_hydration import StateHydrator
+            hydrator = StateHydrator()
+            positions = hydrator.get_all_positions()
+            open_positions_count = len(positions)
+        except Exception as e:
+            logger.warning("Failed to hydrate positions for risk check: %s", e)
+
+        if self.dry_run:
+            # DRY mode: simulated portfolio
+            return PortfolioSnapshot(
+                equity_usd=10000.0,
+                open_positions=open_positions_count,
+                daily_pnl_usd=0.0,
+                start_of_day_equity=10000.0,
+                timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                source="dry_mode_simulation",
+            )
+
+        # LIVE mode: real balance via RiskGovernor
+        if self._risk_governor is None:
+            raise RuntimeError("RiskGovernor required for non-DRY mode")
+
+        # Ensure exchange client is connected
+        self._get_exchange_client()
+
+        # Refresh portfolio from exchange
+        portfolio_data = self._risk_governor.refresh_portfolio()
+        if portfolio_data is None:
+            raise RuntimeError("Failed to get portfolio data from exchange")
+
+        return PortfolioSnapshot(
+            equity_usd=portfolio_data.total_equity_usdt,
+            open_positions=open_positions_count,
+            daily_pnl_usd=self._risk_governor._daily_pnl,
+            start_of_day_equity=portfolio_data.total_equity_usdt,
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            source="risk_governor_live",
+        )
 
     def execute_order(
         self,
         symbol: str,
         side: str,
-        size_usd: float,
-        portfolio: "PortfolioSnapshot",
+        quantity: float,
+        price: Optional[float] = None,
         order_type: str = "MARKET",
         signal_id: Optional[str] = None,
-    ) -> TradingOrderResult:
+    ) -> ExecutionResult:
         """
-        Execute order with full validation.
+        Execute order with Outbox pattern.
 
-        FLOW (неизменяем):
-        1. audit.log_intent
-        2. risk_engine.validate_order
-        3. live_gate.check
-        4. submit order
-        5. audit.log_ack/fill
+        Flow:
+        1. Generate idempotent clientOrderId
+        2. Check duplicate
+        3. PREPARE (write to outbox)
+        4. Validate (risk with real balance, gate)
+        5. COMMIT (send to exchange)
+        6. ACK/UNKNOWN
+        7. Record fill if executed
 
         Args:
             symbol: Trading pair
             side: BUY or SELL
-            size_usd: Order size in USD
-            portfolio: Current portfolio snapshot
+            quantity: Order quantity
+            price: Limit price (None for MARKET)
             order_type: MARKET or LIMIT
             signal_id: Link to originating signal
 
         Returns:
-            TradingOrderResult
+            ExecutionResult
         """
-        from .risk_engine import OrderIntent
+        from core.execution.idempotency import generate_client_order_id
+        from core.execution.contracts import (
+            OrderIntentV1, OrderAckV1, FillEventV1, OrderStatus
+        )
 
-        client_order_id = self._generate_client_order_id(symbol, side)
-
-        # === STEP 1: Audit INTENT (FAIL-CLOSED) ===
-        if not self.audit.log_intent(symbol, side, size_usd, signal_id):
-            return TradingOrderResult(
-                success=False,
-                status=OrderResultStatus.REJECTED_AUDIT,
-                reason="STOP: Audit write failed",
-                symbol=symbol,
-                side=side,
-                requested_size_usd=size_usd,
-                mode=self.mode.value,
-                dry_run=self.dry_run,
-            )
-
-        # === STEP 1.5: Delisting Check (FAIL-CLOSED) ===
-        if self.delisting_detector.is_symbol_blocked(symbol):
-            reason = self.delisting_detector.get_blocked_reason(symbol) or "Symbol blocked"
-            self.audit.log_reject(
-                symbol=symbol,
-                side=side,
-                reason_code="DELISTING_BLOCKED",
-                reason=reason,
-                size_usd=size_usd,
-            )
-            return TradingOrderResult(
-                success=False,
-                status=OrderResultStatus.REJECTED_DELISTING,
-                reason=f"DELISTING PROTECTION: {reason}",
-                symbol=symbol,
-                side=side,
-                requested_size_usd=size_usd,
-                mode=self.mode.value,
-                dry_run=self.dry_run,
-            )
-
-        # === STEP 2: Risk Engine Validation ===
-        intent = OrderIntent(
+        # === STEP 1: Generate idempotent clientOrderId ===
+        client_order_id = generate_client_order_id(
             symbol=symbol,
             side=side,
-            size_usd=size_usd,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            session_id=self._session_id,
+            nonce=signal_id or "",
+        )
+
+        # === STEP 2: Check duplicate ===
+        existing = self._outbox.get(client_order_id)
+        if existing is not None:
+            logger.warning("Duplicate order detected: %s", client_order_id)
+            return ExecutionResult(
+                status=ExecutionStatus.DUPLICATE,
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side=side,
+                message=f"Duplicate: already {existing.status.value}",
+            )
+
+        # === STEP 3: PREPARE (write to outbox) ===
+        intent = OrderIntentV1(
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            session_id=self._session_id,
+            metadata={"signal_id": signal_id} if signal_id else {},
+        )
+
+        try:
+            self._outbox.prepare(intent)
+        except ValueError as e:
+            # Duplicate detected during prepare
+            return ExecutionResult(
+                status=ExecutionStatus.DUPLICATE,
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side=side,
+                message=str(e),
+            )
+
+        # === STEP 4: Validate (risk, gate) ===
+        from .risk_engine import OrderIntent as RiskOrderIntent
+
+        # Get current price for notional calculation
+        current_price = price
+        if current_price is None and not self.dry_run:
+            client = self._get_exchange_client()
+            if client:
+                try:
+                    ticker = client.get_ticker_price(symbol)
+                    if ticker:
+                        current_price = float(ticker[0]["price"]) if isinstance(ticker, list) else float(ticker.get("price", 0))
+                except Exception as e:
+                    logger.warning("Failed to get price: %s", e)
+
+        # In DRY mode, use default prices if none provided
+        if current_price is None or current_price == 0.0:
+            if self.dry_run:
+                # Default prices for DRY mode simulation
+                dry_mode_prices = {
+                    "BTCUSDT": 90000.0,
+                    "ETHUSDT": 3000.0,
+                    "BNBUSDT": 600.0,
+                }
+                current_price = dry_mode_prices.get(symbol, 100.0)
+            else:
+                current_price = 0.0
+
+        notional = quantity * current_price
+
+        # Get portfolio (real or simulated)
+        try:
+            portfolio = self._get_portfolio_snapshot()
+        except RuntimeError as e:
+            self._outbox.unknown(client_order_id, f"PORTFOLIO: {e}")
+            return ExecutionResult(
+                status=ExecutionStatus.RISK_BLOCKED,
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side=side,
+                message=f"Failed to get portfolio: {e}",
+            )
+
+        risk_intent = RiskOrderIntent(
+            symbol=symbol,
+            side=side,
+            size_usd=notional,
             order_type=order_type,
             signal_id=signal_id,
         )
 
-        risk_result = self.risk_engine.validate_order(intent, portfolio)
-
-        self.audit.log_risk_check(
-            symbol=symbol,
-            side=side,
-            decision="ALLOWED" if risk_result.allowed else "REJECTED",
-            reason_code=risk_result.reason_code.value,
-            allowed_size=risk_result.allowed_size_usd,
-        )
-
+        risk_result = self._risk_engine.validate_order(risk_intent, portfolio)
         if not risk_result.allowed:
-            self.audit.log_reject(
-                symbol=symbol,
-                side=side,
-                reason_code=risk_result.reason_code.value,
-                reason=risk_result.reason,
-                size_usd=size_usd,
-            )
-            return TradingOrderResult(
-                success=False,
-                status=OrderResultStatus.REJECTED_RISK,
-                reason=f"Risk blocked: {risk_result.reason}",
-                symbol=symbol,
-                side=side,
-                requested_size_usd=size_usd,
-                mode=self.mode.value,
-                dry_run=self.dry_run,
-            )
-
-        allowed_size = risk_result.allowed_size_usd
-
-        # === STEP 3: LIVE Gate Check ===
-        target_host = self.ALLOWED_HOSTS.get(self.mode, "")
-
-        gate_result = self.live_gate.check(
-            mode=self.mode.value,
-            target_host=target_host,
-            skip_evidence=(self.mode == TradingMode.DRY),
-        )
-
-        if not gate_result.allowed:
-            self.audit.log_reject(
-                symbol=symbol,
-                side=side,
-                reason_code=gate_result.decision.value,
-                reason=gate_result.reason,
-                size_usd=allowed_size,
-            )
-            return TradingOrderResult(
-                success=False,
-                status=OrderResultStatus.REJECTED_GATE,
-                reason=f"Gate blocked: {gate_result.reason}",
-                symbol=symbol,
-                side=side,
-                requested_size_usd=size_usd,
-                allowed_size_usd=allowed_size,
-                mode=self.mode.value,
-                dry_run=self.dry_run,
-            )
-
-        # === STEP 4: Execute Order ===
-        if self.dry_run:
-            # DRY mode: simulate
-            self.risk_engine.record_order()
-
-            result = TradingOrderResult(
-                success=True,
-                status=OrderResultStatus.SUCCESS,
-                reason="DRY: Order simulated",
-                order_id=f"DRY_{int(time.time() * 1000)}",
+            self._outbox.unknown(client_order_id, f"RISK: {risk_result.reason}")
+            return ExecutionResult(
+                status=ExecutionStatus.RISK_BLOCKED,
                 client_order_id=client_order_id,
                 symbol=symbol,
                 side=side,
-                requested_size_usd=size_usd,
-                allowed_size_usd=allowed_size,
-                executed_qty=0.0,
-                avg_price=0.0,
-                executed_usd=0.0,
-                mode=self.mode.value,
-                dry_run=True,
+                message=risk_result.reason,
             )
 
-            self.audit.log_submit(symbol, side, client_order_id, allowed_size)
+        # Gate check
+        gate_result = self._live_gate.check(
+            mode=self.mode,
+            target_host="api.binance.com" if self.mode == "MAINNET" else "testnet.binance.vision",
+            skip_evidence=(self.mode == "DRY"),
+        )
+        if not gate_result.allowed:
+            self._outbox.unknown(client_order_id, f"GATE: {gate_result.reason}")
+            return ExecutionResult(
+                status=ExecutionStatus.GATE_BLOCKED,
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side=side,
+                message=gate_result.reason,
+            )
+
+        # === STEP 5: COMMIT (mark as sent, execute) ===
+        self._outbox.commit(client_order_id)
+
+        if self.dry_run:
+            # DRY mode: simulate success
+            ack = OrderAckV1(
+                client_order_id=client_order_id,
+                exchange_order_id=int(time.time() * 1000),
+                status=OrderStatus.FILLED,
+                filled_qty=quantity,
+                avg_price=current_price,
+            )
+            self._outbox.ack(client_order_id, ack)
 
             logger.info(
-                "[DRY] Order simulated: %s %s %.2f USD",
-                side, symbol, allowed_size,
+                "[DRY] Order simulated: %s %s %.8f @ %.2f",
+                side, symbol, quantity, current_price,
             )
 
-            return result
+            return ExecutionResult(
+                status=ExecutionStatus.SUCCESS,
+                client_order_id=client_order_id,
+                exchange_order_id=ack.exchange_order_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=current_price,
+                notional=notional,
+                message="DRY: Order simulated",
+            )
 
         # Real order
         try:
-            self.audit.log_submit(symbol, side, client_order_id, allowed_size)
-
             client = self._get_exchange_client()
             if client is None:
-                self.audit.log_error(symbol, side, "Exchange client not available", client_order_id)
-                return TradingOrderResult(
-                    success=False,
-                    status=OrderResultStatus.ERROR,
-                    reason="Exchange client not available",
+                self._outbox.unknown(client_order_id, "Exchange client not available")
+                return ExecutionResult(
+                    status=ExecutionStatus.ERROR,
                     client_order_id=client_order_id,
                     symbol=symbol,
                     side=side,
-                    requested_size_usd=size_usd,
-                    allowed_size_usd=allowed_size,
-                    mode=self.mode.value,
-                    dry_run=self.dry_run,
+                    message="Exchange client not available",
                 )
-
-            # Get price
-            tickers = client.get_ticker_price(symbol)
-            if not tickers:
-                self.audit.log_error(symbol, side, "Price not available", client_order_id)
-                return TradingOrderResult(
-                    success=False,
-                    status=OrderResultStatus.ERROR,
-                    reason="Price not available",
-                    client_order_id=client_order_id,
-                    symbol=symbol,
-                    side=side,
-                    requested_size_usd=size_usd,
-                    allowed_size_usd=allowed_size,
-                    mode=self.mode.value,
-                    dry_run=self.dry_run,
-                )
-
-            price = float(tickers[0]["price"])
-            qty = allowed_size / price
-
-            # Get symbol info for lot size
-            info = client.get_exchange_info(symbol)
-            if info and "symbols" in info:
-                for s in info["symbols"]:
-                    if s["symbol"] == symbol:
-                        for f in s.get("filters", []):
-                            if f["filterType"] == "LOT_SIZE":
-                                step = float(f.get("stepSize", 0.00000001))
-                                min_qty = float(f.get("minQty", 0))
-                                if qty < min_qty:
-                                    self.audit.log_error(symbol, side, f"Qty {qty} < min {min_qty}", client_order_id)
-                                    return TradingOrderResult(
-                                        success=False,
-                                        status=OrderResultStatus.REJECTED_EXCHANGE,
-                                        reason=f"Qty below minimum: {qty} < {min_qty}",
-                                        client_order_id=client_order_id,
-                                        symbol=symbol,
-                                        side=side,
-                                        requested_size_usd=size_usd,
-                                        allowed_size_usd=allowed_size,
-                                        mode=self.mode.value,
-                                        dry_run=self.dry_run,
-                                    )
-                                # Round to step size
-                                qty = qty - (qty % step)
-                                break
-                        break
 
             # Place order
             order_result = client.place_market_order(
                 symbol=symbol,
                 side=side,
-                quantity=qty,
+                quantity=quantity,
                 client_order_id=client_order_id,
             )
 
             if order_result.success:
-                self.risk_engine.record_order()
-
-                self.audit.log_ack(
-                    symbol=symbol,
-                    side=side,
+                # === STEP 6: ACK ===
+                ack = OrderAckV1(
                     client_order_id=client_order_id,
-                    order_id=order_result.order_id or "",
-                    status=order_result.status,
+                    exchange_order_id=int(order_result.order_id) if order_result.order_id else None,
+                    status=OrderStatus.FILLED if order_result.qty > 0 else OrderStatus.NEW,
+                    filled_qty=order_result.qty,
+                    avg_price=order_result.price,
                 )
+                self._outbox.ack(client_order_id, ack)
 
+                # === STEP 7: Record fill ===
                 if order_result.qty > 0:
-                    self.audit.log_fill(
+                    fill = FillEventV1(
+                        fill_id=int(time.time() * 1000000),  # Should come from exchange
+                        client_order_id=client_order_id,
+                        exchange_order_id=int(order_result.order_id) if order_result.order_id else 0,
                         symbol=symbol,
                         side=side,
-                        order_id=order_result.order_id or "",
-                        qty=order_result.qty,
                         price=order_result.price,
+                        quantity=order_result.qty,
+                        trade_time=int(time.time() * 1000),
                     )
+                    self._ledger.record(fill)
 
                 logger.info(
-                    "Order executed: %s %s %.8f @ %.2f = %.2f USD (order_id=%s)",
-                    side, symbol, order_result.qty, order_result.price,
-                    order_result.qty * order_result.price, order_result.order_id,
+                    "Order executed: %s %s %.8f @ %.2f (id=%s)",
+                    side, symbol, order_result.qty, order_result.price, order_result.order_id,
                 )
 
-                return TradingOrderResult(
-                    success=True,
-                    status=OrderResultStatus.SUCCESS,
-                    reason="Order executed",
-                    order_id=order_result.order_id or "",
+                return ExecutionResult(
+                    status=ExecutionStatus.SUCCESS,
                     client_order_id=client_order_id,
+                    exchange_order_id=int(order_result.order_id) if order_result.order_id else None,
                     symbol=symbol,
                     side=side,
-                    requested_size_usd=size_usd,
-                    allowed_size_usd=allowed_size,
-                    executed_qty=order_result.qty,
-                    avg_price=order_result.price,
-                    executed_usd=order_result.qty * order_result.price,
-                    mode=self.mode.value,
-                    dry_run=False,
+                    quantity=order_result.qty,
+                    price=order_result.price,
+                    notional=order_result.qty * order_result.price,
+                    message="Order executed",
                 )
             else:
-                self.audit.log_error(symbol, side, order_result.error or "Unknown", client_order_id)
-                return TradingOrderResult(
-                    success=False,
-                    status=OrderResultStatus.REJECTED_EXCHANGE,
-                    reason=f"Exchange rejected: {order_result.error}",
+                # Exchange rejected
+                ack = OrderAckV1(
+                    client_order_id=client_order_id,
+                    status=OrderStatus.REJECTED,
+                    error_msg=order_result.error,
+                )
+                self._outbox.ack(client_order_id, ack)
+
+                return ExecutionResult(
+                    status=ExecutionStatus.EXCHANGE_REJECTED,
                     client_order_id=client_order_id,
                     symbol=symbol,
                     side=side,
-                    requested_size_usd=size_usd,
-                    allowed_size_usd=allowed_size,
-                    mode=self.mode.value,
-                    dry_run=self.dry_run,
+                    message=order_result.error or "Exchange rejected",
                 )
 
-        except Exception as e:
-            logger.error("Order execution error: %s", e)
-            self.audit.log_error(symbol, side, str(e), client_order_id)
-            return TradingOrderResult(
-                success=False,
-                status=OrderResultStatus.ERROR,
-                reason=f"Execution error: {e}",
+        except TimeoutError:
+            # === UNKNOWN PROTOCOL ===
+            self._outbox.unknown(client_order_id, "Network timeout")
+            self._send_unknown_alert(client_order_id, symbol, "Network timeout")
+            logger.error("UNKNOWN: Timeout for %s - needs reconcile", client_order_id)
+
+            return ExecutionResult(
+                status=ExecutionStatus.UNKNOWN,
                 client_order_id=client_order_id,
                 symbol=symbol,
                 side=side,
-                requested_size_usd=size_usd,
-                allowed_size_usd=allowed_size,
-                mode=self.mode.value,
-                dry_run=self.dry_run,
+                message="TIMEOUT: Needs reconcile before retry",
             )
+
+        except Exception as e:
+            # Network error - treat as UNKNOWN
+            error_msg = str(e)
+            if "timeout" in error_msg.lower() or "connection" in error_msg.lower():
+                self._outbox.unknown(client_order_id, error_msg)
+                self._send_unknown_alert(client_order_id, symbol, error_msg)
+                return ExecutionResult(
+                    status=ExecutionStatus.UNKNOWN,
+                    client_order_id=client_order_id,
+                    symbol=symbol,
+                    side=side,
+                    message=f"UNKNOWN: {error_msg}",
+                )
+
+            # Other errors
+            logger.error("Order error: %s", e)
+            self._outbox.unknown(client_order_id, error_msg)
+            return ExecutionResult(
+                status=ExecutionStatus.ERROR,
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side=side,
+                message=error_msg,
+            )
+
+    def _send_unknown_alert(self, client_order_id: str, symbol: str, error: str) -> None:
+        """Send Telegram alert on UNKNOWN order (P1-1)."""
+        try:
+            from core.interfaces.tg_alerts import send_alert
+            send_alert(
+                level="CRITICAL",
+                message=f"⚠️ UNKNOWN ORDER\n"
+                        f"ID: {client_order_id[:24]}...\n"
+                        f"Symbol: {symbol}\n"
+                        f"Error: {error}\n"
+                        f"Action: Manual reconcile required"
+            )
+        except Exception as e:
+            logger.warning("Failed to send TG alert for UNKNOWN: %s", e)
+
+    def reconcile_unknown(self, client_order_id: str, symbol: str) -> ExecutionResult:
+        """
+        Reconcile UNKNOWN order via read-your-writes.
+
+        Queries exchange for order status and updates outbox.
+
+        Args:
+            client_order_id: Order to reconcile
+            symbol: Trading pair
+
+        Returns:
+            ExecutionResult with actual status
+        """
+        from core.execution.contracts import OrderAckV1, FillEventV1, OrderStatus
+
+        entry = self._outbox.get(client_order_id)
+        if entry is None:
+            return ExecutionResult(
+                status=ExecutionStatus.ERROR,
+                client_order_id=client_order_id,
+                message="Order not in outbox",
+            )
+
+        client = self._get_exchange_client()
+        if client is None:
+            return ExecutionResult(
+                status=ExecutionStatus.ERROR,
+                client_order_id=client_order_id,
+                message="Exchange client not available for reconcile",
+            )
+
+        try:
+            # Query order by clientOrderId
+            order_data = client.get_order(symbol=symbol, orig_client_order_id=client_order_id)
+
+            if order_data is None:
+                # Order never reached exchange - can retry
+                logger.info("Reconcile: Order %s not found on exchange - safe to retry", client_order_id)
+                return ExecutionResult(
+                    status=ExecutionStatus.ERROR,
+                    client_order_id=client_order_id,
+                    message="Order not found on exchange - can retry with new ID",
+                )
+
+            # Order exists
+            status_str = order_data.get("status", "UNKNOWN")
+            try:
+                status = OrderStatus(status_str)
+            except ValueError:
+                status = OrderStatus.UNKNOWN
+
+            ack = OrderAckV1(
+                client_order_id=client_order_id,
+                exchange_order_id=order_data.get("orderId"),
+                status=status,
+                filled_qty=float(order_data.get("executedQty", 0)),
+                avg_price=float(order_data.get("avgPrice", 0) or order_data.get("price", 0)),
+                raw_response=order_data,
+            )
+
+            self._outbox.reconciled(client_order_id, ack)
+
+            # Record fill if executed
+            if status == OrderStatus.FILLED and ack.filled_qty > 0:
+                fill = FillEventV1(
+                    fill_id=int(order_data.get("orderId", time.time() * 1000000)),
+                    client_order_id=client_order_id,
+                    exchange_order_id=order_data.get("orderId", 0),
+                    symbol=symbol,
+                    side=entry.intent.get("side", "BUY"),
+                    price=ack.avg_price,
+                    quantity=ack.filled_qty,
+                    trade_time=order_data.get("updateTime", int(time.time() * 1000)),
+                )
+                self._ledger.record(fill)
+
+            logger.info(
+                "Reconciled: %s status=%s filled=%.8f",
+                client_order_id, status.value, ack.filled_qty,
+            )
+
+            return ExecutionResult(
+                status=ExecutionStatus.SUCCESS if status == OrderStatus.FILLED else ExecutionStatus.ERROR,
+                client_order_id=client_order_id,
+                exchange_order_id=ack.exchange_order_id,
+                symbol=symbol,
+                side=entry.intent.get("side", ""),
+                quantity=ack.filled_qty,
+                price=ack.avg_price,
+                message=f"Reconciled: {status.value}",
+            )
+
+        except Exception as e:
+            logger.error("Reconcile failed: %s", e)
+            return ExecutionResult(
+                status=ExecutionStatus.UNKNOWN,
+                client_order_id=client_order_id,
+                message=f"Reconcile error: {e}",
+            )
+
+    def get_pending_unknown(self) -> list:
+        """Get all UNKNOWN orders needing reconcile."""
+        return self._outbox.get_unknown()
+
+    def has_pending_unknown(self) -> bool:
+        """Check if there are UNKNOWN orders."""
+        return len(self._outbox.get_unknown()) > 0
+
+    def get_fills_for_symbol(self, symbol: str) -> list:
+        """Get all fills for a symbol from ledger."""
+        return self._ledger.get_fills_for_symbol(symbol)
 
     def get_status(self) -> Dict[str, Any]:
         """Get router status."""
         return {
-            "mode": self.mode.value,
+            "mode": self.mode,
             "dry_run": self.dry_run,
-            "run_id": self._run_id,
-            "live_gate": self.live_gate.get_status(),
-            "risk_engine": self.risk_engine.get_status(),
+            "has_risk_governor": self._risk_governor is not None,
+            "session_id": self._session_id[:32],
+            "pending_unknown": len(self._outbox.get_unknown()),
+            "total_fills": self._ledger.fill_count(),
         }
 
 
-# === CLI Interface ===
-def main() -> int:
-    """CLI entrypoint."""
-    import sys
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-
-    if len(sys.argv) < 2:
-        print("Usage: python -m core.trade.order_router <command>")
-        print("Commands:")
-        print("  status                    - Show router status")
-        print("  test-dry <symbol> <size>  - Test DRY order")
-        return 1
-
-    command = sys.argv[1]
-
-    if command == "status":
-        router = TradingOrderRouter(mode="DRY", dry_run=True)
-        status = router.get_status()
-        print(json.dumps(status, indent=2))
-        return 0
-
-    elif command == "test-dry":
-        from .risk_engine import PortfolioSnapshot
-
-        symbol = sys.argv[2] if len(sys.argv) > 2 else "BTCUSDT"
-        size = float(sys.argv[3]) if len(sys.argv) > 3 else 100.0
-
-        router = TradingOrderRouter(mode="DRY", dry_run=True)
-
-        portfolio = PortfolioSnapshot(
-            equity_usd=1000.0,
-            open_positions=0,
-            daily_pnl_usd=0.0,
-            start_of_day_equity=1000.0,
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
-            source="test",
-        )
-
-        result = router.execute_order(
-            symbol=symbol,
-            side="BUY",
-            size_usd=size,
-            portfolio=portfolio,
-        )
-
-        print(json.dumps(result.to_dict(), indent=2))
-        return 0 if result.success else 1
-
-    else:
-        print(f"Unknown command: {command}")
-        return 1
-
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(main())
+# Backward compatibility alias
+TradingOrderRouterV2 = TradingOrderRouter

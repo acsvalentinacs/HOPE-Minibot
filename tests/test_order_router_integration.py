@@ -1,17 +1,20 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T07:30:00Z
-# Purpose: Integration tests for OrderRouter v2 with Trading Safety Core
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-28T10:30:00Z
+# Purpose: Integration tests for OrderRouter with Trading Safety Core
 # Security: No network calls, all mocked
 # === END SIGNATURE ===
 """
-Integration Tests for OrderRouter v2.
+Integration Tests for OrderRouter.
 
 Tests:
 - Duplicate order detection via Outbox
 - UNKNOWN blocks retry until reconcile
 - FillsLedger records only actual executions
 - State hydration from ledger
+- RiskGovernor requirement for non-DRY mode
 """
 import pytest
 import tempfile
@@ -19,9 +22,13 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 from datetime import datetime, timezone
 
+# Import modules first to enable patching
+import core.trade.order_router as order_router_module
+import core.trade.state_hydration as state_hydration_module
 
-class TestOrderRouterV2Integration:
-    """Integration tests for OrderRouter v2."""
+
+class TestOrderRouterIntegration:
+    """Integration tests for OrderRouter."""
 
     @pytest.fixture
     def temp_state_dir(self, tmp_path):
@@ -48,13 +55,13 @@ class TestOrderRouterV2Integration:
 
     def test_duplicate_order_blocked(self, temp_state_dir):
         """Повторный ордер с тем же ID = DUPLICATE."""
-        # Patch state directories
-        with patch('core.trade.order_router_v2.STATE_DIR', temp_state_dir):
-            with patch('core.trade.order_router_v2.ORDERS_DIR', temp_state_dir / "orders"):
-                with patch('core.trade.order_router_v2.FILLS_DIR', temp_state_dir / "fills"):
-                    from core.trade.order_router_v2 import TradingOrderRouterV2, ExecutionStatus
+        # Patch state directories using patch.object
+        with patch.object(order_router_module, 'STATE_DIR', temp_state_dir):
+            with patch.object(order_router_module, 'ORDERS_DIR', temp_state_dir / "orders"):
+                with patch.object(order_router_module, 'FILLS_DIR', temp_state_dir / "fills"):
+                    from core.trade.order_router import TradingOrderRouter, ExecutionStatus
 
-                    router = TradingOrderRouterV2(mode="DRY", dry_run=True)
+                    router = TradingOrderRouter(mode="DRY", dry_run=True)
 
                     # First order
                     result1 = router.execute_order(
@@ -77,14 +84,14 @@ class TestOrderRouterV2Integration:
     def test_different_orders_not_duplicate(self, temp_state_dir):
         """Разные ордера не считаются дубликатами."""
         # Patch all state directories including state_hydration
-        with patch('core.trade.order_router_v2.STATE_DIR', temp_state_dir):
-            with patch('core.trade.order_router_v2.ORDERS_DIR', temp_state_dir / "orders"):
-                with patch('core.trade.order_router_v2.FILLS_DIR', temp_state_dir / "fills"):
-                    with patch('core.trade.state_hydration.ORDERS_DIR', temp_state_dir / "orders"):
-                        with patch('core.trade.state_hydration.FILLS_DIR', temp_state_dir / "fills"):
-                            from core.trade.order_router_v2 import TradingOrderRouterV2, ExecutionStatus
+        with patch.object(order_router_module, 'STATE_DIR', temp_state_dir):
+            with patch.object(order_router_module, 'ORDERS_DIR', temp_state_dir / "orders"):
+                with patch.object(order_router_module, 'FILLS_DIR', temp_state_dir / "fills"):
+                    with patch.object(state_hydration_module, 'ORDERS_DIR', temp_state_dir / "orders"):
+                        with patch.object(state_hydration_module, 'FILLS_DIR', temp_state_dir / "fills"):
+                            from core.trade.order_router import TradingOrderRouter, ExecutionStatus
 
-                            router = TradingOrderRouterV2(mode="DRY", dry_run=True)
+                            router = TradingOrderRouter(mode="DRY", dry_run=True)
 
                             # First order
                             result1 = router.execute_order(
@@ -104,13 +111,13 @@ class TestOrderRouterV2Integration:
 
     def test_fills_recorded_to_ledger(self, temp_state_dir):
         """При FILLED записывается FillEvent в ledger."""
-        with patch('core.trade.order_router_v2.STATE_DIR', temp_state_dir):
-            with patch('core.trade.order_router_v2.ORDERS_DIR', temp_state_dir / "orders"):
-                with patch('core.trade.order_router_v2.FILLS_DIR', temp_state_dir / "fills"):
-                    from core.trade.order_router_v2 import TradingOrderRouterV2
+        with patch.object(order_router_module, 'STATE_DIR', temp_state_dir):
+            with patch.object(order_router_module, 'ORDERS_DIR', temp_state_dir / "orders"):
+                with patch.object(order_router_module, 'FILLS_DIR', temp_state_dir / "fills"):
+                    from core.trade.order_router import TradingOrderRouter
                     from core.execution.fills_ledger import FillsLedger
 
-                    router = TradingOrderRouterV2(mode="DRY", dry_run=True)
+                    router = TradingOrderRouter(mode="DRY", dry_run=True)
 
                     # Execute order
                     result = router.execute_order(
@@ -126,6 +133,14 @@ class TestOrderRouterV2Integration:
                     # This test verifies the ledger is accessible
                     assert isinstance(fills, list)
 
+    def test_non_dry_requires_risk_governor(self):
+        """Non-DRY mode без RiskGovernor = RuntimeError."""
+        with pytest.raises(RuntimeError) as exc_info:
+            from core.trade.order_router import TradingOrderRouter
+            TradingOrderRouter(mode="TESTNET", dry_run=False, risk_governor=None)
+
+        assert "RiskGovernor required" in str(exc_info.value)
+
 
 class TestStateHydration:
     """Tests for state hydration."""
@@ -137,8 +152,8 @@ class TestStateHydration:
         orders_dir.mkdir()
         fills_dir.mkdir()
 
-        with patch('core.trade.state_hydration.ORDERS_DIR', orders_dir):
-            with patch('core.trade.state_hydration.FILLS_DIR', fills_dir):
+        with patch.object(state_hydration_module, 'ORDERS_DIR', orders_dir):
+            with patch.object(state_hydration_module, 'FILLS_DIR', fills_dir):
                 from core.trade.state_hydration import StateHydrator
 
                 hydrator = StateHydrator()
@@ -154,8 +169,8 @@ class TestStateHydration:
         orders_dir.mkdir()
         fills_dir.mkdir()
 
-        with patch('core.trade.state_hydration.ORDERS_DIR', orders_dir):
-            with patch('core.trade.state_hydration.FILLS_DIR', fills_dir):
+        with patch.object(state_hydration_module, 'ORDERS_DIR', orders_dir):
+            with patch.object(state_hydration_module, 'FILLS_DIR', fills_dir):
                 from core.trade.state_hydration import StateHydrator
                 from core.execution.fills_ledger import FillsLedger
                 from core.execution.contracts import FillEventV1

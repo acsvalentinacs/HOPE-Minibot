@@ -1,7 +1,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T07:15:00Z
-# Purpose: State hydration from FillsLedger on restart
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-28T10:10:00Z
+# Purpose: State hydration from FillsLedger on restart with auto-reconcile
 # Security: Fail-closed, positions calculated only from fills
 # === END SIGNATURE ===
 """
@@ -20,7 +22,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.trade.order_router import TradingOrderRouter
 
 logger = logging.getLogger("trade.state_hydration")
 
@@ -189,6 +194,96 @@ class StateHydrator:
     def get_unknown_orders(self) -> list:
         """Get UNKNOWN orders needing reconcile."""
         return self._outbox.get_unknown()
+
+    def hydrate_with_reconcile(self, router: "TradingOrderRouter") -> HydratedState:
+        """
+        Hydrate state with automatic UNKNOWN reconciliation.
+
+        CRITICAL: This method actually reconciles UNKNOWN orders via exchange API.
+        Must be called on startup before trading resumes.
+
+        Args:
+            router: TradingOrderRouter with exchange client for reconciliation
+
+        Returns:
+            HydratedState with all UNKNOWN resolved
+
+        Raises:
+            RuntimeError: If reconciliation fails (fail-closed)
+        """
+        # First hydration to get UNKNOWN list
+        state = self.hydrate(reconcile_unknown=False)
+
+        if not state.needs_reconcile:
+            logger.info("No UNKNOWN orders to reconcile")
+            return state
+
+        # Get UNKNOWN orders
+        unknown_orders = self._outbox.get_unknown()
+        logger.warning(
+            "Reconciling %d UNKNOWN orders on startup...",
+            len(unknown_orders),
+        )
+
+        reconcile_errors = []
+
+        for entry in unknown_orders:
+            client_order_id = entry.client_order_id
+            symbol = self._extract_symbol_from_entry(entry)
+
+            logger.info("Reconciling: %s (%s)", client_order_id[:24], symbol)
+
+            try:
+                result = router.reconcile_unknown(client_order_id, symbol)
+
+                if result.needs_reconcile:
+                    # Still UNKNOWN after reconcile attempt
+                    reconcile_errors.append(
+                        f"{client_order_id[:20]}: still UNKNOWN after reconcile"
+                    )
+                else:
+                    logger.info(
+                        "Reconciled %s: status=%s",
+                        client_order_id[:24], result.status.value,
+                    )
+
+            except Exception as e:
+                error_msg = f"{client_order_id[:20]}: {e}"
+                logger.error("Failed to reconcile: %s", error_msg)
+                reconcile_errors.append(error_msg)
+
+        # Fail-closed: if any reconcile failed, raise error
+        if reconcile_errors:
+            raise RuntimeError(
+                f"CRITICAL: Failed to reconcile {len(reconcile_errors)} orders:\n"
+                + "\n".join(f"  - {e}" for e in reconcile_errors)
+            )
+
+        # Re-hydrate after reconciliation
+        final_state = self.hydrate(reconcile_unknown=False)
+
+        if final_state.needs_reconcile:
+            raise RuntimeError(
+                f"CRITICAL: Still have {final_state.unknown_count} UNKNOWN "
+                "orders after reconciliation"
+            )
+
+        logger.info(
+            "Reconciliation complete: %d positions, %d fills",
+            len(final_state.positions), final_state.total_fills,
+        )
+
+        return final_state
+
+    def _extract_symbol_from_entry(self, entry) -> str:
+        """Extract symbol from outbox entry."""
+        # Try to get from intent dict
+        intent = getattr(entry, 'intent', None)
+        if intent and isinstance(intent, dict):
+            return intent.get('symbol', 'BTCUSDT')
+
+        # Fallback: try to parse from client_order_id or use default
+        return 'BTCUSDT'
 
 
 def hydrate_on_startup() -> HydratedState:

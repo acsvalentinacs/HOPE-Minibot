@@ -2,8 +2,8 @@
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T16:10:00Z
 # Modified by: Claude (opus-4)
-# Modified at (UTC): 2026-01-25T17:40:00Z
-# Purpose: LIVE Trading Package - fail-closed trading infrastructure (+delisting protection)
+# Modified at (UTC): 2026-01-28T10:35:00Z
+# Purpose: LIVE Trading Package - fail-closed trading infrastructure with Safety Core
 # === END SIGNATURE ===
 """
 HOPE LIVE Trading Package.
@@ -23,7 +23,7 @@ Direct network calls in this package are FORBIDDEN.
 from .live_gate import LiveGate, LiveGateResult
 from .risk_engine import TradingRiskEngine, TradingRiskLimits
 from .order_audit import OrderAudit, AuditEvent
-from .order_router import TradingOrderRouter, TradingOrderResult
+from .order_router import TradingOrderRouter, ExecutionResult
 from .delisting_detector import DelistingDetector, DelistingEvent
 
 __all__ = [
@@ -34,7 +34,7 @@ __all__ = [
     "OrderAudit",
     "AuditEvent",
     "TradingOrderRouter",
-    "TradingOrderResult",
+    "ExecutionResult",
     "DelistingDetector",
     "DelistingEvent",
 ]
