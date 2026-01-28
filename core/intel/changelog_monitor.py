@@ -1,8 +1,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T01:00:00Z
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-28T22:05:00Z
 # Purpose: Binance Changelog Monitor - detect contract-breaking changes
 # Security: Fail-closed, any breaking change = CRITICAL event
+# Change: Added acknowledgment check to bypass known-verified changes
 # === END SIGNATURE ===
 """
 Binance Changelog Monitor.
@@ -44,6 +47,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Import acknowledgment checker
+from core.contracts.breaking_change_ack import get_acknowledged_ids
+
 logger = logging.getLogger("intel.changelog")
 
 # SSoT paths
@@ -74,6 +80,7 @@ class EventType(str, Enum):
 @dataclass
 class ContractBreakingChange:
     """Known contract-breaking change."""
+    change_id: str  # Unique ID for acknowledgment: "SIGNATURE_CHANGE_2026-01-15"
     event_type: EventType
     effective_date: str  # ISO format
     effective_timestamp: float  # Unix timestamp
@@ -96,6 +103,7 @@ class ChangelogEvent:
     source_sha256: str = ""
     detected_at_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     schema_version: str = "changelog_event.v1"
+    change_id: Optional[str] = None  # For acknowledgment matching
 
     @property
     def is_critical(self) -> bool:
@@ -126,6 +134,7 @@ class ChangelogEvent:
 # === KNOWN BREAKING CHANGES (hardcoded for reliability) ===
 KNOWN_BREAKING_CHANGES: List[ContractBreakingChange] = [
     ContractBreakingChange(
+        change_id="ENDPOINT_REMOVAL_2026-02-20",
         event_type=EventType.ENDPOINT_REMOVAL,
         effective_date="2026-02-20T07:00:00Z",
         effective_timestamp=1771484400.0,
@@ -142,6 +151,7 @@ KNOWN_BREAKING_CHANGES: List[ContractBreakingChange] = [
         source_url="https://developers.binance.com/docs/binance-spot-api-docs/CHANGELOG",
     ),
     ContractBreakingChange(
+        change_id="FILTER_CHANGE_2026-02-11",
         event_type=EventType.FILTER_CHANGE,
         effective_date="2026-02-11T07:00:00Z",
         effective_timestamp=1770706800.0,
@@ -151,6 +161,7 @@ KNOWN_BREAKING_CHANGES: List[ContractBreakingChange] = [
         source_url="https://developers.binance.com/docs/binance-spot-api-docs/CHANGELOG",
     ),
     ContractBreakingChange(
+        change_id="SIGNATURE_CHANGE_2026-01-15",
         event_type=EventType.SIGNATURE_CHANGE,
         effective_date="2026-01-15T07:00:00Z",
         effective_timestamp=1768467600.0,
@@ -275,6 +286,7 @@ class ChangelogMonitor:
             effective_date=change.effective_date,
             affected_endpoints=change.affected_endpoints,
             source_sha256=f"sha256:{hashlib.sha256(change.source_url.encode()).hexdigest()[:16]}",
+            change_id=change.change_id,
         )
 
     def _fetch_live_changelog(self) -> List[ChangelogEvent]:
@@ -396,11 +408,31 @@ class ChangelogMonitor:
         """
         Check if trading should be blocked due to breaking changes.
 
+        Checks acknowledgments: if a change is acknowledged with valid checksum,
+        it won't block trading.
+
         Returns:
-            (should_block, blocking_event) - True if CRITICAL change is imminent
+            (should_block, blocking_event) - True if CRITICAL change is imminent and NOT acknowledged
         """
+        # Load acknowledged change IDs (valid checksums only)
+        try:
+            acknowledged_ids = get_acknowledged_ids()
+            logger.debug("Loaded %d acknowledged changes", len(acknowledged_ids))
+        except Exception as e:
+            # Fail-open on ack load error - just log and proceed with blocking
+            logger.warning("Failed to load acknowledgments: %s", e)
+            acknowledged_ids = set()
+
         for event in self.check():
             if event.is_critical and event.is_effective_soon:
+                # Check if this change is acknowledged
+                if event.change_id and event.change_id in acknowledged_ids:
+                    logger.info(
+                        "Breaking change %s is ACKNOWLEDGED - not blocking",
+                        event.change_id
+                    )
+                    continue
+                # Not acknowledged - block
                 return True, event
         return False, None
 
