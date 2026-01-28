@@ -103,17 +103,23 @@ class StrategyOrchestrator:
         return OrchestratorDecision(action=DecisionAction.HOLD, signal=None, strategy_name='orchestrator', regime=regime, confidence=0.0, reason='NO_SIGNAL', timestamp=ts)
     
     def _detect_regime(self, market_data: MarketData) -> RegimeResult:
+        """Detect market regime using O(n) batch computation."""
         try:
-            atr_vals, ema_vals = [], []
-            for i in range(15, len(market_data.closes)):
-                atr = TechnicalIndicators.atr(market_data.highs[:i+1], market_data.lows[:i+1], market_data.closes[:i+1], period=14)
-                atr_vals.append(atr)
-                ema = TechnicalIndicators.ema(market_data.closes[:i+1], period=20)
-                ema_vals.append(ema)
-            if len(atr_vals) < 50:
+            # O(n) batch computation instead of O(n²) loop
+            atr_series = TechnicalIndicators.atr_series(
+                market_data.highs, market_data.lows, market_data.closes, period=14
+            )
+            ema_series = TechnicalIndicators.ema_series(market_data.closes, period=20)
+
+            if len(atr_series) < 50 or len(ema_series) < 50:
                 return RegimeResult(regime=Regime.UNKNOWN, atr_pct=0.0, slope=0.0, confidence=0.0, reason='INSUFFICIENT')
+
+            # Use last 50 values for regime detection
+            atr_vals = list(atr_series[-50:])
+            ema_vals = list(ema_series[-50:])
+
             return detect_regime(closes=market_data.closes, atr_values=atr_vals, ema_values=ema_vals)
-        except:
+        except Exception:
             return RegimeResult(regime=Regime.UNKNOWN, atr_pct=0.0, slope=0.0, confidence=0.0, reason='ERROR')
     
     def _get_strategies_for_regime(self, regime: Regime) -> List[Tuple[str, BaseStrategy]]:

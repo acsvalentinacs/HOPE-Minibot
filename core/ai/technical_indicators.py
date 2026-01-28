@@ -211,3 +211,52 @@ class TechnicalIndicators:
     @staticmethod
     def ema(closes: np.ndarray, period: int) -> float:
         return TechnicalIndicators._ema(closes, period)
+
+    @staticmethod
+    def atr_series(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> np.ndarray:
+        """
+        Compute ATR for all bars in O(n) time.
+
+        Returns array of ATR values starting from bar `period`.
+        Result length = len(closes) - period
+        """
+        n = len(closes)
+        if n < period + 1:
+            return np.array([])
+
+        # Compute True Range for all bars (vectorized)
+        high_low = highs[1:] - lows[1:]
+        high_close = np.abs(highs[1:] - closes[:-1])
+        low_close = np.abs(lows[1:] - closes[:-1])
+        tr = np.maximum(high_low, np.maximum(high_close, low_close))
+
+        # Compute ATR using exponential smoothing
+        atr_values = np.zeros(len(tr) - period + 1)
+        atr_values[0] = np.mean(tr[:period])
+
+        alpha = 1.0 / period  # Wilder's smoothing
+        for i in range(1, len(atr_values)):
+            atr_values[i] = atr_values[i-1] * (1 - alpha) + tr[period - 1 + i] * alpha
+
+        return atr_values
+
+    @staticmethod
+    def ema_series(closes: np.ndarray, period: int) -> np.ndarray:
+        """
+        Compute EMA for all bars in O(n) time.
+
+        Returns array of EMA values starting from bar `period-1`.
+        Result length = len(closes) - period + 1
+        """
+        n = len(closes)
+        if n < period:
+            return np.array([])
+
+        ema_values = np.zeros(n - period + 1)
+        ema_values[0] = np.mean(closes[:period])
+
+        multiplier = 2.0 / (period + 1)
+        for i in range(1, len(ema_values)):
+            ema_values[i] = (closes[period - 1 + i] - ema_values[i-1]) * multiplier + ema_values[i-1]
+
+        return ema_values
