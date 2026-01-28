@@ -426,13 +426,15 @@ class BacktestEngine:
             entry_time=timestamp,
         )
 
-        entry_cost = size * entry_price * self._config.commission_pct
-        self._equity -= entry_cost  # Deduct commission
+        # Deduct principal (position value) + commission from equity
+        position_value = size * entry_price
+        entry_commission = position_value * self._config.commission_pct
+        self._equity -= (position_value + entry_commission)
 
         open_pos = _OpenPosition(
             position=position,
             entry_bar=bar_idx,
-            entry_cost=entry_cost,
+            entry_cost=entry_commission,
         )
 
         self._positions.append(open_pos)

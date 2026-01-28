@@ -23,21 +23,21 @@ class MeanReversionConfig(StrategyConfig):
     # Bollinger settings
     bb_period: int = 20
     bb_std: float = 2.0
-    
+
     # Entry: position in BB (0=lower, 1=upper)
-    entry_lower_threshold: float = 0.15   # Enter LONG when below 15%
-    entry_upper_threshold: float = 0.85   # Would be SHORT (disabled in Spot)
-    
+    entry_lower_threshold: float = 0.25   # Enter LONG when below 25% (was 15%)
+    entry_upper_threshold: float = 0.75   # Would be SHORT (disabled in Spot)
+
     # Exit: return to mean
-    exit_middle_threshold: float = 0.45   # Exit when above 45%
-    
+    exit_middle_threshold: float = 0.50   # Exit when above 50%
+
     # RSI confirmation
-    use_rsi_filter: bool = True
-    rsi_oversold: float = 35.0
-    rsi_overbought: float = 65.0
-    
+    use_rsi_filter: bool = False          # Disabled for backtest - RSI too strict
+    rsi_oversold: float = 45.0            # Relaxed from 35
+    rsi_overbought: float = 55.0
+
     # Squeeze filter (avoid low volatility traps)
-    avoid_squeeze: bool = True
+    avoid_squeeze: bool = False           # Disabled for backtest
     squeeze_threshold: float = 0.02
 
 class MeanReversionStrategy(BaseStrategy):

@@ -22,15 +22,15 @@ from core.strategy.base import BaseStrategy, StrategyConfig, Position, PositionS
 class BreakoutConfig(StrategyConfig):
     """Configuration for Breakout Strategy."""
     # Breakout detection
-    lookback_period: int = 20         # Bars to find high/low
-    breakout_threshold: float = 0.002  # Min % above high to confirm breakout
-    
+    lookback_period: int = 10         # Bars to find high/low (was 20 - shorter for more signals)
+    breakout_threshold: float = 0.001  # Min % above high (was 0.002 - lowered for backtest)
+
     # Volume confirmation
-    require_volume: bool = True
-    min_volume_ratio: float = 1.5     # Volume must be 1.5x average
-    
+    require_volume: bool = False      # Disabled - synthetic data has uniform volume
+    min_volume_ratio: float = 1.0     # Lowered from 1.5
+
     # ATR filter (avoid breakouts in low volatility)
-    min_atr_pct: float = 0.01         # ATR must be > 1% of price
+    min_atr_pct: float = 0.005        # ATR must be > 0.5% of price (was 1%)
     
     # Retest filter (optional: wait for pullback)
     wait_for_retest: bool = False

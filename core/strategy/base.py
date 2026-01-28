@@ -58,15 +58,15 @@ class StrategyConfig:
 class BaseStrategy(ABC):
     def __init__(self, config: Optional[StrategyConfig] = None):
         self.config = config or StrategyConfig()
+        self._positions: List[Position] = []
+        self._trade_history: List[TradeResult] = []
+        self._capital = 10000.0
 
     @property
     def name(self) -> str:
         """Strategy name for orchestrator registration (e.g., 'momentum' from 'MomentumStrategy')."""
         class_name = self.__class__.__name__.lower()
         return class_name.replace('strategy', '') if class_name.endswith('strategy') else class_name
-        self._positions: List[Position] = []
-        self._trade_history: List[TradeResult] = []
-        self._capital = 10000.0
     
     @property
     def positions(self) -> List[Position]:

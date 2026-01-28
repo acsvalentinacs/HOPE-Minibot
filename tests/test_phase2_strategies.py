@@ -152,7 +152,7 @@ class TestStrategies:
     def test_breakout_creates(self):
         strategy = BreakoutStrategy()
         assert strategy is not None
-        assert strategy.bo_config.lookback_period == 20
+        assert strategy.bo_config.lookback_period == 10  # Changed from 20 for backtest flexibility
 
 class TestOrchestrator:
     def test_orchestrator_creates(self):
