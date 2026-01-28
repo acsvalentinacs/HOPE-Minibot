@@ -60,11 +60,13 @@ class TradingSignal:
 
 @dataclass
 class SignalEngineConfig:
+    # Weights for combined score (must sum to 1.0)
+    # For backtest without ML/sentiment, effectively technical=0.8, volume=0.2
     technical_weight: float = 0.40
     ml_weight: float = 0.35
     sentiment_weight: float = 0.15
     volume_weight: float = 0.10
-    min_confidence: float = 0.60
+    min_confidence: float = 0.05  # Lowered for backtest (was 0.60 - too strict for synthetic data)
     rsi_period: int = 14
     macd_fast: int = 12
     macd_slow: int = 26

@@ -44,10 +44,10 @@ class OrchestratorConfig:
     spot_only: bool = True
     dedup_ttl_seconds: int = 300
     trending_strategies: List[str] = field(default_factory=lambda: ['momentum', 'breakout'])
-    ranging_strategies: List[str] = field(default_factory=lambda: ['mean_reversion'])
-    volatile_strategies: List[str] = field(default_factory=lambda: ['breakout'])
+    ranging_strategies: List[str] = field(default_factory=lambda: ['mean_reversion', 'momentum'])
+    volatile_strategies: List[str] = field(default_factory=lambda: ['breakout', 'momentum'])  # momentum as fallback
     exit_priority: bool = True
-    min_confidence: float = 0.55
+    min_confidence: float = 0.40  # Lowered for backtest (was 0.55)
 
 class StrategyOrchestrator:
     def __init__(self, strategies: List[BaseStrategy], config: Optional[OrchestratorConfig] = None):

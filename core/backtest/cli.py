@@ -51,11 +51,12 @@ logger = logging.getLogger("backtest.cli")
 
 
 # === Strategy Registry ===
+# Note: min_confidence=0.02 for backtest with synthetic data (signals are weak)
 
 STRATEGIES = {
-    "momentum": lambda: MomentumStrategy(MomentumConfig()),
-    "breakout": lambda: BreakoutStrategy(BreakoutConfig()),
-    "mean_reversion": lambda: MeanReversionStrategy(MeanReversionConfig()),
+    "momentum": lambda: MomentumStrategy(MomentumConfig(min_confidence=0.02)),
+    "breakout": lambda: BreakoutStrategy(BreakoutConfig(min_confidence=0.02)),
+    "mean_reversion": lambda: MeanReversionStrategy(MeanReversionConfig(min_confidence=0.02)),
 }
 
 
@@ -112,7 +113,10 @@ def run_backtest(
 ) -> BacktestResult:
     """Run backtest for a single strategy."""
     strategy = create_strategy(strategy_name)
-    orchestrator = StrategyOrchestrator([strategy])
+    # Use backtest-appropriate config: lower min_confidence for synthetic data
+    from core.strategy.orchestrator import OrchestratorConfig
+    orch_config = OrchestratorConfig(min_confidence=0.02)  # Low for backtest
+    orchestrator = StrategyOrchestrator([strategy], orch_config)
     engine = BacktestEngine(orchestrator, config)
 
     start_time = time.time()

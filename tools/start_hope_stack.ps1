@@ -40,7 +40,8 @@ Set-StrictMode -Version Latest
 
 # === CONFIGURATION (SSoT) ===
 $ROOT = 'C:\Users\kirillDev\Desktop\TradingBot\minibot'
-$VENV_PYTHON = Join-Path $ROOT '.venv\Scripts\python.exe'
+$VENV_ROOT = 'C:\Users\kirillDev\Desktop\TradingBot'
+$VENV_PYTHON = Join-Path $VENV_ROOT '.venv\Scripts\python.exe'
 $SYSTEM_PYTHON = 'python'
 $ENV_FILE = 'C:\secrets\hope.env'
 $ALLOWLIST = Join-Path $ROOT 'AllowList.txt'

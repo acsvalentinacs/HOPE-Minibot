@@ -80,7 +80,7 @@ class BacktestConfig:
     spot_only: bool = True            # Only LONG positions (Spot mode)
 
     # Data requirements
-    min_candles: int = 50             # Minimum candles for regime detection
+    min_candles: int = 70             # Minimum candles for regime detection (need 50 ATR values + 15 warmup + 5 buffer)
     timeframe: str = "15m"            # Expected timeframe
 
     # Risk management
