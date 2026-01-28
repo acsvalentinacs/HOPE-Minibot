@@ -1,4 +1,12 @@
-﻿from __future__ import annotations
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-28T12:30:00Z
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-28T12:30:00Z
+# Purpose: Position storage v5 - atomic JSON read/write for exec_positions_v5.json
+# P0 FIX: Changed import from core.types to core.type_defs (A2 fix)
+# === END SIGNATURE ===
+from __future__ import annotations
 
 import json
 import logging
@@ -7,7 +15,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
-from core.types import PositionInfo
+from core.type_defs import PositionInfo
 
 logger = logging.getLogger(__name__)
 
