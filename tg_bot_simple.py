@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-26T10:30:00Z
-# v2.3.2: Smart executor - blocks start without tunnel, prevents error spam
+# Modified at: 2026-01-28T13:30:00Z
+# v2.3.3: Health heartbeat for PowerShell detection (health_tgbot.json)
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -118,8 +118,41 @@ PS_START_NOW = TOOLS_DIR / "start_hope_stack_now.ps1"
 PS_LAUNCHER_V2 = TOOLS_DIR / "launch_hope_stack_pidtruth_v2.ps1"
 
 HEALTH_JSON = STATE_DIR / "health_v5.json"
+# v2.3.3: TGBOT health must be in minibot/state/ for PowerShell detection
+MINIBOT_STATE_DIR = ROOT / "minibot" / "state" if not (ROOT / "core").exists() else ROOT / "state"
+HEALTH_TGBOT = MINIBOT_STATE_DIR / "health_tgbot.json"
 ENGINE_STDERR = LOGS_DIR / "engine_stderr.log"
 STOP_FLAG = ROOT / "STOP.flag"
+
+# === TGBOT HEALTH HEARTBEAT (v2.3.3) ===
+_TGBOT_START_TIME: float = time.time()
+_TGBOT_HEALTH_INTERVAL: int = 10  # seconds
+
+
+def _write_tgbot_health() -> None:
+    """Write health_tgbot.json for PowerShell detection."""
+    try:
+        from datetime import datetime, timezone
+        HEALTH_TGBOT.parent.mkdir(parents=True, exist_ok=True)
+        health = {
+            "component": "TGBOT",
+            "version": "2.3.3",
+            "hb_ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "uptime_sec": int(time.time() - _TGBOT_START_TIME),
+            "pid": os.getpid(),
+        }
+        tmp = HEALTH_TGBOT.with_suffix(".tmp")
+        tmp.write_text(json.dumps(health, indent=2), encoding="utf-8")
+        tmp.replace(HEALTH_TGBOT)
+    except Exception:
+        pass  # Fail silently - health is non-critical
+
+
+async def _tgbot_heartbeat_task() -> None:
+    """Background task: update health_tgbot.json every 10 seconds."""
+    while True:
+        _write_tgbot_health()
+        await asyncio.sleep(_TGBOT_HEALTH_INTERVAL)
 
 HUNTERS_SIGNALS_CANDIDATES = [
     STATE_DIR / "hunters_signals_scored.jsonl",
@@ -2329,6 +2362,16 @@ def main() -> None:
     _hope_venv_guard(root)
     _hope_acquire_pid_lock(root / "state" / "pids" / "tg_bot_simple.lock")
     _hope_install_log_redaction()
+
+    # v2.3.3: Start heartbeat task for PowerShell detection
+    _write_tgbot_health()  # Write initial health immediately
+    logger.info("health_tgbot.json created: %s", HEALTH_TGBOT)
+
+    # Schedule heartbeat as background task
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(_tgbot_heartbeat_task())
+
     app.run_polling(close_loop=False)
 
 
