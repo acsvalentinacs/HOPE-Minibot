@@ -1,17 +1,22 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T07:25:00Z
-# Purpose: HOPE Stack Orchestrator - единая точка запуска торговой системы
-# Security: Fail-closed pre-flight, watchdog, graceful shutdown
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-28T21:00:00Z
+# Purpose: HOPE Stack Orchestrator v2.0 - Smart Watchdog with heartbeat check + Telegram alerts
+# Security: Fail-closed pre-flight, heartbeat validation, graceful shutdown
 # === END SIGNATURE ===
 
 <#
 .SYNOPSIS
-    HOPE Stack Orchestrator - единая точка запуска торговой системы
+    HOPE Stack Orchestrator v2.0 - Smart Watchdog
 
 .DESCRIPTION
-    Запускает HOPE Trade Core и HOPE Control Plane (TgBot) как изолированные процессы
-    с мониторингом здоровья (Watchdog)
+    Запускает HOPE Trade Core и TgBot с умным мониторингом:
+    - Heartbeat age validation (не только HasExited)
+    - Telegram alerts при сбоях
+    - Restart backoff (защита от infinite loop)
+    - Graceful shutdown coordination
 
 .PARAMETER Mode
     Торговый режим: DRY, TESTNET, MAINNET
@@ -22,8 +27,12 @@
 .PARAMETER AutoRestart
     Автоматический перезапуск при падении
 
+.PARAMETER NoAlerts
+    Отключить Telegram alerts
+
 .EXAMPLE
-    .\start_hope_stack.ps1 -Mode TESTNET
+    .\start_hope_stack.ps1 -Mode DRY -AutoRestart
+    .\start_hope_stack.ps1 -Mode TESTNET -AutoRestart -NoAlerts
 #>
 
 param(
@@ -31,7 +40,8 @@ param(
     [string]$Mode = 'DRY',
 
     [switch]$NoTgBot,
-    [switch]$AutoRestart
+    [switch]$AutoRestart,
+    [switch]$NoAlerts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,8 +56,181 @@ $SYSTEM_PYTHON = 'python'
 $ENV_FILE = 'C:\secrets\hope.env'
 $ALLOWLIST = Join-Path $ROOT 'AllowList.txt'
 
+# === HEALTH CHECK CONFIG ===
+$HEALTH_CORE = Join-Path $ROOT 'state\health_v5.json'
+$HEALTH_TGBOT = Join-Path $ROOT 'state\health_tgbot.json'
+$STALE_THRESHOLD_SEC = 60          # Heartbeat older than 60s = STALE
+$CRITICAL_STALE_MULTIPLIER = 3     # Force restart after 3x threshold
+$MAX_RESTART_COUNT = 3             # Max restarts before giving up
+$RESTART_BACKOFF_SEC = 30          # Wait between restarts
+$WATCHDOG_INTERVAL_SEC = 10        # Health check interval
+
+# === TELEGRAM ALERT CONFIG ===
+$TG_ALERT_ENABLED = -not $NoAlerts
+$TG_BOT_TOKEN_ENV = 'TELEGRAM_BOT_TOKEN'
+$TG_ADMIN_CHAT_ID = '5812329204'
+$ALERT_RATE_LIMIT_MIN = 5          # Min minutes between same alerts
+
 # Determine Python to use
 $PY = if (Test-Path $VENV_PYTHON) { $VENV_PYTHON } else { $SYSTEM_PYTHON }
+
+# === HEARTBEAT VALIDATION (FAIL-CLOSED) ===
+function Test-HeartbeatFresh {
+    <#
+    .SYNOPSIS
+        Проверяет свежесть heartbeat файла (fail-closed).
+
+    .OUTPUTS
+        PSCustomObject: IsFresh, AgeSec, Error, RawData
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$HealthFile,
+
+        [int]$ThresholdSec = 60
+    )
+
+    $result = [PSCustomObject]@{
+        IsFresh = $false  # FAIL-CLOSED default
+        AgeSec = -1
+        Error = $null
+        RawData = $null
+    }
+
+    # 1. File exists?
+    if (-not (Test-Path $HealthFile)) {
+        $result.Error = "FILE_NOT_FOUND"
+        return $result
+    }
+
+    # 2. Read and parse JSON
+    try {
+        $content = Get-Content -Path $HealthFile -Raw -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($content)) {
+            $result.Error = "EMPTY_FILE"
+            return $result
+        }
+        $json = $content | ConvertFrom-Json
+        $result.RawData = $json
+    } catch {
+        $result.Error = "JSON_PARSE_ERROR: $($_.Exception.Message)"
+        return $result
+    }
+
+    # 3. Extract hb_ts (required field) - safe property check
+    $hbTs = $json.PSObject.Properties['hb_ts']
+    if (-not $hbTs -or [string]::IsNullOrWhiteSpace($hbTs.Value)) {
+        $result.Error = "MISSING_HB_TS"
+        return $result
+    }
+    $hbTsValue = $hbTs.Value
+
+    # 4. Parse timestamp (ISO8601 UTC)
+    try {
+        $hbTime = [DateTime]::Parse($hbTsValue).ToUniversalTime()
+        $nowUtc = [DateTime]::UtcNow
+        $ageSec = [int]($nowUtc - $hbTime).TotalSeconds
+
+        # Sanity check: negative age means clock skew
+        if ($ageSec -lt 0) {
+            $result.Error = "CLOCK_SKEW: age=${ageSec}s (negative)"
+            return $result
+        }
+
+        $result.AgeSec = $ageSec
+    } catch {
+        $result.Error = "TIMESTAMP_PARSE_ERROR: $($_.Exception.Message)"
+        return $result
+    }
+
+    # 5. Check threshold
+    if ($ageSec -le $ThresholdSec) {
+        $result.IsFresh = $true
+    } else {
+        $result.Error = "STALE: age=${ageSec}s > threshold=${ThresholdSec}s"
+    }
+
+    return $result
+}
+
+# === TELEGRAM ALERT ===
+$script:AlertHistory = @{}
+
+function Send-TelegramAlert {
+    <#
+    .SYNOPSIS
+        Отправляет alert в Telegram с rate limiting.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message,
+
+        [ValidateSet('INFO', 'WARNING', 'CRITICAL')]
+        [string]$Severity = 'WARNING',
+
+        [string]$AlertKey = 'default'
+    )
+
+    if (-not $TG_ALERT_ENABLED) {
+        return
+    }
+
+    # Rate limiting
+    $now = Get-Date
+    if ($script:AlertHistory[$AlertKey]) {
+        $lastSent = $script:AlertHistory[$AlertKey]
+        $minSinceLastAlert = ($now - $lastSent).TotalMinutes
+        if ($minSinceLastAlert -lt $ALERT_RATE_LIMIT_MIN) {
+            Write-Host "[ALERT-RATE-LIMITED] $AlertKey (${minSinceLastAlert}m < ${ALERT_RATE_LIMIT_MIN}m)" -ForegroundColor Gray
+            return
+        }
+    }
+
+    # Get token from environment
+    $token = [Environment]::GetEnvironmentVariable($TG_BOT_TOKEN_ENV, 'User')
+    if (-not $token) {
+        $token = [Environment]::GetEnvironmentVariable($TG_BOT_TOKEN_ENV, 'Process')
+    }
+    if (-not $token) {
+        Write-Host "[ALERT-SKIP] Token not found: $TG_BOT_TOKEN_ENV" -ForegroundColor Yellow
+        return
+    }
+
+    # Format message
+    $emoji = switch ($Severity) {
+        'INFO' { 'ℹ️' }
+        'WARNING' { '⚠️' }
+        'CRITICAL' { '🚨' }
+    }
+
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $fullMessage = @"
+$emoji <b>HOPE WATCHDOG</b>
+
+<b>Severity:</b> $Severity
+<b>Time:</b> $timestamp
+<b>Mode:</b> $Mode
+
+$Message
+"@
+
+    # Send via API
+    try {
+        $uri = "https://api.telegram.org/bot$token/sendMessage"
+        $body = @{
+            chat_id = $TG_ADMIN_CHAT_ID
+            text = $fullMessage
+            parse_mode = 'HTML'
+            disable_notification = ($Severity -eq 'INFO')
+        }
+
+        $null = Invoke-RestMethod -Uri $uri -Method Post -Body $body -TimeoutSec 10
+        $script:AlertHistory[$AlertKey] = $now
+        Write-Host "[ALERT-SENT] $Severity → $AlertKey" -ForegroundColor Cyan
+    } catch {
+        Write-Host "[ALERT-FAIL] $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
 
 # === PRE-FLIGHT CHECKS (FAIL-CLOSED) ===
 function Invoke-PreFlightChecks {
@@ -88,7 +271,7 @@ function Invoke-PreFlightChecks {
         'core\entrypoint.py',
         'core\execution\outbox.py',
         'core\execution\fills_ledger.py',
-        'core\trade\order_router_v2.py'
+        'core\trade\order_router.py'
     )
     foreach ($mod in $requiredModules) {
         $path = Join-Path $ROOT $mod
@@ -120,10 +303,10 @@ function Start-HopeCore {
 
     Write-Host "Starting HOPE Trade Core (mode=$Mode)..." -ForegroundColor Yellow
 
-    $args = @('-m', 'core.entrypoint', '--mode', $Mode)
+    $arguments = @('-u', '-m', 'core.entrypoint', '--mode', $Mode)
 
     $script:CoreProcess = Start-Process -FilePath $PY `
-        -ArgumentList $args `
+        -ArgumentList $arguments `
         -WorkingDirectory $ROOT `
         -PassThru `
         -NoNewWindow
@@ -133,7 +316,7 @@ function Start-HopeCore {
 }
 
 function Start-HopeTgBot {
-    Write-Host "Starting HOPE Control Plane (TgBot)..." -ForegroundColor Yellow
+    Write-Host "Starting HOPE TgBot..." -ForegroundColor Yellow
 
     $tgBotPath = Join-Path $ROOT 'tg_bot_simple.py'
     if (-not (Test-Path $tgBotPath)) {
@@ -142,58 +325,144 @@ function Start-HopeTgBot {
     }
 
     $script:TgBotProcess = Start-Process -FilePath $PY `
-        -ArgumentList @('tg_bot_simple.py') `
+        -ArgumentList @('-u', 'tg_bot_simple.py') `
         -WorkingDirectory $ROOT `
         -PassThru `
         -NoNewWindow
 
-    Write-Host "[STARTED] HOPE Control Plane (PID: $($script:TgBotProcess.Id))" -ForegroundColor Green
+    Write-Host "[STARTED] HOPE TgBot (PID: $($script:TgBotProcess.Id))" -ForegroundColor Green
     return $script:TgBotProcess
 }
 
+# === SMART WATCHDOG v2.0 ===
 function Watch-Processes {
     param([switch]$AutoRestart)
 
     Write-Host ""
-    Write-Host "=== WATCHDOG ACTIVE ===" -ForegroundColor Cyan
-    Write-Host "Press Ctrl+C to stop all processes"
+    Write-Host "=== WATCHDOG v2.0 ACTIVE ===" -ForegroundColor Cyan
+    Write-Host "Heartbeat threshold: ${STALE_THRESHOLD_SEC}s"
+    Write-Host "Critical stale: $($STALE_THRESHOLD_SEC * $CRITICAL_STALE_MULTIPLIER)s"
+    Write-Host "Check interval: ${WATCHDOG_INTERVAL_SEC}s"
+    Write-Host "Max restarts: $MAX_RESTART_COUNT"
+    Write-Host "Alerts: $(if ($TG_ALERT_ENABLED) { 'ENABLED' } else { 'DISABLED' })"
+    Write-Host "Press Ctrl+C to stop"
     Write-Host ""
 
-    $lastStatus = ""
+    $coreRestartCount = 0
+    $tgbotRestartCount = 0
+    $lastStatusLine = ""
+
+    # Initial alert
+    if ($TG_ALERT_ENABLED) {
+        Send-TelegramAlert -Message "Watchdog started. Mode: $Mode" -Severity INFO -AlertKey "startup"
+    }
+
     while ($true) {
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds $WATCHDOG_INTERVAL_SEC
 
-        # Check Core
-        if ($script:CoreProcess -and $script:CoreProcess.HasExited) {
-            $exitCode = $script:CoreProcess.ExitCode
-            Write-Host ""
-            Write-Host "[ALERT] HOPE Trade Core DIED (exit=$exitCode)" -ForegroundColor Red
+        $coreStatus = "UNKNOWN"
+        $coreAgeSec = -1
+        $tgbotStatus = "UNKNOWN"
+        $tgbotAgeSec = -1
 
-            if ($AutoRestart -and $exitCode -ne 0) {
-                Write-Host "Auto-restarting Core in 5 seconds..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 5
-                $script:CoreProcess = Start-HopeCore -Mode $Mode
+        # === CHECK TRADE CORE ===
+        if ($script:CoreProcess) {
+            if ($script:CoreProcess.HasExited) {
+                $coreStatus = "DEAD"
+                $exitCode = $script:CoreProcess.ExitCode
+
+                Send-TelegramAlert `
+                    -Message "Trade Core DIED (exit=$exitCode)`nRestarts: $coreRestartCount/$MAX_RESTART_COUNT" `
+                    -Severity CRITICAL `
+                    -AlertKey "core_dead"
+
+                if ($AutoRestart -and $coreRestartCount -lt $MAX_RESTART_COUNT) {
+                    $coreRestartCount++
+                    Write-Host "[RESTART] Core attempt $coreRestartCount/$MAX_RESTART_COUNT in ${RESTART_BACKOFF_SEC}s..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds $RESTART_BACKOFF_SEC
+                    $script:CoreProcess = Start-HopeCore -Mode $Mode
+
+                    Send-TelegramAlert `
+                        -Message "Trade Core restarted (attempt $coreRestartCount/$MAX_RESTART_COUNT)" `
+                        -Severity WARNING `
+                        -AlertKey "core_restart"
+
+                } elseif ($coreRestartCount -ge $MAX_RESTART_COUNT) {
+                    Send-TelegramAlert `
+                        -Message "🛑 Trade Core restart limit reached ($MAX_RESTART_COUNT).`nMANUAL INTERVENTION REQUIRED." `
+                        -Severity CRITICAL `
+                        -AlertKey "core_limit"
+                    throw "CRITICAL: Core restart limit exceeded"
+                }
             } else {
-                throw "CRITICAL: Trade Core died, manual intervention required"
+                # Process alive - check heartbeat
+                $hbCheck = Test-HeartbeatFresh -HealthFile $HEALTH_CORE -ThresholdSec $STALE_THRESHOLD_SEC
+                $coreAgeSec = $hbCheck.AgeSec
+
+                if ($hbCheck.IsFresh) {
+                    $coreStatus = "OK"
+                    $coreRestartCount = 0  # Reset on healthy
+                } else {
+                    $coreStatus = "STALE"
+
+                    Send-TelegramAlert `
+                        -Message "Trade Core heartbeat STALE`nAge: $($hbCheck.AgeSec)s (threshold: ${STALE_THRESHOLD_SEC}s)`nError: $($hbCheck.Error)" `
+                        -Severity WARNING `
+                        -AlertKey "core_stale"
+
+                    # Force restart if critically stale
+                    $criticalThreshold = $STALE_THRESHOLD_SEC * $CRITICAL_STALE_MULTIPLIER
+                    if ($hbCheck.AgeSec -gt $criticalThreshold -and $AutoRestart) {
+                        Write-Host "[FORCE-KILL] Core heartbeat critically stale ($($hbCheck.AgeSec)s > ${criticalThreshold}s)" -ForegroundColor Red
+
+                        Send-TelegramAlert `
+                            -Message "Trade Core FORCE-KILLED due to critical stale ($($hbCheck.AgeSec)s)" `
+                            -Severity CRITICAL `
+                            -AlertKey "core_force_kill"
+
+                        Stop-Process -Id $script:CoreProcess.Id -Force -ErrorAction SilentlyContinue
+                        # Will restart on next iteration when HasExited=true
+                    }
+                }
             }
         }
 
-        # Check TgBot (non-critical)
-        if ($script:TgBotProcess -and $script:TgBotProcess.HasExited) {
-            Write-Host "[WARNING] TgBot died (non-critical, trading continues)" -ForegroundColor Yellow
-            if ($AutoRestart) {
-                $script:TgBotProcess = Start-HopeTgBot
+        # === CHECK TGBOT (non-critical) ===
+        if ($script:TgBotProcess) {
+            if ($script:TgBotProcess.HasExited) {
+                $tgbotStatus = "DEAD"
+
+                if ($AutoRestart -and $tgbotRestartCount -lt $MAX_RESTART_COUNT) {
+                    $tgbotRestartCount++
+                    Write-Host "[RESTART] TgBot attempt $tgbotRestartCount..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 5
+                    $script:TgBotProcess = Start-HopeTgBot
+                }
+            } else {
+                $hbCheck = Test-HeartbeatFresh -HealthFile $HEALTH_TGBOT -ThresholdSec $STALE_THRESHOLD_SEC
+                $tgbotAgeSec = $hbCheck.AgeSec
+                $tgbotStatus = if ($hbCheck.IsFresh) { "OK" } else { "STALE" }
+                if ($hbCheck.IsFresh) { $tgbotRestartCount = 0 }
             }
+        } else {
+            $tgbotStatus = "N/A"
         }
 
-        # Status output
-        $coreStatus = if ($script:CoreProcess -and -not $script:CoreProcess.HasExited) { "ALIVE" } else { "DEAD" }
-        $tgStatus = if ($script:TgBotProcess -and -not $script:TgBotProcess.HasExited) { "ALIVE" } else { "N/A" }
-        $status = "Core=$coreStatus | TgBot=$tgStatus"
+        # === STATUS OUTPUT ===
+        $coreAgeStr = if ($coreAgeSec -ge 0) { "${coreAgeSec}s" } else { "?" }
+        $tgbotAgeStr = if ($tgbotAgeSec -ge 0) { "${tgbotAgeSec}s" } else { "?" }
 
-        if ($status -ne $lastStatus) {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $status" -ForegroundColor Gray
-            $lastStatus = $status
+        $statusLine = "Core=$coreStatus($coreAgeStr) | TgBot=$tgbotStatus($tgbotAgeStr) | R:$coreRestartCount/$tgbotRestartCount"
+
+        # Only print if changed
+        if ($statusLine -ne $lastStatusLine) {
+            $statusColor = switch ($coreStatus) {
+                'OK' { 'Green' }
+                'STALE' { 'Yellow' }
+                default { 'Red' }
+            }
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $statusLine" -ForegroundColor $statusColor
+            $lastStatusLine = $statusLine
         }
     }
 }
@@ -203,6 +472,7 @@ function Stop-AllProcesses {
     Write-Host "Stopping all processes..." -ForegroundColor Yellow
 
     if ($script:CoreProcess -and -not $script:CoreProcess.HasExited) {
+        # TODO: graceful shutdown via STOP.flag in Phase 2
         Stop-Process -Id $script:CoreProcess.Id -Force -ErrorAction SilentlyContinue
         Write-Host "[STOPPED] Trade Core" -ForegroundColor Green
     }
@@ -212,6 +482,10 @@ function Stop-AllProcesses {
     }
 
     Write-Host "All processes stopped" -ForegroundColor Green
+
+    if ($TG_ALERT_ENABLED) {
+        Send-TelegramAlert -Message "Watchdog stopped. All processes terminated." -Severity INFO -AlertKey "shutdown"
+    }
 }
 
 # === MAIN ===
@@ -220,14 +494,16 @@ try {
 
     Write-Host @"
 
-╔═══════════════════════════════════════════════════════╗
-║           HOPE STACK ORCHESTRATOR v1.0                ║
-╠═══════════════════════════════════════════════════════╣
-║  Mode:        $Mode
-║  AutoRestart: $AutoRestart
-║  NoTgBot:     $NoTgBot
-║  Python:      $PY
-╚═══════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════╗
+║           HOPE STACK ORCHESTRATOR v2.0 (Smart Watchdog)       ║
+╠═══════════════════════════════════════════════════════════════╣
+║  Mode:         $Mode
+║  AutoRestart:  $AutoRestart
+║  NoTgBot:      $NoTgBot
+║  Alerts:       $(if ($TG_ALERT_ENABLED) { 'ENABLED' } else { 'DISABLED' })
+║  Python:       $PY
+║  Stale:        ${STALE_THRESHOLD_SEC}s / Critical: $($STALE_THRESHOLD_SEC * $CRITICAL_STALE_MULTIPLIER)s
+╚═══════════════════════════════════════════════════════════════╝
 
 "@ -ForegroundColor Cyan
 
@@ -236,7 +512,7 @@ try {
     Start-HopeCore -Mode $Mode
 
     if (-not $NoTgBot) {
-        Start-Sleep -Seconds 2  # Give Core time to initialize
+        Start-Sleep -Seconds 2
         Start-HopeTgBot
     }
 
@@ -245,6 +521,14 @@ try {
 } catch {
     Write-Host ""
     Write-Host "[FATAL] $($_.Exception.Message)" -ForegroundColor Red
+
+    if ($TG_ALERT_ENABLED) {
+        Send-TelegramAlert `
+            -Message "🛑 FATAL ERROR`n$($_.Exception.Message)" `
+            -Severity CRITICAL `
+            -AlertKey "fatal"
+    }
+
     Stop-AllProcesses
     exit 1
 } finally {
