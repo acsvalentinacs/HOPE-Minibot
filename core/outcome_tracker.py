@@ -387,6 +387,49 @@ def cleanup_old_data(max_age_days: int = 30) -> int:
     return removed
 
 
+# TZ v1.0 compatibility class
+class OutcomeTracker:
+    """
+    Outcome Tracker class wrapper for TZ v1.0 compatibility.
+
+    Wraps module-level functions for object-oriented usage.
+    Tracks MFE (Maximum Favorable Excursion) and MAE (Maximum Adverse Excursion).
+    """
+
+    def __init__(self, horizons: Optional[List[int]] = None):
+        """
+        Initialize tracker.
+
+        Args:
+            horizons: Time horizons in seconds for outcome calculation
+        """
+        self._horizons = horizons or DEFAULT_HORIZONS
+
+    def record_signal(self, signal: Dict[str, Any]) -> str:
+        """Record a new signal for tracking."""
+        return record_signal(signal)
+
+    def record_price(self, symbol: str, price: float, source: str = "binance", snapshot_id: str = "") -> None:
+        """Record a price sample."""
+        record_price_sample(symbol, price, source, snapshot_id)
+
+    def compute_outcomes(self, horizons: Optional[List[int]] = None) -> int:
+        """Compute outcomes for all tracked signals."""
+        return compute_outcomes(horizons or self._horizons)
+
+    def get_tracked_signals(self, max_age_sec: int = 86400 * 7) -> List[TrackedSignal]:
+        """Get tracked signals."""
+        return get_tracked_signals(max_age_sec)
+
+    def get_symbols_to_track(self) -> List[str]:
+        """Get symbols that need price tracking."""
+        return get_symbols_to_track()
+
+    def cleanup(self, max_age_days: int = 30) -> int:
+        """Clean up old data."""
+        return cleanup_old_data(max_age_days)
+
+
 # CLI interface
 def main() -> int:
     """CLI entrypoint for outcome tracker."""

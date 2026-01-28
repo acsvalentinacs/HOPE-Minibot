@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-28T13:30:00Z
-# v2.3.3: Health heartbeat for PowerShell detection (health_tgbot.json)
+# Modified at: 2026-01-28T14:15:00Z
+# v2.3.4: Fixed heartbeat - use job_queue instead of broken loop.create_task()
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -153,6 +153,11 @@ async def _tgbot_heartbeat_task() -> None:
     while True:
         _write_tgbot_health()
         await asyncio.sleep(_TGBOT_HEALTH_INTERVAL)
+
+
+async def _heartbeat_job_callback(context) -> None:
+    """Job callback for heartbeat - runs within Application's event loop."""
+    _write_tgbot_health()
 
 HUNTERS_SIGNALS_CANDIDATES = [
     STATE_DIR / "hunters_signals_scored.jsonl",
@@ -2304,6 +2309,16 @@ class HopeMiniBot:
         except Exception as e:
             self.log.warning("setMyCommands failed: %s: %s", type(e).__name__, e)
 
+        # v2.3.4: Schedule heartbeat job properly within Application's event loop
+        if app.job_queue:
+            app.job_queue.run_repeating(
+                _heartbeat_job_callback,
+                interval=_TGBOT_HEALTH_INTERVAL,
+                first=0,
+                name="tgbot_heartbeat",
+            )
+            self.log.info("Heartbeat job scheduled (interval=%ds)", _TGBOT_HEALTH_INTERVAL)
+
     def build_app(self) -> Application:
         if not self.token:
             raise RuntimeError(
@@ -2363,14 +2378,9 @@ def main() -> None:
     _hope_acquire_pid_lock(root / "state" / "pids" / "tg_bot_simple.lock")
     _hope_install_log_redaction()
 
-    # v2.3.3: Start heartbeat task for PowerShell detection
-    _write_tgbot_health()  # Write initial health immediately
+    # v2.3.4: Write initial health, job scheduled via post_init
+    _write_tgbot_health()
     logger.info("health_tgbot.json created: %s", HEALTH_TGBOT)
-
-    # Schedule heartbeat as background task
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(_tgbot_heartbeat_task())
 
     app.run_polling(close_loop=False)
 

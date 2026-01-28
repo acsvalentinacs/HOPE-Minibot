@@ -78,10 +78,43 @@ class BaseStrategy(ABC):
     @abstractmethod
     def generate_signal(self, market_data: MarketData) -> Optional[TradingSignal]:
         pass
-    
+
     @abstractmethod
     def should_exit(self, position: Position, market_data: MarketData) -> Optional[str]:
         pass
+
+    def should_enter(self, market_data: MarketData) -> bool:
+        """
+        Check if strategy should enter a new position.
+
+        This is a convenience wrapper around generate_signal().
+
+        Args:
+            market_data: Current market data
+
+        Returns:
+            True if a valid signal is generated, False otherwise
+        """
+        signal = self.generate_signal(market_data)
+        return signal is not None
+
+    def can_trade(self, market_data: MarketData) -> bool:
+        """
+        Check if strategy can trade (has capacity for new positions).
+
+        Args:
+            market_data: Current market data
+
+        Returns:
+            True if can open new positions, False otherwise
+        """
+        # Check max positions limit
+        if len(self.positions) >= self.config.max_open_positions:
+            return False
+        # Check if already have position for this symbol
+        if any(p.symbol == market_data.symbol for p in self.positions):
+            return False
+        return True
     
     def calculate_position_size(self, entry_price: float, stop_loss: float, signal: TradingSignal) -> float:
         if entry_price <= 0 or stop_loss <= 0:

@@ -64,6 +64,11 @@ class BreakoutStrategy(BaseStrategy):
             return self._generate_signal_impl(market_data)
         except Exception:
             return None
+
+    def should_enter(self, market_data: MarketData) -> bool:
+        """Check if breakout conditions favor entry."""
+        signal = self.generate_signal(market_data)
+        return signal is not None and signal.confidence >= self.config.min_confidence
     
     def _generate_signal_impl(self, market_data: MarketData) -> Optional[TradingSignal]:
         n = len(market_data.closes)

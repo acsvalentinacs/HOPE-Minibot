@@ -516,6 +516,44 @@ class PerformanceTracker:
 
         self._persist_state()
 
+    def update(self, equity: Optional[float] = None, trade: Optional[CompletedTrade] = None) -> None:
+        """
+        Update tracker with new equity and/or completed trade.
+        TZ v1.0 compatibility method.
+
+        Args:
+            equity: New equity value (optional)
+            trade: Completed trade to record (optional)
+        """
+        if trade is not None:
+            self.record_trade(trade)
+        elif equity is not None:
+            self.update_equity(equity)
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get current performance metrics as dictionary.
+        TZ v1.0 compatibility method.
+
+        Returns:
+            Dict with key performance metrics
+        """
+        snapshot = self.get_snapshot()
+        return {
+            "equity": snapshot.equity,
+            "equity_peak": snapshot.equity_peak,
+            "current_drawdown_pct": snapshot.current_drawdown_pct,
+            "max_drawdown_pct": snapshot.max_drawdown_pct,
+            "return_24h_pct": snapshot.return_24h_pct,
+            "return_7d_pct": snapshot.return_7d_pct,
+            "sharpe_7d": snapshot.sharpe_7d,
+            "sharpe_30d": snapshot.sharpe_30d,
+            "win_rate_20": snapshot.win_rate_20,
+            "total_trades": snapshot.total_trades,
+            "avg_rr": snapshot.avg_rr_20,
+            "strategies": snapshot.strategies,
+        }
+
 
 # === Singleton ===
 

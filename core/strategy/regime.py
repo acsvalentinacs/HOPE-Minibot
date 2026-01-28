@@ -136,3 +136,44 @@ def detect_regime(
         confidence=confidence,
         reason=reason
     )
+
+
+class MarketRegimeDetector:
+    """
+    Market regime detector class wrapper for TZ v1.0 compatibility.
+
+    Provides object-oriented interface to regime detection.
+    """
+
+    def __init__(self, config: RegimeConfig = RegimeConfig()):
+        """
+        Initialize detector with configuration.
+
+        Args:
+            config: RegimeConfig with detection thresholds
+        """
+        self._config = config
+
+    def detect(
+        self,
+        closes: Union[Sequence[float], np.ndarray],
+        atr_values: Union[Sequence[float], np.ndarray],
+        ema_values: Union[Sequence[float], np.ndarray],
+    ) -> RegimeResult:
+        """
+        Detect market regime from price data.
+
+        Args:
+            closes: Close prices
+            atr_values: ATR values
+            ema_values: EMA values for slope calculation
+
+        Returns:
+            RegimeResult with regime classification
+        """
+        return detect_regime(closes, atr_values, ema_values, self._config)
+
+    @property
+    def config(self) -> RegimeConfig:
+        """Get current configuration."""
+        return self._config

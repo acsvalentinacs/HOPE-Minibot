@@ -145,3 +145,29 @@ class SignalEngine:
         content = f'{market_data.symbol}:{market_data.timestamp}:{score:.6f}'
         hash_val = hashlib.sha256(content.encode()).hexdigest()[:16]
         return f'sha256:{hash_val}'
+
+    def scan_market(self, symbols: list, market_data_map: dict) -> list:
+        """
+        Scan multiple symbols for trading signals.
+
+        Args:
+            symbols: List of symbol strings (e.g., ['BTCUSDT', 'ETHUSDT'])
+            market_data_map: Dict mapping symbol to MarketData
+
+        Returns:
+            List of TradingSignal objects for symbols with valid signals
+        """
+        signals = []
+        for symbol in symbols:
+            if symbol not in market_data_map:
+                continue
+            market_data = market_data_map[symbol]
+            try:
+                signal = self.generate_signal(market_data)
+                if signal is not None:
+                    signals.append(signal)
+            except Exception:
+                continue
+        # Sort by confidence descending
+        signals.sort(key=lambda s: s.confidence, reverse=True)
+        return signals

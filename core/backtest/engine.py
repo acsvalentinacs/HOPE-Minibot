@@ -587,6 +587,29 @@ class BacktestEngine:
         returns = calculate_returns(result.equity_curve)
         result.sharpe_ratio = calculate_sharpe_ratio(returns)
 
+    def load_data(
+        self,
+        source: str = "synthetic",
+        symbol: str = "BTCUSDT",
+        timeframe: str = "15m",
+        **kwargs,
+    ) -> Optional[KlinesResult]:
+        """
+        Load data for backtesting. TZ v1.0 compatibility method.
+
+        Args:
+            source: "synthetic" | "csv" | "api"
+            symbol: Trading pair
+            timeframe: Candle interval
+            **kwargs: Source-specific arguments
+
+        Returns:
+            KlinesResult or None
+        """
+        from .data_loader import DataLoader
+        loader = DataLoader()
+        return loader.load(source, symbol, timeframe, **kwargs)
+
 
 def run_backtest(
     klines: KlinesResult,
@@ -616,3 +639,48 @@ def run_backtest(
 
     engine = BacktestEngine(orchestrator, config)
     return engine.run(klines)
+
+
+def load_data(
+    symbol: str = "BTCUSDT",
+    timeframe: str = "15m",
+    source: str = "synthetic",
+    **kwargs,
+) -> Optional[KlinesResult]:
+    """
+    Load data for backtesting. Convenience function.
+
+    Args:
+        symbol: Trading pair
+        timeframe: Candle interval
+        source: "synthetic" | "csv" | "api"
+        **kwargs: Additional args passed to loader
+
+    Returns:
+        KlinesResult or None
+    """
+    from .data_loader import DataLoader
+    loader = DataLoader()
+
+    if source == "synthetic":
+        return loader.generate_synthetic(
+            symbol=symbol,
+            timeframe=timeframe,
+            candle_count=kwargs.get("candle_count", 500),
+            start_price=kwargs.get("start_price", 50000.0),
+            volatility=kwargs.get("volatility", 0.02),
+            trend=kwargs.get("trend", 0.0001),
+            seed=kwargs.get("seed"),
+        )
+    elif source == "csv":
+        path = kwargs.get("path")
+        if not path:
+            return None
+        return loader.load_csv(path, symbol, timeframe)
+    elif source == "api":
+        return loader.fetch_recent(
+            symbol=symbol,
+            timeframe=timeframe,
+            limit=kwargs.get("limit", 500),
+        )
+    return None

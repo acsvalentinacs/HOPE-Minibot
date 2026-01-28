@@ -546,6 +546,10 @@ def get_signal_publisher() -> SignalPublisher:
     return _publisher_instance
 
 
+# Alias for TZ v1.0 compatibility
+TelegramSignals = SignalPublisher
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 

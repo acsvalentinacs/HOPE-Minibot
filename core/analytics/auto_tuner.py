@@ -616,6 +616,33 @@ class AutoTuner:
         except Exception as e:
             logger.warning("Failed to save results: %s", e)
 
+    def run_check(self, klines: KlinesResult) -> Dict[str, Any]:
+        """
+        Quick check if tuning improves performance.
+        TZ v1.0 compatibility method.
+
+        Args:
+            klines: Historical data for evaluation
+
+        Returns:
+            Dict with tuning check results
+        """
+        report = self.tune(klines)
+
+        result = {
+            "strategy": self.search_space.strategy_name,
+            "n_trials": report.n_trials,
+            "elapsed_seconds": report.elapsed_seconds,
+            "best_config": report.best_result.config if report.best_result else None,
+            "best_score": report.best_result.score if report.best_result else 0.0,
+            "best_sharpe": report.best_result.sharpe if report.best_result else 0.0,
+            "best_return": report.best_result.total_return if report.best_result else 0.0,
+            "best_win_rate": report.best_result.win_rate if report.best_result else 0.0,
+            "recommendation": "TUNE" if report.best_result and report.best_result.score > 0.3 else "KEEP_DEFAULT",
+        }
+
+        return result
+
 
 # ============================================================================
 # Convenience Functions
@@ -718,3 +745,59 @@ def get_auto_tuner(
         _tuner_instance = AutoTuner(search_space, strategy_factory, config)
 
     return _tuner_instance
+
+
+def run_check(
+    klines: Optional[KlinesResult] = None,
+    strategy_name: str = "momentum",
+    n_trials: int = 20,
+    seed: Optional[int] = 42,
+) -> Dict[str, Any]:
+    """
+    Quick check if auto-tuning improves strategy performance.
+    TZ v1.0 compatibility method.
+
+    Args:
+        klines: Historical data (generates synthetic if None)
+        strategy_name: "momentum" | "breakout" | "mean_reversion"
+        n_trials: Number of tuning trials
+        seed: Random seed
+
+    Returns:
+        Dict with baseline vs tuned comparison
+    """
+    from core.backtest.data_loader import generate_synthetic_klines
+
+    # Generate data if not provided
+    if klines is None:
+        klines = generate_synthetic_klines(
+            symbol="BTCUSDT",
+            timeframe="15m",
+            candle_count=500,
+            seed=seed,
+        )
+
+    # Run tuning based on strategy
+    if strategy_name == "momentum":
+        report = tune_momentum(klines, n_trials, seed)
+    elif strategy_name == "breakout":
+        report = tune_breakout(klines, n_trials, seed)
+    elif strategy_name == "mean_reversion":
+        report = tune_mean_reversion(klines, n_trials, seed)
+    else:
+        return {"error": f"Unknown strategy: {strategy_name}"}
+
+    # Build result
+    result = {
+        "strategy": strategy_name,
+        "n_trials": report.n_trials,
+        "elapsed_seconds": report.elapsed_seconds,
+        "best_config": report.best_result.config if report.best_result else None,
+        "best_score": report.best_result.score if report.best_result else 0.0,
+        "best_sharpe": report.best_result.sharpe if report.best_result else 0.0,
+        "best_return": report.best_result.total_return if report.best_result else 0.0,
+        "best_win_rate": report.best_result.win_rate if report.best_result else 0.0,
+        "recommendation": "TUNE" if report.best_result and report.best_result.score > 0.3 else "KEEP_DEFAULT",
+    }
+
+    return result

@@ -46,10 +46,10 @@ class RoleConfig:
 ROLES: Dict[str, RoleConfig] = {
     "ENGINE": RoleConfig(
         name="ENGINE",
-        script="minibot/run_live_v5.py",
-        args=["--mode", "{MODE}"],
-        needle="run_live_v5.py",
-        heartbeat_field="last_heartbeat_ts",
+        script="minibot/core/entrypoint.py",  # Updated: was run_live_v5.py
+        args=["--mode", "{MODE}", "--skip-changelog"],
+        needle="core.entrypoint",  # Updated: module-style launch
+        heartbeat_field="hb_ts",  # Updated: matches health_v5.json
         ttl_sec=120.0,
         grace_sec=30.0,
         max_restarts_per_hour=5,

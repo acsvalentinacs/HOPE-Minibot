@@ -2,9 +2,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T02:00:00Z
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-28T03:00:00Z
+# Modified at: 2026-01-28T11:10:00Z
 # Purpose: Unified Live Trading Entrypoint - single path to production
-# Security: Gatekeeper must pass before ANY trading code executes
+# Security: Gatekeeper must pass, STOP.flag halts trading, health_v5.json updated
 # === END SIGNATURE ===
 """
 HOPE Live Trading Entrypoint.
@@ -38,13 +38,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import signal
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# State directory for health file
+STATE_DIR = Path(__file__).resolve().parent.parent / "state"
+HEALTH_FILE = STATE_DIR / "health_v5.json"
+STOP_FLAG = Path(__file__).resolve().parent.parent / "STOP.flag"
 
 # Configure logging FIRST (before any imports that might log)
 logging.basicConfig(
@@ -63,6 +70,50 @@ class ExitCode:
     INTERNAL_ERROR = 1
     GATE_BLOCKED = 2
     TRADING_ERROR = 3
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Atomic write: temp -> fsync -> replace."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def write_health_v5(
+    mode: str,
+    uptime_sec: int,
+    open_positions: int,
+    queue_size: int = 0,
+    daily_pnl_usd: float = 0.0,
+    daily_stop_hit: bool = False,
+    last_error: Optional[str] = None,
+) -> None:
+    """
+    Write health_v5.json for TG bot and health probes.
+
+    Format matches tools/health_probe_v5.py requirements.
+    """
+    health = {
+        "engine_version": "5.2.0",
+        "mode": mode,
+        "hb_ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "uptime_sec": uptime_sec,
+        "open_positions": open_positions,
+        "queue_size": queue_size,
+        "daily_pnl_usd": daily_pnl_usd,
+        "daily_stop_hit": daily_stop_hit,
+        "last_error": last_error,
+    }
+
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _atomic_write(HEALTH_FILE, json.dumps(health, indent=2))
+        logger.debug("health_v5.json updated: uptime=%ds, positions=%d", uptime_sec, open_positions)
+    except Exception as e:
+        logger.warning("Failed to write health_v5.json: %s", e)
 
 
 class TradingContext:
@@ -97,6 +148,10 @@ class TradingContext:
         # Trading state
         self._open_positions: List[Any] = []
         self._last_signal_id: Optional[str] = None
+        self._start_time: float = time.time()
+        self._daily_pnl_usd: float = 0.0
+        self._daily_stop_hit: bool = False
+        self._last_error: Optional[str] = None
 
         logger.info("TradingContext created: mode=%s, symbol=%s", mode, symbol)
 
@@ -286,6 +341,19 @@ class TradingContext:
         except Exception as e:
             logger.warning("Failed to record trade: %s", e)
 
+    def update_health(self, queue_size: int = 0) -> None:
+        """Update health_v5.json with current state."""
+        uptime = int(time.time() - self._start_time)
+        write_health_v5(
+            mode=self.mode,
+            uptime_sec=uptime,
+            open_positions=len(self._open_positions),
+            queue_size=queue_size,
+            daily_pnl_usd=self._daily_pnl_usd,
+            daily_stop_hit=self._daily_stop_hit,
+            last_error=self._last_error,
+        )
+
     def shutdown(self) -> None:
         """Clean shutdown of all components."""
         logger.info("Shutting down trading context...")
@@ -329,6 +397,12 @@ class LiveTradingRunner:
             while self._running and not self._shutdown_requested:
                 cycle_count += 1
 
+                # Check STOP.flag (fail-closed)
+                if STOP_FLAG.exists():
+                    reason = STOP_FLAG.read_text(encoding="utf-8").strip().split("\n")[0]
+                    logger.critical("STOP.flag detected: %s - halting trading", reason)
+                    break
+
                 try:
                     self._trading_cycle(cycle_count)
 
@@ -365,7 +439,12 @@ class LiveTradingRunner:
         5. If ENTER: execute order
         6. If EXIT: close position
         7. Record results
+        8. Update health_v5.json
         """
+        # Update health every 10 cycles (10 seconds)
+        if cycle % 10 == 0:
+            self.context.update_health()
+
         if cycle % 60 == 0:  # Log every minute
             logger.info("Trading cycle %d (mode=%s, positions=%d)",
                        cycle, self.context.mode, len(self.context._open_positions))
@@ -762,6 +841,18 @@ def main() -> int:
             return gate_result.exit_code.value
 
         logger.info("Gatekeeper PASSED (%.1fms)", gate_result.total_duration_ms)
+
+        # Write initial health_v5.json
+        write_health_v5(
+            mode=args.mode,
+            uptime_sec=0,
+            open_positions=0,
+            queue_size=0,
+            daily_pnl_usd=0.0,
+            daily_stop_hit=False,
+            last_error=None,
+        )
+        logger.info("health_v5.json created: %s", HEALTH_FILE)
 
     except Exception as e:
         logger.exception("Gatekeeper failed with exception: %s", e)

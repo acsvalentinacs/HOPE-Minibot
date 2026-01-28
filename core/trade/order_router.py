@@ -176,6 +176,10 @@ class TradingOrderRouter:
         self._live_gate = LiveGate()
         self._risk_engine = TradingRiskEngine()
 
+        # Rate limiter for safety
+        from core.safety.watchdog import OrderRateLimiter
+        self._rate_limiter = OrderRateLimiter()
+
         logger.info(
             "TradingOrderRouter initialized: mode=%s, dry_run=%s, has_governor=%s, session=%s",
             self.mode, self.dry_run, self._risk_governor is not None, self._session_id[:32],
@@ -301,6 +305,17 @@ class TradingOrderRouter:
         from core.execution.contracts import (
             OrderIntentV1, OrderAckV1, FillEventV1, OrderStatus
         )
+
+        # === STEP 0: Rate limit check ===
+        if not self._rate_limiter.allow():
+            logger.critical("RATE LIMIT TRIGGERED - order rejected")
+            return ExecutionResult(
+                status=ExecutionStatus.REJECTED,
+                client_order_id="",
+                symbol=symbol,
+                side=side,
+                message="Rate limit exceeded - STOP.flag created",
+            )
 
         # === STEP 1: Generate idempotent clientOrderId ===
         client_order_id = generate_client_order_id(

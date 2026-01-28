@@ -335,6 +335,74 @@ def calculate_returns(equity_curve: List[float]) -> List[float]:
     return returns.tolist()
 
 
+@dataclass
+class MetricsResult:
+    """Combined metrics result from BacktestMetrics.calculate()."""
+    trade_stats: TradeStats
+    drawdown: DrawdownInfo
+    sharpe_ratio: float
+    total_return_pct: float
+    final_equity: float
+
+
+class BacktestMetrics:
+    """
+    Backtest metrics calculator class for TZ v1.0 compatibility.
+
+    Provides object-oriented interface to metrics calculation.
+    """
+
+    def __init__(self, initial_capital: float = 10000.0, risk_free_rate: float = 0.0):
+        """
+        Initialize metrics calculator.
+
+        Args:
+            initial_capital: Starting equity
+            risk_free_rate: Annual risk-free rate for Sharpe calculation
+        """
+        self._initial_capital = initial_capital
+        self._risk_free_rate = risk_free_rate
+
+    def calculate(
+        self,
+        pnls: List[float],
+        equity_curve: List[float],
+        bars_in_trades: Optional[List[int]] = None,
+    ) -> MetricsResult:
+        """
+        Calculate comprehensive backtest metrics.
+
+        Args:
+            pnls: List of trade P&L values
+            equity_curve: Equity over time
+            bars_in_trades: Optional trade durations
+
+        Returns:
+            MetricsResult with all metrics
+        """
+        # Trade statistics
+        trade_stats = calculate_trade_stats(pnls, bars_in_trades)
+
+        # Drawdown analysis
+        drawdown = calculate_drawdown(equity_curve)
+
+        # Sharpe ratio
+        returns = calculate_returns(equity_curve)
+        sharpe = calculate_sharpe_ratio(returns, self._risk_free_rate)
+
+        # Total return
+        final_equity = equity_curve[-1] if equity_curve else self._initial_capital
+        total_return_pct = ((final_equity / self._initial_capital) - 1) * 100 if self._initial_capital > 0 else 0.0
+
+        return MetricsResult(
+            trade_stats=trade_stats,
+            drawdown=drawdown,
+            sharpe_ratio=sharpe,
+            total_return_pct=total_return_pct,
+            final_equity=final_equity,
+        )
+
+
 def format_metrics_report(
     trade_stats: TradeStats,
     drawdown: DrawdownInfo,

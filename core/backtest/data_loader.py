@@ -482,6 +482,54 @@ class DataLoader:
         """Validate klines data."""
         return validate_klines(klines, timeframe, min_candles)
 
+    def load(
+        self,
+        source: str = "synthetic",
+        symbol: str = "BTCUSDT",
+        timeframe: str = "15m",
+        **kwargs,
+    ) -> Optional[KlinesResult]:
+        """
+        Universal data loader. TZ v1.0 compatibility method.
+
+        Args:
+            source: "synthetic" | "csv" | "api"
+            symbol: Trading pair
+            timeframe: Candle interval
+            **kwargs: Source-specific arguments:
+                - synthetic: candle_count, start_price, volatility, trend, seed
+                - csv: path (required)
+                - api: limit
+
+        Returns:
+            KlinesResult or None on failure
+        """
+        if source == "synthetic":
+            return self.generate_synthetic(
+                symbol=symbol,
+                timeframe=timeframe,
+                candle_count=kwargs.get("candle_count", 500),
+                start_price=kwargs.get("start_price", 50000.0),
+                volatility=kwargs.get("volatility", 0.02),
+                trend=kwargs.get("trend", 0.0001),
+                seed=kwargs.get("seed"),
+            )
+        elif source == "csv":
+            path = kwargs.get("path")
+            if not path:
+                logger.error("CSV source requires 'path' argument")
+                return None
+            return self.load_csv(path, symbol, timeframe)
+        elif source == "api":
+            return self.fetch_recent(
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=kwargs.get("limit", 500),
+            )
+        else:
+            logger.error("Unknown source: %s", source)
+            return None
+
 
 # Convenience instances
 _default_loader: Optional[DataLoader] = None

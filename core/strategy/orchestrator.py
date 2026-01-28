@@ -132,3 +132,44 @@ class StrategyOrchestrator:
     
     def clear_dedup_cache(self) -> None:
         self._dedup_cache.clear()
+
+    def detect_market_regime(self, market_data: MarketData) -> RegimeResult:
+        """
+        Public method to detect current market regime.
+
+        Args:
+            market_data: MarketData with OHLCV
+
+        Returns:
+            RegimeResult with regime classification
+        """
+        return self._detect_regime(market_data)
+
+    def select_strategy(self, regime: Regime) -> Optional[BaseStrategy]:
+        """
+        Select best strategy for given market regime.
+
+        Args:
+            regime: Current market regime
+
+        Returns:
+            Selected BaseStrategy instance or None
+        """
+        strategies = self._get_strategies_for_regime(regime)
+        if strategies:
+            return strategies[0][1]  # Return first (highest priority) strategy
+        return None
+
+    def run_cycle(self, market_data: MarketData, current_positions: List[Position], timeframe: str = '15m') -> OrchestratorDecision:
+        """
+        Run single trading cycle. Alias for decide() for TZ compatibility.
+
+        Args:
+            market_data: Current market data
+            current_positions: List of open positions
+            timeframe: Trading timeframe
+
+        Returns:
+            OrchestratorDecision with action to take
+        """
+        return self.decide(market_data, current_positions, timeframe)
