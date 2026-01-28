@@ -2,7 +2,8 @@
 # Created by: Kirill Dev
 # Created at: 2026-01-19 18:24:32 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-23 11:30:00 UTC
+# Modified at: 2026-01-29 13:00:00 UTC
+# Change: Added developers.binance.com, checkip, pypi, github to ALLOWED_DOMAINS
 # === END SIGNATURE ===
 """
 Snapshot Store - Atomic evidence persistence with sha256 verification.
@@ -46,19 +47,28 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-# Allowed domains for fetching (per CLAUDE.md)
+# Allowed domains for fetching (per CLAUDE.md - SSoT)
 ALLOWED_DOMAINS: FrozenSet[str] = frozenset({
+    # Binance API (contractual)
     "api.binance.com",
     "data.binance.vision",
     "testnet.binance.vision",
+    "developers.binance.com",  # Changelog/breaking changes
+    "www.binance.com",
+    # News RSS feeds
     "www.coindesk.com",
     "cointelegraph.com",
     "decrypt.co",
     "www.theblock.co",
     "bitcoinmagazine.com",
-    "www.binance.com",
+    # Crypto data aggregators
     "api.coingecko.com",
     "pro-api.coinmarketcap.com",
+    # Infrastructure
+    "checkip.amazonaws.com",
+    "pypi.org",
+    "api.github.com",
+    "raw.githubusercontent.com",
 })
 
 

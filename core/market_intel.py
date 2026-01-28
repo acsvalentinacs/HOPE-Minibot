@@ -2,7 +2,8 @@
 # Created by: Kirill Dev
 # Created at: 2026-01-19 18:24:32 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-23 11:30:00 UTC
+# Modified at: 2026-01-29 13:00:00 UTC
+# Change: Fixed hardcoded paths (VPS portable), added all 5 RSS feeds, enhanced sentiment keywords
 # === END SIGNATURE ===
 """
 HOPE/NORE Market Intelligence Module v1.1
@@ -42,13 +43,15 @@ from core.snapshot_store import SnapshotStore, SnapshotMeta, DomainNotAllowedErr
 
 logger = logging.getLogger(__name__)
 
-# Base directory for project
-BASE_DIR = Path(r"C:\Users\kirillDev\Desktop\TradingBot\minibot")
+# Base directory for project (SSoT: derive from file location, portable to VPS)
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATE_DIR = BASE_DIR / "state"
 
-# Cache settings
-CACHE_DIR = Path(r'C:\Users\kirillDev\Desktop\TradingBot\minibot\state\cache')
+# Cache settings (SSoT)
+CACHE_DIR = STATE_DIR / "cache"
 CACHE_TTL_SECONDS = 300  # 5 minutes for market data
 NEWS_CACHE_TTL_SECONDS = 900  # 15 minutes for news
+EXCHANGE_INFO_TTL_SECONDS = 3600  # 1 hour for trading rules (rarely change)
 
 # API endpoints
 COINGECKO_MARKETS = "https://api.coingecko.com/api/v3/coins/markets"
@@ -56,10 +59,13 @@ COINGECKO_GLOBAL = "https://api.coingecko.com/api/v3/global"
 BINANCE_TICKER_24H = "https://api.binance.com/api/v3/ticker/24hr"
 BINANCE_EXCHANGE_INFO = "https://api.binance.com/api/v3/exchangeInfo"
 
-# News RSS feeds
+# News RSS feeds (all allowed sources per CLAUDE.md)
 NEWS_FEEDS = [
     ("coindesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("cointelegraph", "https://cointelegraph.com/rss"),
+    ("decrypt", "https://decrypt.co/feed"),
+    ("theblock", "https://www.theblock.co/rss.xml"),
+    ("bitcoinmagazine", "https://bitcoinmagazine.com/feed"),
 ]
 
 # Trading pairs to monitor (high liquidity)
@@ -71,9 +77,41 @@ PRIORITY_SYMBOLS = [
 # Signal thresholds
 VOLUME_SPIKE_THRESHOLD = 2.0  # 2x average
 PRICE_MOVE_THRESHOLD = 3.0  # 3% move
+
+# Sentiment analysis keywords (comprehensive, case-insensitive)
 SENTIMENT_KEYWORDS = {
-    "bullish": ["buy", "bull", "surge", "rally", "breakout", "adoption", "etf approved", "institutional"],
-    "bearish": ["sell", "bear", "crash", "dump", "hack", "ban", "regulation", "quantum"],
+    "bullish": [
+        # Market action
+        "surge", "rally", "breakout", "soar", "jump", "gain", "rise", "pump",
+        # Adoption signals
+        "adoption", "institutional", "etf approved", "etf approval", "spot etf",
+        "banking charter", "treasury", "reserve",
+        # Regulatory positive
+        "clarity", "framework", "approval", "green light", "legalize",
+        # Investment
+        "accumulate", "buy", "bullish", "long", "upside",
+        # Institutional
+        "blackrock", "fidelity", "vanguard", "custody", "pension fund",
+    ],
+    "bearish": [
+        # Market action
+        "crash", "dump", "plunge", "collapse", "selloff", "liquidation", "capitulation",
+        # Security threats
+        "hack", "exploit", "vulnerability", "breach", "stolen", "drained",
+        # Regulatory negative
+        "ban", "crackdown", "lawsuit", "sec charges", "enforcement", "sanction",
+        # Risk factors
+        "bearish", "short", "downside", "risk-off", "contagion", "insolvency",
+        # Macro negative
+        "recession", "inflation", "rate hike", "quantitative tightening",
+    ],
+    "high_impact": [
+        # Events that require immediate attention regardless of direction
+        "breaking", "urgent", "emergency", "halt", "suspend", "delist",
+        "fork", "upgrade", "mainnet", "airdrop",
+        "fed", "fomc", "powell", "yellen", "treasury",
+        "trump", "biden", "congress", "senate",
+    ],
 }
 
 
