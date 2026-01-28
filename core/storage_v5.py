@@ -7,7 +7,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
-from minibot.core.types import PositionInfo
+from core.types import PositionInfo
 
 logger = logging.getLogger(__name__)
 

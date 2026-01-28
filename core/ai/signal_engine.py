@@ -6,10 +6,13 @@
 # === END SIGNATURE ===
 from __future__ import annotations
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import Optional
 from enum import Enum
 import numpy as np
+
+logger = logging.getLogger(__name__)
 from core.ai.technical_indicators import (
     TechnicalIndicators, IndicatorResult, MACDResult, BollingerResult, VolumeProfile,
 )
@@ -85,7 +88,8 @@ class SignalEngine:
     def generate_signal(self, market_data: MarketData, sentiment_score: Optional[float] = None, ml_prediction: Optional[float] = None) -> Optional[TradingSignal]:
         try:
             return self._generate_signal_impl(market_data, sentiment_score, ml_prediction)
-        except Exception:
+        except Exception as e:
+            logger.warning("generate_signal failed for %s: %s", market_data.symbol, e)
             return None
     
     def _generate_signal_impl(self, market_data: MarketData, sentiment_score: Optional[float], ml_prediction: Optional[float]) -> Optional[TradingSignal]:
@@ -166,7 +170,8 @@ class SignalEngine:
                 signal = self.generate_signal(market_data)
                 if signal is not None:
                     signals.append(signal)
-            except Exception:
+            except Exception as e:
+                logger.warning("scan_market: skipping %s due to error: %s", symbol, e)
                 continue
         # Sort by confidence descending
         signals.sort(key=lambda s: s.confidence, reverse=True)

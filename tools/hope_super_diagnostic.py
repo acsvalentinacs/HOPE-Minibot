@@ -18,10 +18,17 @@ import sys
 import os
 import json
 import importlib
+import io
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
+
+# Fix Unicode output on Windows (cp1251/cp866)
+if sys.stdout and hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Ensure we're in the right directory
 ROOT = Path(__file__).resolve().parent.parent
@@ -147,6 +154,7 @@ class HopeDiagnostic:
         self.infrastructure_status: List[Dict] = []
         self.test_results: Dict[str, bool] = {}
         self.dependencies: Dict[str, bool] = {}
+        self.optional_missing: List[str] = []  # Optional deps that are missing
 
     def check_module(self, rel_path: str, expected_class: str, expected_methods: List[str]) -> ModuleStatus:
         """Check a single module's status."""
@@ -243,30 +251,46 @@ class HopeDiagnostic:
             })
 
     def check_dependencies(self) -> None:
-        """Check required Python packages."""
-        packages = {
+        """Check required and optional Python packages."""
+        # REQUIRED - will cause ERROR if missing
+        required_packages = {
             "numpy": "Numerical operations",
             "pandas": "Data manipulation",
             "aiohttp": "Async HTTP",
             "python-telegram-bot": "Telegram bot",
-            "lightgbm": "ML predictor (optional)",
-            "scikit-learn": "ML metrics",
-            "optuna": "Optimization (optional)",
         }
 
-        for package, desc in packages.items():
+        # OPTIONAL - will cause WARN if missing (graceful degradation)
+        optional_packages = {
+            "lightgbm": "ML predictor (heuristic fallback available)",
+            "scikit-learn": "ML metrics",
+            "optuna": "Bayesian optimization (grid search fallback)",
+        }
+
+        self.optional_missing = []
+
+        # Check required packages
+        for package, desc in required_packages.items():
             try:
-                # Handle package name differences
                 import_name = package.replace("-", "_")
                 if package == "python-telegram-bot":
                     import_name = "telegram"
-                elif package == "scikit-learn":
-                    import_name = "sklearn"
-
                 importlib.import_module(import_name)
                 self.dependencies[package] = True
             except ImportError:
                 self.dependencies[package] = False
+
+        # Check optional packages (don't fail on these)
+        for package, desc in optional_packages.items():
+            try:
+                import_name = package.replace("-", "_")
+                if package == "scikit-learn":
+                    import_name = "sklearn"
+                importlib.import_module(import_name)
+                self.dependencies[package] = True
+            except ImportError:
+                self.dependencies[package] = False
+                self.optional_missing.append(package)
 
     def run_tests(self) -> None:
         """Run key tests and collect results."""
@@ -355,7 +379,12 @@ class HopeDiagnostic:
         print("Checking Dependencies...")
         self.check_dependencies()
         for pkg, installed in self.dependencies.items():
-            icon = "[OK]" if installed else "[X]"
+            if installed:
+                icon = "[OK]"
+            elif pkg in getattr(self, 'optional_missing', []):
+                icon = "[WARN]"  # Optional - degraded but functional
+            else:
+                icon = "[X]"  # Required - ERROR
             print(f"  {icon} {pkg}")
 
         print()
@@ -381,14 +410,19 @@ class HopeDiagnostic:
         deps_ok = sum(1 for v in self.dependencies.values() if v)
         deps_total = len(self.dependencies)
 
+        # Count only required deps for binance readiness
+        optional_pkgs = {"lightgbm", "scikit-learn", "optuna"}
+        required_deps_ok = sum(1 for pkg, ok in self.dependencies.items() if ok and pkg not in optional_pkgs)
+        required_deps_total = sum(1 for pkg in self.dependencies.keys() if pkg not in optional_pkgs)
+
         tests_ok = sum(1 for v in self.test_results.values() if v)
         tests_total = len(self.test_results)
 
-        # Binance readiness
+        # Binance readiness - only checks REQUIRED deps
         binance_ready = (
             overall_readiness >= 80 and
             infra_ok >= infra_total - 1 and
-            deps_ok >= deps_total - 2
+            required_deps_ok >= required_deps_total  # All required deps must be present
         )
 
         report = {
@@ -484,12 +518,21 @@ class HopeDiagnostic:
 
         print()
 
-        # Missing dependencies
+        # Missing dependencies (separate required vs optional)
         missing_deps = [pkg for pkg, ok in report["dependencies"]["details"].items() if not ok]
-        if missing_deps:
-            print("[PKG] MISSING DEPENDENCIES:")
-            for pkg in missing_deps:
+        optional_pkgs = {"lightgbm", "scikit-learn", "optuna"}
+        required_missing = [p for p in missing_deps if p not in optional_pkgs]
+        optional_missing = [p for p in missing_deps if p in optional_pkgs]
+
+        if required_missing:
+            print("[X] MISSING REQUIRED DEPENDENCIES:")
+            for pkg in required_missing:
                 print(f"   pip install {pkg}")
+
+        if optional_missing:
+            print("[WARN] OPTIONAL DEPENDENCIES (degraded mode):")
+            for pkg in optional_missing:
+                print(f"   pip install {pkg}  # optional, fallback available")
 
         print()
 

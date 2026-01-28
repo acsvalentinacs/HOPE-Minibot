@@ -57,7 +57,7 @@ from .metrics import (
     TradeStats,
     DrawdownInfo,
 )
-from .data_loader import validate_klines, DataValidation
+from .data_loader import validate_klines, DataValidation, DataLoader
 
 logger = logging.getLogger(__name__)
 
@@ -606,7 +606,6 @@ class BacktestEngine:
         Returns:
             KlinesResult or None
         """
-        from .data_loader import DataLoader
         loader = DataLoader()
         return loader.load(source, symbol, timeframe, **kwargs)
 
@@ -659,7 +658,6 @@ def load_data(
     Returns:
         KlinesResult or None
     """
-    from .data_loader import DataLoader
     loader = DataLoader()
 
     if source == "synthetic":
