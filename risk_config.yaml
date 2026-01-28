@@ -1,0 +1,100 @@
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-28T16:15:00Z
+# Purpose: Risk Governor configuration for LIVE trading
+# Security: Conservative limits for initial LIVE testing
+# === END SIGNATURE ===
+
+# ==================================================
+# HOPE Risk Governor Configuration
+# Mode: LIVE (conservative)
+# ==================================================
+
+risk_limits:
+  # === POSITION LIMITS ===
+  max_position_notional: 15.0      # Max $15 per single trade
+  max_total_exposure: 50.0         # Max $50 total open positions
+  min_balance_buffer: 10.0         # Keep $10 reserve always
+
+  # === LOSS LIMITS ===
+  max_daily_loss: 30.0             # Stop trading if daily loss > $30
+  max_single_loss: 5.0             # Max loss per single trade $5
+
+  # === ORDER LIMITS ===
+  max_open_orders: 3               # Max 3 concurrent orders
+  max_orders_per_hour: 5           # Rate limit: 5 orders/hour
+  cooldown_seconds: 300            # 5 min between trades same symbol
+
+  # === DATA FRESHNESS ===
+  stale_data_threshold_sec: 60     # Block if data > 60s old
+
+# === SIGNAL FILTERS ===
+signal_filters:
+  min_score: 85                    # Only STRONG signals (score >= 85)
+  min_strength: "STRONG"           # Require STRONG classification
+
+  # Whitelist - only these symbols allowed for LIVE
+  symbol_whitelist:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+
+  # Blacklist - never trade these (high risk)
+  symbol_blacklist:
+    - LEVERUSDT
+    - LUNAUSDT
+    - USTCUSDT
+    - SHIBUSDT
+    - DOGEUSDT
+
+# === STOP LOSS (MANDATORY) ===
+stop_loss:
+  enabled: true
+  default_percent: 3.0             # -3% stop loss on every trade
+  max_percent: 5.0                 # Never allow SL wider than -5%
+  trailing:
+    enabled: false                 # Trailing stop disabled for now
+    activation_percent: 2.0
+    trail_percent: 1.5
+
+# === TAKE PROFIT ===
+take_profit:
+  enabled: true
+  default_percent: 5.0             # +5% TP target
+  partial:
+    enabled: true
+    levels:
+      - percent: 3.0               # At +3%, take 50% profit
+        close_percent: 50
+      - percent: 5.0               # At +5%, take remaining
+        close_percent: 100
+
+# === KILL SWITCH ===
+kill_switch:
+  enabled: true
+  triggers:
+    - type: daily_loss
+      threshold: 30.0              # Stop all trading if loss > $30
+    - type: consecutive_losses
+      count: 3                     # Stop after 3 losses in a row
+    - type: equity_drawdown
+      percent: 10.0                # Stop if equity drops 10%
+
+  recovery:
+    manual_only: true              # Require manual /resume command
+    cooldown_hours: 24             # Auto-resume after 24h (if manual_only=false)
+
+# === EXECUTION SETTINGS ===
+execution:
+  order_type: LIMIT                # LIMIT orders (not market)
+  price_slippage_percent: 0.1      # Max 0.1% slippage
+  timeout_seconds: 30              # Cancel unfilled orders after 30s
+  retry_attempts: 2                # Retry failed orders twice
+
+# === AUDIT LOGGING ===
+audit:
+  enabled: true
+  log_path: "state/audit/risk_decisions.jsonl"
+  log_all_checks: true             # Log both PASS and BLOCK
+  retention_days: 30               # Keep logs for 30 days

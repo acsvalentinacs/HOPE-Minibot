@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-28T14:15:00Z
-# v2.3.4: Fixed heartbeat - use job_queue instead of broken loop.create_task()
+# Modified at: 2026-01-28T16:30:00Z
+# v2.3.5: Added /mode command for DRY/LIVE switching with confirmation
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -1086,12 +1086,13 @@ class HopeMiniBot:
         self._last_restart_ts = 0.0
 
     async def _reply(
-        self, update: Update, text: str, markup: InlineKeyboardMarkup | None = None
+        self, update: Update, text: str, markup: InlineKeyboardMarkup | None = None,
+        parse_mode: str | None = None
     ) -> None:
         if update.message:
-            await update.message.reply_text(text, reply_markup=markup)
+            await update.message.reply_text(text, reply_markup=markup, parse_mode=parse_mode)
         elif update.callback_query and update.callback_query.message:
-            await update.callback_query.message.reply_text(text, reply_markup=markup)
+            await update.callback_query.message.reply_text(text, reply_markup=markup, parse_mode=parse_mode)
 
     async def _guard_admin(self, update: Update) -> bool:
         if not self.allowed_ids:
@@ -1209,11 +1210,12 @@ class HopeMiniBot:
         if not await self._guard_admin(update):
             return
         txt = (
-            "🛠 Команды HOPEminiBOT v2.3:\n"
+            "🛠 Команды HOPEminiBOT v2.3.5:\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "/start — меню\n"
             "/panel — панель + кнопки\n"
             "/status — краткий статус\n"
+            "/mode — ⚙️ режим DRY/LIVE\n"
             "/health — 🏥 статус всех систем\n"
             "/logs — 📋 последние ошибки\n"
             "/balance — баланс\n"
@@ -1395,6 +1397,103 @@ class HopeMiniBot:
             await self._reply(
                 update, f"❌ Не удалось выключить STOP.flag: {type(e).__name__}: {e}"
             )
+
+    async def cmd_mode(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """View or change trading mode: /mode [DRY|LIVE]"""
+        if not await self._guard_admin(update):
+            return
+
+        args = context.args if context.args else []
+        h = _health()
+        current_mode = _mode_from_health(h)
+
+        # No args - just show current mode
+        if not args:
+            await self._reply(
+                update,
+                f"⚙️ Текущий режим: **{current_mode}**\n\n"
+                f"Доступные режимы:\n"
+                f"• `DRY` — симуляция (без реальных ордеров)\n"
+                f"• `LIVE` — реальная торговля\n\n"
+                f"Для смены: `/mode DRY` или `/mode LIVE`",
+                parse_mode="Markdown",
+            )
+            return
+
+        new_mode = args[0].upper().strip()
+        if new_mode not in ("DRY", "LIVE", "MAINNET", "TESTNET"):
+            await self._reply(update, f"❌ Неизвестный режим: {new_mode}\nДопустимо: DRY, LIVE")
+            return
+
+        # Normalize MAINNET -> LIVE, TESTNET -> DRY
+        if new_mode == "MAINNET":
+            new_mode = "LIVE"
+        elif new_mode == "TESTNET":
+            new_mode = "DRY"
+
+        # Same mode - no change
+        if new_mode == current_mode:
+            await self._reply(update, f"ℹ️ Режим уже установлен: {current_mode}")
+            return
+
+        # Switching to LIVE requires confirmation
+        if new_mode == "LIVE":
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Да, включить LIVE", callback_data="confirm_mode_live"),
+                    InlineKeyboardButton("❌ Отмена", callback_data="cancel_action"),
+                ]
+            ])
+            await self._reply(
+                update,
+                "⚠️ **ВНИМАНИЕ: LIVE РЕЖИМ**\n\n"
+                "Бот будет совершать РЕАЛЬНЫЕ сделки!\n"
+                "Risk Governor: max $15/позиция, SL -3%\n\n"
+                "Вы уверены?",
+                keyboard,
+                parse_mode="Markdown",
+            )
+            return
+
+        # Switching to DRY - safe, do immediately
+        await self._do_mode_change(update, new_mode)
+
+    async def _do_mode_change(self, update: Update, new_mode: str) -> None:
+        """Execute mode change."""
+        try:
+            # Update health_v5.json
+            h = _health()
+            h["mode"] = new_mode
+            HEALTH_JSON.write_text(
+                __import__("json").dumps(h, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            # Also write a mode flag file for other components
+            mode_flag = STATE_DIR / "mode.flag"
+            mode_flag.write_text(new_mode, encoding="utf-8")
+
+            uid = update.effective_user.id if update.effective_user else 0
+            _audit_log(uid, "mode_change", True, f"changed to {new_mode}")
+
+            emoji = "🟢" if new_mode == "LIVE" else "⚪"
+            await self._reply(
+                update,
+                f"{emoji} Режим изменён: **{new_mode}**\n\n"
+                + (
+                    "⚠️ LIVE: реальные сделки активны!\n"
+                    "Risk Governor: max $15, SL -3%"
+                    if new_mode == "LIVE"
+                    else "✅ DRY: симуляция, без реальных ордеров"
+                ),
+                parse_mode="Markdown",
+            )
+
+        except Exception as e:
+            self.log.exception("Mode change failed")
+            await self._reply(update, f"❌ Ошибка смены режима: {e}")
 
     def _paper_equity_usd(self) -> Optional[float]:
         v = os.getenv("HOPE_DRY_EQUITY_USD") or os.getenv("HOPE_PAPER_EQUITY_USD") or ""
@@ -2173,6 +2272,9 @@ class HopeMiniBot:
         if data == "confirm_stop_on":
             await self._do_stop_on(update)
             return
+        if data == "confirm_mode_live":
+            await self._do_mode_change(update, "LIVE")
+            return
         if data == "cancel_action":
             await self._reply(update, "❌ Действие отменено.")
             return
@@ -2285,19 +2387,20 @@ class HopeMiniBot:
         cmds = [
             BotCommand("panel", "панель + кнопки"),
             BotCommand("status", "краткий статус"),
-            BotCommand("balance", "баланс (DRY: paper через HOPE_DRY_EQUITY_USD)"),
+            BotCommand("mode", "⚙️ режим DRY/LIVE"),
+            BotCommand("balance", "баланс"),
             BotCommand("stop", "статус STOP.flag"),
-            BotCommand("stop_on", "включить STOP.flag"),
+            BotCommand("stop_on", "включить STOP.flag ⚠️"),
             BotCommand("stop_off", "выключить STOP.flag"),
-            BotCommand("morning", "запуск стека"),
-            BotCommand("night", "stop + report"),
-            BotCommand("restart", "перезапуск стека (не блокирует)"),
-            BotCommand("stack", "🧱 управление HOPE stack (START/STOP/FIXDUP)"),
-            BotCommand("chat", "💬 чат друзей (Friend Bridge)"),
-            BotCommand("signals", "последние сигналы"),
-            BotCommand("trades", "последние сделки"),
+            BotCommand("morning", "🌅 запуск стека"),
+            BotCommand("night", "🌙 stop + report"),
+            BotCommand("restart", "🔄 перезапуск стека"),
+            BotCommand("stack", "🧱 управление stack"),
+            BotCommand("chat", "💬 чат друзей"),
+            BotCommand("signals", "📡 последние сигналы"),
+            BotCommand("trades", "📊 последние сделки"),
             BotCommand("diag", "диагностика"),
-            BotCommand("health", "🏥 статус всех систем"),
+            BotCommand("health", "🏥 статус систем"),
             BotCommand("logs", "📋 последние ошибки"),
             BotCommand("whoami", "твой ID"),
             BotCommand("version", "версия"),
@@ -2346,6 +2449,7 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("whoami", self.cmd_whoami))
         app.add_handler(CommandHandler("version", self.cmd_version))
         app.add_handler(CommandHandler("help", self.cmd_help))
+        app.add_handler(CommandHandler("mode", self.cmd_mode))
 
         app.add_handler(CallbackQueryHandler(self.on_callback))
         return app
