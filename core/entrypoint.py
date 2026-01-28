@@ -1,6 +1,8 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T02:00:00Z
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-28T03:00:00Z
 # Purpose: Unified Live Trading Entrypoint - single path to production
 # Security: Gatekeeper must pass before ANY trading code executes
 # === END SIGNATURE ===
@@ -42,7 +44,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 # Configure logging FIRST (before any imports that might log)
 logging.basicConfig(
@@ -88,6 +90,13 @@ class TradingContext:
         self._order_router = None
         self._ml_predictor = None
         self._feature_extractor = None
+        self._klines_provider = None
+        self._signal_engine = None
+        self._strategy_orchestrator = None
+
+        # Trading state
+        self._open_positions: List[Any] = []
+        self._last_signal_id: Optional[str] = None
 
         logger.info("TradingContext created: mode=%s, symbol=%s", mode, symbol)
 
@@ -110,6 +119,15 @@ class TradingContext:
 
             # 4. Order Router
             self._init_order_router()
+
+            # 5. Market Data Provider
+            self._init_klines_provider()
+
+            # 6. Signal Engine
+            self._init_signal_engine()
+
+            # 7. Strategy Orchestrator
+            self._init_strategy_orchestrator()
 
             logger.info("All trading components initialized")
             return True
@@ -168,6 +186,55 @@ class TradingContext:
 
         except ImportError as e:
             logger.warning("OrderRouter not available: %s", e)
+
+    def _init_klines_provider(self) -> None:
+        """Initialize market data provider."""
+        try:
+            from core.market.klines_provider import get_klines_provider
+
+            # KlinesProvider uses public API (no auth needed), works for all modes
+            self._klines_provider = get_klines_provider()
+            logger.info("KlinesProvider initialized")
+
+        except ImportError as e:
+            logger.warning("KlinesProvider not available: %s", e)
+
+    def _init_signal_engine(self) -> None:
+        """Initialize signal generation engine."""
+        try:
+            from core.ai.signal_engine import SignalEngine
+
+            self._signal_engine = SignalEngine()
+            logger.info("SignalEngine initialized")
+
+        except ImportError as e:
+            logger.warning("SignalEngine not available: %s", e)
+
+    def _init_strategy_orchestrator(self) -> None:
+        """Initialize strategy orchestrator."""
+        try:
+            from core.strategy.orchestrator import StrategyOrchestrator, OrchestratorConfig
+            from core.strategy.momentum import MomentumStrategy
+            from core.strategy.breakout import BreakoutStrategy
+            from core.strategy.mean_reversion import MeanReversionStrategy
+
+            # Create strategies
+            strategies = [
+                MomentumStrategy(),
+                BreakoutStrategy(),
+                MeanReversionStrategy(),
+            ]
+
+            config = OrchestratorConfig(
+                spot_only=True,  # Only LONG positions on Spot
+                dedup_ttl_seconds=300,  # 5 min dedup
+            )
+
+            self._strategy_orchestrator = StrategyOrchestrator(strategies, config)
+            logger.info("StrategyOrchestrator initialized: %d strategies", len(strategies))
+
+        except ImportError as e:
+            logger.warning("StrategyOrchestrator not available: %s", e)
 
     def get_ml_prediction(self, market_data) -> Optional[float]:
         """
@@ -287,20 +354,270 @@ class LiveTradingRunner:
             self._running = False
 
     def _trading_cycle(self, cycle: int) -> None:
-        """Execute one trading cycle."""
+        """
+        Execute one trading cycle.
+
+        Flow:
+        1. Fetch market data (KlinesProvider)
+        2. Convert to MarketData
+        3. Get ML prediction
+        4. Run StrategyOrchestrator.decide()
+        5. If ENTER: execute order
+        6. If EXIT: close position
+        7. Record results
+        """
         if cycle % 60 == 0:  # Log every minute
-            logger.info("Trading cycle %d (mode=%s)", cycle, self.context.mode)
+            logger.info("Trading cycle %d (mode=%s, positions=%d)",
+                       cycle, self.context.mode, len(self.context._open_positions))
 
         # In dry-run mode, just heartbeat
         if self.context.dry_run:
             return
 
-        # TODO: Implement actual trading logic
-        # 1. Fetch market data
-        # 2. Get ML prediction: ml_score = context.get_ml_prediction(market_data)
-        # 3. Run strategy
-        # 4. Execute order if signal
-        # 5. Record trade: context.record_trade(result)
+        # === STEP 1: Fetch market data ===
+        market_data = self._fetch_market_data()
+        if market_data is None:
+            logger.debug("No market data available, skipping cycle")
+            return
+
+        # === STEP 2: Get ML prediction ===
+        ml_prediction = self.context.get_ml_prediction(market_data)
+
+        # === STEP 3: Get signal from SignalEngine ===
+        signal = None
+        if self.context._signal_engine:
+            signal = self.context._signal_engine.generate_signal(
+                market_data=market_data,
+                sentiment_score=None,  # TODO: integrate sentiment
+                ml_prediction=ml_prediction,
+            )
+
+        # === STEP 4: Run Strategy Orchestrator ===
+        decision = self._get_orchestrator_decision(market_data)
+        if decision is None:
+            return
+
+        # === STEP 5: Execute decision ===
+        if decision.action.value == "ENTER" and decision.signal:
+            self._execute_entry(decision)
+        elif decision.action.value == "EXIT":
+            self._execute_exit(decision, market_data)
+
+    def _fetch_market_data(self):
+        """Fetch market data and convert to MarketData."""
+        if not self.context._klines_provider:
+            return None
+
+        try:
+            from core.ai.signal_engine import MarketData
+
+            klines = self.context._klines_provider.get_klines(
+                symbol=self.context.symbol,
+                timeframe="15m",
+                limit=100,
+            )
+
+            if klines is None or klines.candle_count < 35:
+                logger.warning("Insufficient klines: %d",
+                             klines.candle_count if klines else 0)
+                return None
+
+            if klines.is_stale:
+                logger.warning("Stale klines data, skipping")
+                return None
+
+            return MarketData(
+                symbol=self.context.symbol,
+                timestamp=int(time.time()),
+                opens=klines.opens,
+                highs=klines.highs,
+                lows=klines.lows,
+                closes=klines.closes,
+                volumes=klines.volumes,
+            )
+
+        except Exception as e:
+            logger.error("Failed to fetch market data: %s", e)
+            return None
+
+    def _get_orchestrator_decision(self, market_data):
+        """Get decision from strategy orchestrator."""
+        if not self.context._strategy_orchestrator:
+            return None
+
+        try:
+            from core.strategy.base import Position
+
+            # Convert open positions to orchestrator format
+            positions = []
+            for pos in self.context._open_positions:
+                if hasattr(pos, 'symbol'):
+                    positions.append(pos)
+
+            decision = self.context._strategy_orchestrator.decide(
+                market_data=market_data,
+                current_positions=positions,
+                timeframe="15m",
+            )
+
+            if decision.is_actionable:
+                logger.info("Orchestrator decision: %s (%s) confidence=%.2f",
+                          decision.action.value, decision.strategy_name, decision.confidence)
+
+            return decision
+
+        except Exception as e:
+            logger.error("Orchestrator error: %s", e)
+            return None
+
+    def _execute_entry(self, decision) -> None:
+        """Execute entry order."""
+        if not self.context._order_router:
+            logger.warning("OrderRouter not available, skipping entry")
+            return
+
+        if not decision.signal:
+            logger.warning("No signal in decision, skipping entry")
+            return
+
+        try:
+            from core.trade.risk_engine import PortfolioSnapshot
+
+            # Create portfolio snapshot for risk validation
+            portfolio = PortfolioSnapshot(
+                equity_usd=self.context.quote_amount * 10,  # Assume 10x of trade size
+                open_positions=len(self.context._open_positions),
+                daily_pnl_usd=0.0,  # TODO: track daily PnL
+                start_of_day_equity=self.context.quote_amount * 10,
+                timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                source="entrypoint",
+            )
+
+            # Determine side from signal direction
+            side = "BUY" if decision.signal.direction.value == "LONG" else "SELL"
+
+            # Execute order
+            result = self.context._order_router.execute_order(
+                symbol=self.context.symbol,
+                side=side,
+                size_usd=self.context.quote_amount,
+                portfolio=portfolio,
+                signal_id=decision.signal.signal_id,
+            )
+
+            if result.success:
+                logger.info("ORDER EXECUTED: %s %s %.2f USD @ %.2f",
+                          side, self.context.symbol, self.context.quote_amount,
+                          result.avg_price or 0)
+
+                # Track position
+                self._track_new_position(decision, result)
+
+                # Record trade
+                self.context.record_trade({
+                    "client_order_id": result.client_order_id,
+                    "symbol": self.context.symbol,
+                    "side": side,
+                    "avg_price": result.avg_price,
+                    "executed_qty": result.executed_qty,
+                })
+            else:
+                logger.warning("Order failed: %s", result.reason)
+
+        except Exception as e:
+            logger.error("Entry execution error: %s", e)
+
+    def _execute_exit(self, decision, market_data) -> None:
+        """Execute exit for open positions."""
+        if not self.context._order_router:
+            return
+
+        if not self.context._open_positions:
+            return
+
+        try:
+            from core.trade.risk_engine import PortfolioSnapshot
+
+            # Close first matching position
+            for pos in self.context._open_positions[:]:
+                if hasattr(pos, 'symbol') and pos.symbol == self.context.symbol:
+                    # Create portfolio snapshot
+                    portfolio = PortfolioSnapshot(
+                        equity_usd=self.context.quote_amount * 10,
+                        open_positions=len(self.context._open_positions),
+                        daily_pnl_usd=0.0,
+                        start_of_day_equity=self.context.quote_amount * 10,
+                        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                        source="entrypoint",
+                    )
+
+                    # Exit is opposite of position side
+                    exit_side = "SELL" if getattr(pos, 'side', None) == "LONG" else "BUY"
+
+                    result = self.context._order_router.execute_order(
+                        symbol=self.context.symbol,
+                        side=exit_side,
+                        size_usd=self.context.quote_amount,
+                        portfolio=portfolio,
+                        signal_id=f"exit_{int(time.time())}",
+                    )
+
+                    if result.success:
+                        logger.info("POSITION CLOSED: %s @ %.2f",
+                                  self.context.symbol, result.avg_price or 0)
+
+                        # Remove from tracking
+                        self.context._open_positions.remove(pos)
+
+                        # Record trade
+                        self.context.record_trade({
+                            "client_order_id": result.client_order_id,
+                            "symbol": self.context.symbol,
+                            "side": exit_side,
+                            "avg_price": result.avg_price,
+                            "executed_qty": result.executed_qty,
+                            "pnl": self._calc_pnl(pos, result.avg_price),
+                        })
+                    break
+
+        except Exception as e:
+            logger.error("Exit execution error: %s", e)
+
+    def _track_new_position(self, decision, result) -> None:
+        """Track new position after entry."""
+        try:
+            from core.strategy.base import Position, PositionSide
+
+            if decision.signal:
+                pos = Position(
+                    symbol=self.context.symbol,
+                    side=PositionSide.LONG if decision.signal.direction.value == "LONG" else PositionSide.SHORT,
+                    entry_price=result.avg_price or 0,
+                    size=result.executed_qty or 0,
+                    stop_loss=decision.signal.stop_loss,
+                    take_profit=decision.signal.take_profit,
+                    signal_id=decision.signal.signal_id,
+                    entry_time=int(time.time()),
+                )
+                self.context._open_positions.append(pos)
+                logger.debug("Position tracked: %s", pos)
+
+        except Exception as e:
+            logger.warning("Failed to track position: %s", e)
+
+    def _calc_pnl(self, position, exit_price: float) -> float:
+        """Calculate PnL for position."""
+        try:
+            entry = getattr(position, 'entry_price', 0)
+            size = getattr(position, 'size', 0)
+            side = getattr(position, 'side', None)
+
+            if side and side.value == "LONG":
+                return (exit_price - entry) * size
+            else:
+                return (entry - exit_price) * size
+        except Exception:
+            return 0.0
 
     def request_shutdown(self) -> None:
         """Request graceful shutdown."""
