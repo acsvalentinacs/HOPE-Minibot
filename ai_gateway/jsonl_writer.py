@@ -3,6 +3,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 03:38:00 UTC
 # Purpose: Atomic JSONL writer for AI artifacts with rotation
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 14:00:00 UTC
+# FIX: pydantic v2 compatibility (.json() -> .model_dump_json())
 # === END SIGNATURE ===
 """
 AI-Gateway JSONL Writer: Atomic writes with rotation and cleanup.
@@ -17,7 +20,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -64,7 +67,7 @@ class JSONLWriter:
 
     def _get_rotated_file(self, module: str) -> Path:
         """Get path for rotated file with timestamp."""
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d_%H%M%S")
         return self._state_dir / f"{module}_{ts}.jsonl"
 
     def _needs_rotation(self, file_path: Path) -> bool:
@@ -138,9 +141,13 @@ class JSONLWriter:
         self._rotate_file(module)
         self._cleanup_old_files()
 
-        # Prepare JSON line
+        # Prepare JSON line (pydantic v1/v2 compatible)
         try:
-            json_line = artifact.json(ensure_ascii=False) + "\n"
+            # pydantic v2: model_dump_json(), v1: json()
+            if hasattr(artifact, 'model_dump_json'):
+                json_line = artifact.model_dump_json() + "\n"
+            else:
+                json_line = artifact.json(ensure_ascii=False) + "\n"
         except Exception as e:
             logger.error(f"Failed to serialize artifact: {e}")
             return False
@@ -197,7 +204,7 @@ class JSONLWriter:
         """
         # Add timestamp if not present
         if "timestamp" not in data:
-            data["timestamp"] = datetime.utcnow().isoformat() + "Z"
+            data["timestamp"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
         try:
             json_line = json.dumps(data, ensure_ascii=False, default=str) + "\n"
@@ -265,7 +272,7 @@ class JSONLWriter:
             if created_at.endswith("Z"):
                 created_at = created_at[:-1]
             created_dt = datetime.fromisoformat(created_at)
-            age = (datetime.utcnow() - created_dt).total_seconds()
+            age = (datetime.now(timezone.utc).replace(tzinfo=None) - created_dt).total_seconds()
 
             if age > ttl_seconds:
                 logger.debug(f"Artifact {module} expired (age={age:.0f}s, ttl={ttl_seconds}s)")

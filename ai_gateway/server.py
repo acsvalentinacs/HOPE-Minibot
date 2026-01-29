@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 04:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-29 16:15:00 UTC
-# Change: Added lifecycle endpoints (start/stop/restart) and diagnostics
+# Modified at: 2026-01-29 18:40:00 UTC
+# Change: Integrated PriceFeedBridge for real-time outcome tracking
 # Purpose: FastAPI HTTP server for AI-Gateway
 # === END SIGNATURE ===
 """
@@ -201,10 +201,29 @@ def create_app() -> "FastAPI":
         except Exception as e:
             logger.warning(f"Auto-start failed: {e}")
 
+        # Start Price Feed Bridge for real-time outcome tracking
+        try:
+            from .feeds.price_bridge import get_price_bridge
+            bridge = get_price_bridge()
+            if await bridge.start():
+                logger.info("PriceFeedBridge auto-started for outcome tracking")
+        except Exception as e:
+            logger.warning(f"PriceFeedBridge auto-start failed: {e}")
+
         yield
 
         # Stop all modules gracefully
         logger.info("AI-Gateway server shutting down...")
+
+        # Stop Price Feed Bridge
+        try:
+            from .feeds.price_bridge import get_price_bridge
+            bridge = get_price_bridge()
+            await bridge.stop()
+            logger.info("PriceFeedBridge stopped")
+        except Exception as e:
+            logger.warning(f"PriceFeedBridge shutdown failed: {e}")
+
         try:
             await scheduler.stop_all(timeout=10.0)
         except Exception as e:
@@ -368,6 +387,156 @@ def create_app() -> "FastAPI":
         diag = GatewayDiagnostics()
         report = await diag.run_all_checks()
         return {"block": format_health_report_telegram(report)}
+
+    # === Price Feed Bridge (Real-time Outcome Tracking) ===
+
+    @app.get("/price-feed/status")
+    async def get_price_feed_status():
+        """Get price feed bridge status and statistics."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        return {
+            "status": "running" if bridge.is_running else "stopped",
+            "connected": bridge.is_connected,
+            "stats": bridge.get_stats(),
+        }
+
+    @app.get("/price-feed/prices")
+    async def get_current_prices():
+        """Get all cached prices from the feed."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        prices = bridge.get_all_prices()
+        return {
+            "count": len(prices),
+            "prices": prices,
+        }
+
+    @app.get("/price-feed/prices/{symbol}")
+    async def get_symbol_price(symbol: str):
+        """Get cached price for a specific symbol."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        price = bridge.get_price(symbol)
+        if price is None:
+            raise HTTPException(status_code=404, detail=f"No price for {symbol}")
+        return {"symbol": symbol.upper(), "price": price}
+
+    @app.post("/price-feed/start")
+    async def start_price_feed():
+        """Start the price feed bridge."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        if bridge.is_running:
+            return {"status": "already_running"}
+        success = await bridge.start()
+        return {"status": "started" if success else "failed"}
+
+    @app.post("/price-feed/stop")
+    async def stop_price_feed():
+        """Stop the price feed bridge."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        if not bridge.is_running:
+            return {"status": "already_stopped"}
+        await bridge.stop()
+        return {"status": "stopped"}
+
+    @app.post("/price-feed/subscribe")
+    async def subscribe_symbols(symbols: List[str]):
+        """Subscribe to additional symbols."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        feed = bridge._get_feed()
+        await feed.subscribe(symbols)
+        return {"status": "subscribed", "symbols": symbols}
+
+    # === Outcome Tracking ===
+
+    @app.get("/outcomes/stats")
+    async def get_outcome_stats():
+        """Get outcome tracking statistics."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        tracker = bridge._get_outcome_tracker()
+        return {
+            "stats": tracker.get_stats(),
+            "active_symbols": list(tracker.active_symbols),
+        }
+
+    @app.get("/outcomes/pending")
+    async def get_pending_outcomes():
+        """Get list of signals pending outcome."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        tracker = bridge._get_outcome_tracker()
+        return {
+            "count": len(tracker._active),
+            "signals": [
+                {
+                    "signal_id": s.signal_id,
+                    "symbol": s.symbol,
+                    "entry_price": s.entry_price,
+                    "direction": s.direction,
+                    "entry_time": s.entry_time.isoformat() + "Z",
+                    "prices_collected": len(s.prices),
+                    "mfe": round(s.mfe, 4),
+                    "mae": round(s.mae, 4),
+                }
+                for s in list(tracker._active.values())[:50]  # Limit to 50
+            ],
+        }
+
+    @app.get("/outcomes/completed")
+    async def get_completed_outcomes(limit: int = 20):
+        """Get recent completed outcomes."""
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        tracker = bridge._get_outcome_tracker()
+        outcomes = tracker.get_completed_outcomes()
+        return {
+            "total": len(outcomes),
+            "outcomes": outcomes[-limit:],  # Last N
+        }
+
+    @app.post("/outcomes/track")
+    async def track_signal(signal: Dict[str, Any]):
+        """
+        Register a signal for outcome tracking.
+
+        Required fields in signal:
+        - symbol: Trading pair (e.g., "BTCUSDT")
+        - price: Entry price
+        - direction: "Long" or "Short" (default: "Long")
+
+        Returns signal_id for tracking.
+        """
+        from .feeds.price_bridge import get_price_bridge
+        bridge = get_price_bridge()
+        tracker = bridge._get_outcome_tracker()
+        feed = bridge._get_feed()
+
+        # Validate required fields
+        if "symbol" not in signal:
+            raise HTTPException(status_code=400, detail="Missing 'symbol' field")
+        if "price" not in signal:
+            raise HTTPException(status_code=400, detail="Missing 'price' field")
+
+        # Register signal
+        signal_id = tracker.register_signal(signal)
+
+        # Auto-subscribe to symbol for price updates
+        symbol = signal.get("symbol", "").upper()
+        if not symbol.endswith("USDT"):
+            symbol = symbol + "USDT"
+        await feed.subscribe([symbol])
+
+        return {
+            "status": "tracking",
+            "signal_id": signal_id,
+            "symbol": symbol,
+            "entry_price": signal.get("price"),
+        }
 
     # === Module Execution ===
 
