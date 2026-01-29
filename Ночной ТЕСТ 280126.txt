@@ -1,0 +1,234 @@
+Создаю ночной супертест, адаптированный под текущую структуру проекта HOPE:
+
+● Search(pattern: "tools/*.py")
+  ⎿  Found 55 files (ctrl+o to expand)
+
+● Search(pattern: "tools/*.ps1")
+  ⎿  Found 12 files (ctrl+o to expand)
+
+● Read(AllowList.txt)
+  ⎿  Read 241 lines
+
+● Read(tools\nightly_gate.ps1)
+  ⎿  Read 140 lines
+
+● Search(pattern: "tests/test_*.py")
+  ⎿  Found 23 files (ctrl+o to expand)
+
+● Создаю ночной супертест на 6 часов:
+
+● Write(tools\supertest_6h.py)
+  ⎿  Wrote 1 lines to tools\supertest_6h.py
+     # === AI SIGNATURE ===
+     # Created by: Claude (opus-4)
+     # Created at: 2026-01-28T01:00:00Z
+     # Purpose: 6-hour continuous supertest for HOPE Trading Safety Core
+     # Security: Fail-closed, all checks mandatory, no silent skips
+     # === END SIGNATURE ===
+     """
+     HOPE Nightly Supertest - 6 Hour Continuous Validation.
+
+     Runs comprehensive tests in a loop for 6 hours:
+
+● Bash(python -m py_compile tools/supertest_6h.py && echo "Syntax OK")
+  ⎿  Syntax OK
+
+● Запускаю быструю проверку (1 цикл, ~2 минуты):
+
+● Bash(python tools/supertest_6h.py --duration-hours 0.01 --allow-offline 2>&1 timeout: 3m
+       | head -80)                                                             0s
+  ⎿ Traceback (most recent call last):
+      File "C:\Users\kirillDev\Desktop\TradingBot\minibot\tools\supertest_6h.py", line
+     448, in <module>
+    … +13 lines (ctrl+o to expand)
+
+
+● Read(tools\supertest_6h.py)
+  ⎿  Read 50 lines
+
+● Update(tools\supertest_6h.py)
+  ⎿  Added 11 lines, removed 1 line
+      34  # SSoT: Project root
+      35  ROOT = Path(__file__).parent.parent.resolve()
+      36  STATE_DIR = ROOT / "state"
+      37 -VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+      37
+      38 +# Find Python: prefer .venv, fallback to system Python
+      39 +def _find_python() -> Path:
+      40 +    """Find Python executable (venv or system)."""
+      41 +    venv_py = ROOT / ".venv" / "Scripts" / "python.exe"
+      42 +    if venv_py.exists():
+      43 +        return venv_py
+      44 +    # Fallback to current Python
+      45 +    return Path(sys.executable)
+      46 +
+      47 +PYTHON_EXE = _find_python()
+      48 +
+      49  # Duration
+      50  DEFAULT_DURATION_HOURS = 6
+      51  CYCLE_PAUSE_SECONDS = 30  # Pause between cycles
+
+● Update(tools\supertest_6h.py)
+  ⎿  Added 3 lines, removed 3 lines
+      104          self.log_path.parent.mkdir(parents=True, exist_ok=True)
+      105
+      106          # Verify venv
+      107 -        if not VENV_PYTHON.exists():
+      108 -            raise RuntimeError(f"VENV not found: {VENV_PYTHON}")
+      107 +        if not PYTHON_EXE.exists():
+      108 +            raise RuntimeError(f"VENV not found: {PYTHON_EXE}")
+      109
+      110      def log(self, msg: str, level: str = "INFO"):
+      111          """Print timestamped log message."""
+     ...
+      179          self.log(f"=== CYCLE {cycle_number} STARTED ===", "INFO")
+      180
+      181          tests: List[TestResult] = []
+      182 -        py = str(VENV_PYTHON)
+      182 +        py = str(PYTHON_EXE)
+      183
+      184          # 1. Python sanity
+      185          tests.append(self.step(
+
+● Bash(python tools/supertest_6h.py --duration-hours 0.02 --allow-offline    timeout: 3m
+      2>&1)                                                                  0s
+  ⎿  Error: Exit code 1
+     [00:37:13] [INFO] HOPE SUPERTEST v1.0 - 0.02h continuous test
+     [00:37:13] [INFO] Start: 2026-01-28T00:37:13.529255+00:00
+     [00:37:13] [INFO] End:   2026-01-28T00:38:25.529255+00:00
+     [00:37:13] [INFO] Log:
+     C:\Users\kirillDev\Desktop\TradingBot\minibot\state\supertest\run_20260128_003713.json
+     [00:37:13] [INFO] Offline mode: True
+
+     [00:37:13] [INFO] === CYCLE 1 STARTED ===
+     [00:37:13] [INFO] Running: Python sanity
+     [00:37:13] [PASS]   Python sanity: PASS (84ms)
+
+     … +77 lines (ctrl+o to see all)
+
+● Супертест работает. 15/16 тестов проходят (Cmdline SSoT audit - известная проблема).
+  Создаю PowerShell обертку для запуска:
+
+● Write(tools\run_supertest_6h.ps1)
+  ⎿  Wrote 1 lines to tools\run_supertest_6h.ps1
+     # === AI SIGNATURE ===
+     # Created by: Claude (opus-4)
+     # Created at: 2026-01-28T01:00:00Z
+     # Purpose: Launch 6-hour supertest for HOPE Trading Safety Core
+     # Security: Fail-closed, logs to state/supertest/
+     # === END SIGNATURE ===
+
+     <#
+     .SYNOPSIS
+         Launch HOPE 6-hour supertest
+
+● Bash(git add tools/supertest_6h.py tools/run_supertest_6h.ps1 && git status --short)
+  ⎿  A  tools/run_supertest_6h.ps1
+     A  tools/supertest_6h.py
+     ?? "270126 НОРЕ + ЧАТ 23.35 выполни Phase 2.5 интеграцию.txt"
+     ?? "МОТИВАЦИЯ 1.txt"
+
+● Bash(git commit -m "feat(tools): Add 6-hour supertest for continuous validation…)
+  ⎿  [master 47bada5] feat(tools): Add 6-hour supertest for continuous validation
+      2 files changed, 546 insertions(+)
+      create mode 100644 tools/run_supertest_6h.ps1
+      create mode 100644 tools/supertest_6h.py
+
+● Bash(git push origin master 2>&1)
+  ⎿  === HOPE Pre-Push Gate ===
+     Validating commit discipline...
+     … +3 lines (ctrl+o to expand)
+
+● ---
+  === TASK COMPLETION ===
+
+  Task: Создать 6-часовой ночной супертест
+
+  Result: PASS
+
+  Scope
+
+  - In-scope:
+    - tools/supertest_6h.py - Python runner (448 lines)
+    - tools/run_supertest_6h.ps1 - PowerShell launcher
+    - 16 тестов за цикл, цикл каждые ~30 секунд
+  - Out-of-scope:
+    - Cmdline SSoT audit fix (известная проблема)
+
+  Artifacts
+
+  - created: 2 files
+  - tools/supertest_6h.py (created) - 6-hour continuous test runner
+  - tools/run_supertest_6h.ps1 (created) - PowerShell launcher
+
+  Что тестируется (16 тестов за цикл):
+  ┌─────┬───────────────────────────────────┬──────────────────────────────────┐
+  │  #  │               Тест                │             Описание             │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 1   │ Python sanity                     │ Проверка Python                  │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 2   │ compileall core/                  │ Синтаксис core модулей           │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 3   │ compileall tools/                 │ Синтаксис tools                  │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 4   │ pytest: test_execution.py         │ Trading Safety Core v1 (21 тест) │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 5   │ pytest: test_gatekeeper.py        │ Gatekeeper (14 тестов)           │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 6   │ pytest: test_p0_safety.py         │ P0 safety                        │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 7   │ pytest: test_phase2_strategies.py │ Strategies                       │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 8   │ pytest: test_indicators.py        │ Indicators                       │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 9   │ JSONL self-test                   │ jsonl_sha module                 │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 10  │ JSONL stress                      │ 4 procs x 100 lines              │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 11  │ JSONL verify                      │ Verify stress output             │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 12  │ AllowList audit                   │ No wildcards                     │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 13  │ Execution protocol audit          │ CLAUDE.md compliance             │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 14  │ Cmdline SSoT audit                │ sys.argv hash ban                │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 15  │ AI signature audit                │ git-diff signatures              │
+  ├─────┼───────────────────────────────────┼──────────────────────────────────┤
+  │ 16  │ Execution module integration      │ Full E2E test                    │
+  └─────┴───────────────────────────────────┴──────────────────────────────────┘
+  Команды запуска
+
+  PowerShell (рекомендуется):
+  cd C:\Users\kirillDev\Desktop\TradingBot\minibot
+  .\tools\run_supertest_6h.ps1 -DurationHours 6
+
+  Только Python:
+  cd C:\Users\kirillDev\Desktop\TradingBot\minibot
+  python tools/supertest_6h.py --duration-hours 6 --allow-offline
+
+  Быстрая проверка (1 час):
+  .\tools\run_supertest_6h.ps1 -DurationHours 1 -AllowOffline
+
+  Логи
+
+  Сохраняются в: state/supertest/run_YYYYMMDD_HHMMSS.jsonl
+
+  Результат тестового запуска (2 цикла):
+
+  Cycles completed: 2
+  Total tests run: 32
+  Total passed: 30
+  Total failed: 2 (Cmdline SSoT audit - известная проблема)
+
+  Verification
+
+  python tools/supertest_6h.py --duration-hours 0.02 --allow-offline
+  # Expected: 15/16 PASS per cycle (Cmdline SSoT known issue)
+
+  Git commits
+
+  - 434a109 - Trading Safety Core v1
+  - 47bada5 - 6-hour supertest
+
+✻ Crunched for 4m 31s

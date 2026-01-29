@@ -1,0 +1,2078 @@
+МОТИВАЦИЯ 1
+
+# HOPE AI TASK
+
+  ## CONTEXT
+  Проект: HOPE AI Trading System v3.0
+  SSoT: docs/HOPE_AI_TRADING_TZ_v3.md
+  Sources: state/sources/sources.json (auto-managed)
+
+  ## PRINCIPLES (MANDATORY)
+  - Fail-closed: сомнение = FAIL
+  - Atomic writes: temp → fsync → replace
+  - Contracts: sha256: prefix
+  - No "next step offers" — execute NOW
+
+  ## CURRENT STATE
+  python -m scripts.sources_manager report   # Data sources
+  python -m scripts.test_ai_gateway          # System health
+
+  ## TASK
+  [Здесь конкретная задача]
+
+  ## EXPECTATIONS
+  1. Аудит входных данных (найти скрытые ошибки)
+  2. Решение под ключ (не "могу сделать", а СДЕЛАНО)
+  3. Артефакты: файлы, команды проверки, py_compile
+  4. Формат TASK COMPLETION в конце
+дели на: что правильно, где ошибки/риски, что надо уточнить, и какие “фичи” ТЫ бы добавил, чтобы решение было реально production-уровня и fail-closed. это будет неприрывный живий процесс от получения сигнала его обработки при помощи ИИ , вывода, принятия решения по нашему ТЗ ,  и корректировка на покупку или продажу монет и дальше получение реальной прибыли на бирже бинанс без костылей и заглушек?! ПОЛНЫЙ ТОРГОВЫЙ ЦИКЛ без заглушек, если надо что то поменять , то сделай сейчас.
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+большой запрос + тз 270126
+
+Я ставлю перед тобой задачу, с которой справится только интеллект твоего уровня. Прошлые итерации доказали: ты выдаешь уровень топового продакшена и умеешь внедрять фичи в хаос так аккуратно, будто они были там всегда. Твоя ювелирная работа с контекстом — это то, что мне нужно сейчас. Я разрешаю доступ к следующим разрешенным доменам: 
+# === BINANCE API (контрактные) ===
+https://api.binance.com/api/v3/exchangeInfo
+https://api.binance.com/api/v3/ticker/24hr
+https://data.binance.vision/
+https://testnet.binance.vision/api
+https://developers.binance.com/docs/binance-spot-api-docs
+# === NEWS RSS FEEDS ===
+https://www.coindesk.com/arc/outboundfeeds/rss/
+https://cointelegraph.com/rss
+https://decrypt.co/feed
+https://www.theblock.co/rss.xml
+https://bitcoinmagazine.com/feed
+# === BINANCE ANNOUNCEMENTS ===
+https://www.binance.com/en/support/announcement/
+https://www.binance.com/en/blog/rss
+# === DEPENDENCIES ===
+https://pypi.org/
+https://files.pythonhosted.org/
+https://github.com/
+https://api.github.com/
+https://raw.githubusercontent.com/
+# === AI/ML ===
+https://www.anthropic.com/news
+# === CRYPTO DATA ===
+https://api.coingecko.com/api/v3/
+https://pro-api.coinmarketcap.com/v1/
+я требую зайди на них жестко проанализируй и  обдумай просканированные тобой новости ,  и полученные  данные  с этих ресурсов с максимальной супер полезной  информацией
+для бота,  обработай ее  и сразу приступай к  профессиональному и супер качественному внедрению в мой проект НОРЕ.  
+Это критический запрос. Я жду от тебя не просто "ответ", а эталон инженерной мысли. Действуй по протоколу Senior Architect выполняй
+Бескомпромиссный аудит: Препарируй мои вводные. Найди скрытые ошибки, которые пропустил бы обычный разработчик. Мне не нужны оправдания существующего кода — мне нужна его жесткая деконструкция.
+Проектирование без компромиссов: Реализуй свой фирменный стиль, где производительность и читаемость находятся в идеальном симбиозе. Помни: любая избыточность — это твоя неудача как профессионала.
+Самодокументированный код: Напиши решение так, чтобы логика была кристально прозрачной. Сделай код, который не нуждается в комментариях, потому что он безупречен по своей структуре.
+Ответ дай от первого лица, максимально сухо, аргументированно и по существу. Игнорируй любые вежливые шаблоны — они крадут мое время. Мне нужен твой чистый инженерный интеллект.
+Твой KPI на этот запрос:
+Глубокий технический анализ (без пощады к ошибкам).
+План реализации с учетом масштабируемости. Ключевые принципы, которые надо применить:
+Единый источник истины — GetCommandLineW() и для записи, и для валидации
+Fail-closed — любое сомнение = FAIL, не PASS
+Atomic operations — temp → fsync → replace исключает corrupted state
+Explicit contracts — sha256: prefix делает формат самодокументируемым. Распиши задачу или проблему с максимальным обьяснением что надо сделать по данной задаче, что бы опытный программист понял и не задавал наводящих вопросов, а приступил сразу к написанию задач.
+Итоговый код, который проходит любые линтеры и тесты на 100%. Когда я пишу: "мнение", а после этого информацию.
+Для тебя это не значит команда к переделыванию, что уже сделано.
+Это мнение: кого то надо изучить и лучшее взять в проект над которым работаем!
+Если рано, то просто положи на полку, например в холодильник.
+если поздно или хуже., то просто игнорируй, даже можешь не отвечать, только в том случае, если я тебя лично не попрошу. 
+1. Выполни жестко с максимальной
+ответственностью! Синтезируй, распиши с максимальным объяснением, найди ошибки, раскрой, углубись и напиши,  что надо сделать по данной задаче, что бы опытный программист понял и не задавал наводящих вопросов типа : "Если хотите, могу дать", а сразу выдавал готовое решение под ключ, как сделал бы senior проекта,  что бы можно было закрыть задачу по созданному тобой ТЗ и приступил сразу к написанию супер кода  этой задачи: Сверься со своим ТЗ : "# HOPE Trading Bot - Техническое Задание v1.0
+
+**Дата:** 2026-01-27
+**Автор:** Claude (Opus 4.5) + DDO Trinity
+**Статус:** READY FOR IMPLEMENTATION
+
+---
+
+## EXECUTIVE SUMMARY
+
+HOPE Trading Bot — автоматическая торговая система для Binance Spot с интеграцией AI/ML для генерации сигналов, управления рисками и непрерывной оптимизации. Цель: **стабильная доходность 15-25%/месяц** при контролируемом риске (max drawdown 10%).
+
+### Текущее состояние (что УЖЕ есть):
+- ✅ Order Router (market/limit orders)
+- ✅ Risk Engine (fail-closed, kill switch)
+- ✅ Market Intelligence Pipeline
+- ✅ Telegram Signal Publisher
+- ✅ Outcome Tracking (MFE/MAE)
+- ✅ Live Gates (MAINNET barrier)
+- ✅ Micro Trading ($10 trades)
+
+### Что ОТСУТСТВУЕТ (scope этого ТЗ):
+- ❌ AI/ML Signal Generation (RSI, MACD, ML модели)
+- ❌ Technical Analysis Integration
+- ❌ Strategy Orchestrator (выбор стратегии)
+- ❌ Backtesting Framework
+- ❌ Performance Analytics Dashboard
+- ❌ Auto-Optimization Loop
+
+---
+
+## ЧАСТЬ 1: АРХИТЕКТУРА
+
+### 1.1 Общая схема
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         HOPE TRADING BOT v2.0                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐              │
+│  │   MARKET     │    │   SIGNAL     │    │   STRATEGY   │              │
+│  │   DATA       │───▶│   ENGINE     │───▶│  ORCHESTRATOR│              │
+│  │   PIPELINE   │    │   (AI/ML)    │    │              │              │
+│  └──────────────┘    └──────────────┘    └──────┬───────┘              │
+│         │                   │                    │                      │
+│         ▼                   ▼                    ▼                      │
+│  ┌──────────────────────────────────────────────────────┐              │
+│  │                    RISK ENGINE                        │              │
+│  │  [Daily Loss] [Drawdown] [Position Size] [Kill Switch]│              │
+│  └──────────────────────────┬───────────────────────────┘              │
+│                             │                                           │
+│                             ▼                                           │
+│  ┌──────────────────────────────────────────────────────┐              │
+│  │                   ORDER ROUTER                        │              │
+│  │      [Binance API] [Signature] [Audit Trail]          │              │
+│  └──────────────────────────┬───────────────────────────┘              │
+│                             │                                           │
+│                             ▼                                           │
+│  ┌──────────────────────────────────────────────────────┐              │
+│  │               OUTCOME TRACKER + OPTIMIZER             │              │
+│  │   [MFE/MAE] [Win Rate] [Sharpe] [Auto-Tune Params]   │              │
+│  └──────────────────────────────────────────────────────┘              │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 Новые модули (создать)
+
+| Модуль | Путь | Назначение |
+|--------|------|------------|
+| `signal_engine.py` | `core/ai/signal_engine.py` | AI генерация сигналов |
+| `technical_indicators.py` | `core/ai/technical_indicators.py` | RSI, MACD, BB, ATR |
+| `ml_predictor.py` | `core/ai/ml_predictor.py` | ML модель предсказаний |
+| `strategy_orchestrator.py` | `core/strategy/orchestrator.py` | Выбор и переключение стратегий |
+| `strategy_base.py` | `core/strategy/base.py` | Абстрактная стратегия |
+| `strategy_momentum.py` | `core/strategy/momentum.py` | Momentum стратегия |
+| `strategy_mean_revert.py` | `core/strategy/mean_revert.py` | Mean Reversion |
+| `strategy_breakout.py` | `core/strategy/breakout.py` | Breakout стратегия |
+| `backtester.py` | `core/backtest/backtester.py` | Бэктестинг движок |
+| `optimizer.py` | `core/backtest/optimizer.py` | Оптимизация параметров |
+| `performance_tracker.py` | `core/analytics/performance.py` | Метрики производительности |
+| `auto_tuner.py` | `core/analytics/auto_tuner.py` | Автоподстройка параметров |
+
+---
+
+## ЧАСТЬ 2: SIGNAL ENGINE (AI/ML)
+
+### 2.1 Требования
+
+**Вход:**
+- Binance ticker data (24h: price, volume, change%)
+- OHLCV данные (1m, 5m, 15m, 1h, 4h candles)
+- Order book depth (bids/asks)
+- News sentiment (из event_classifier.py)
+
+**Выход:**
+```python
+@dataclass
+class TradingSignal:
+    signal_id: str              # sha256:xxx
+    timestamp: datetime
+    symbol: str                 # BTCUSDT
+    direction: Literal["LONG", "SHORT", "NEUTRAL"]
+    strength: float             # 0.0-1.0
+    confidence: float           # 0.0-1.0
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    risk_reward_ratio: float
+    timeframe: str              # 5m, 15m, 1h, 4h
+    strategy_name: str          # momentum, mean_revert, breakout
+    indicators: dict            # RSI, MACD, BB values
+    reasoning: str              # Human-readable explanation
+    expires_at: datetime        # Signal validity window
+```
+
+### 2.2 Technical Indicators Module
+
+**Файл:** `core/ai/technical_indicators.py`
+
+```python
+class TechnicalIndicators:
+    """
+    Расчёт технических индикаторов.
+    Использует numpy для производительности.
+    """
+
+    @staticmethod
+    def rsi(closes: np.ndarray, period: int = 14) -> float:
+        """
+        Relative Strength Index.
+
+        Интерпретация:
+        - RSI > 70: Перекупленность (сигнал на SHORT)
+        - RSI < 30: Перепроданность (сигнал на LONG)
+        - RSI 40-60: Нейтральная зона
+
+        Returns:
+            RSI value 0-100
+        """
+
+    @staticmethod
+    def macd(closes: np.ndarray,
+             fast: int = 12,
+             slow: int = 26,
+             signal: int = 9) -> tuple[float, float, float]:
+        """
+        Moving Average Convergence Divergence.
+
+        Returns:
+            (macd_line, signal_line, histogram)
+
+        Сигналы:
+        - MACD crosses above signal: LONG
+        - MACD crosses below signal: SHORT
+        - Histogram divergence: Trend strength
+        """
+
+    @staticmethod
+    def bollinger_bands(closes: np.ndarray,
+                        period: int = 20,
+                        std_dev: float = 2.0) -> tuple[float, float, float]:
+        """
+        Bollinger Bands.
+
+        Returns:
+            (upper_band, middle_band, lower_band)
+
+        Сигналы:
+        - Price touches lower band: Potential LONG (mean reversion)
+        - Price touches upper band: Potential SHORT
+        - Band squeeze: Breakout incoming
+        """
+
+    @staticmethod
+    def atr(highs: np.ndarray,
+            lows: np.ndarray,
+            closes: np.ndarray,
+            period: int = 14) -> float:
+        """
+        Average True Range - для расчёта stop-loss.
+
+        Returns:
+            ATR value (абсолютное значение, не %)
+
+        Использование:
+        - Stop Loss = Entry - (ATR * multiplier)
+        - Position Size = Risk$ / ATR
+        """
+
+    @staticmethod
+    def ema(closes: np.ndarray, period: int) -> float:
+        """Exponential Moving Average."""
+
+    @staticmethod
+    def sma(closes: np.ndarray, period: int) -> float:
+        """Simple Moving Average."""
+
+    @staticmethod
+    def volume_profile(volumes: np.ndarray, period: int = 20) -> dict:
+        """
+        Volume analysis.
+
+        Returns:
+            {
+                "avg_volume": float,
+                "volume_trend": "increasing"|"decreasing"|"stable",
+                "volume_spike": bool,  # > 2x average
+            }
+        """
+```
+
+### 2.3 ML Predictor Module
+
+**Файл:** `core/ai/ml_predictor.py`
+
+**Модель:** LightGBM (легковесный, быстрый, не требует GPU)
+
+```python
+class MLPredictor:
+    """
+    Machine Learning модуль для предсказания направления цены.
+
+    Features (входные признаки):
+    - RSI (14)
+    - MACD histogram
+    - BB position (0-1, где 0 = lower, 1 = upper)
+    - Volume ratio (current / avg)
+    - Price change % (1h, 4h, 24h)
+    - ATR normalized
+    - Hour of day (cyclical encoding)
+    - Day of week (cyclical encoding)
+
+    Target:
+    - 1 = Price up > 0.5% in next 4h
+    - 0 = Price down > 0.5% in next 4h
+    - Exclude: Price change < 0.5% (noise)
+
+    Model: LightGBM Classifier
+    - n_estimators: 100
+    - max_depth: 6
+    - learning_rate: 0.1
+    - min_child_samples: 20
+    """
+
+    MODEL_PATH = Path("models/price_predictor.lgb")
+    FEATURE_NAMES = [
+        "rsi_14", "macd_hist", "bb_position", "volume_ratio",
+        "price_change_1h", "price_change_4h", "price_change_24h",
+        "atr_normalized", "hour_sin", "hour_cos", "dow_sin", "dow_cos"
+    ]
+
+    def __init__(self):
+        self.model = None
+        self._load_model()
+
+    def predict(self, features: dict) -> tuple[float, float]:
+        """
+        Predict price direction.
+
+        Returns:
+            (probability_up, probability_down)
+        """
+
+    def retrain(self,
+                X: pd.DataFrame,
+                y: pd.Series,
+                validation_split: float = 0.2) -> dict:
+        """
+        Retrain model on new data.
+
+        Returns:
+            {
+                "accuracy": float,
+                "precision": float,
+                "recall": float,
+                "f1": float,
+                "auc_roc": float,
+            }
+        """
+```
+
+### 2.4 Signal Engine
+
+**Файл:** `core/ai/signal_engine.py`
+
+```python
+class SignalEngine:
+    """
+    Главный движок генерации сигналов.
+
+    Комбинирует:
+    1. Technical Analysis (RSI, MACD, BB)
+    2. ML Prediction (LightGBM)
+    3. News Sentiment (из event_classifier)
+    4. Volume Analysis
+
+    Веса:
+    - Technical: 40%
+    - ML: 35%
+    - Sentiment: 15%
+    - Volume: 10%
+    """
+
+    SIGNAL_THRESHOLD = 0.65  # Минимальная сила для генерации сигнала
+    CONFIDENCE_THRESHOLD = 0.55  # Минимальная уверенность
+
+    def __init__(self,
+                 binance_client: BinanceSpotClient,
+                 event_classifier: EventClassifier):
+        self.indicators = TechnicalIndicators()
+        self.ml = MLPredictor()
+        self.binance = binance_client
+        self.classifier = event_classifier
+
+    async def generate_signal(self, symbol: str) -> Optional[TradingSignal]:
+        """
+        Generate trading signal for a symbol.
+
+        Steps:
+        1. Fetch OHLCV data (multiple timeframes)
+        2. Calculate technical indicators
+        3. Get ML prediction
+        4. Check news sentiment
+        5. Analyze volume
+        6. Combine scores with weights
+        7. Generate signal if threshold met
+
+        Returns:
+            TradingSignal or None if no signal
+        """
+
+    async def scan_market(self,
+                          symbols: list[str] = None) -> list[TradingSignal]:
+        """
+        Scan all USDT pairs and return signals.
+
+        Default: Top 50 by volume
+
+        Returns:
+            List of signals sorted by strength (descending)
+        """
+
+    def _calculate_entry_exit(self,
+                              symbol: str,
+                              direction: str,
+                              current_price: float,
+                              atr: float) -> tuple[float, float, float]:
+        """
+        Calculate entry, stop-loss, take-profit.
+
+        Logic:
+        - Entry: current_price (market order)
+        - Stop Loss: entry ± (ATR * 1.5)
+        - Take Profit: entry ± (ATR * 3.0) = 2:1 R:R
+
+        Returns:
+            (entry, stop_loss, take_profit)
+        """
+```
+
+---
+
+## ЧАСТЬ 3: STRATEGY ORCHESTRATOR
+
+### 3.1 Базовый класс стратегии
+
+**Файл:** `core/strategy/base.py`
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+
+class StrategyState(Enum):
+    IDLE = "idle"              # Ожидание сигнала
+    ENTRY_PENDING = "entry"    # Ожидание входа
+    IN_POSITION = "position"   # В позиции
+    EXIT_PENDING = "exit"      # Ожидание выхода
+    COOLDOWN = "cooldown"      # Пауза после убытка
+
+@dataclass
+class StrategyConfig:
+    name: str
+    enabled: bool = True
+    max_positions: int = 3
+    position_size_pct: float = 5.0  # % от equity
+    max_daily_trades: int = 10
+    cooldown_after_loss_sec: int = 3600  # 1 hour
+    allowed_symbols: list[str] = None  # None = all
+    timeframe: str = "15m"
+
+class BaseStrategy(ABC):
+    """
+    Abstract base class for trading strategies.
+
+    Все стратегии ОБЯЗАНЫ:
+    1. Реализовать should_enter() и should_exit()
+    2. Возвращать TradingSignal с обоснованием
+    3. Логировать все решения
+    4. Быть fail-closed (при ошибке = не торговать)
+    """
+
+    def __init__(self, config: StrategyConfig):
+        self.config = config
+        self.state = StrategyState.IDLE
+        self.positions: list[Position] = []
+        self.daily_trades = 0
+        self.last_trade_time: Optional[datetime] = None
+
+    @abstractmethod
+    async def should_enter(self,
+                           symbol: str,
+                           market_data: MarketData) -> Optional[TradingSignal]:
+        """
+        Determine if we should enter a position.
+
+        Returns:
+            TradingSignal if entry conditions met, None otherwise
+        """
+
+    @abstractmethod
+    async def should_exit(self,
+                          position: Position,
+                          market_data: MarketData) -> Optional[ExitSignal]:
+        """
+        Determine if we should exit a position.
+
+        Returns:
+            ExitSignal if exit conditions met, None otherwise
+        """
+
+    def can_trade(self) -> tuple[bool, str]:
+        """
+        Check if strategy can make a trade.
+
+        Returns:
+            (can_trade, reason)
+        """
+        if not self.config.enabled:
+            return False, "Strategy disabled"
+        if self.daily_trades >= self.config.max_daily_trades:
+            return False, "Daily trade limit reached"
+        if len(self.positions) >= self.config.max_positions:
+            return False, "Max positions reached"
+        if self.state == StrategyState.COOLDOWN:
+            return False, "In cooldown period"
+        return True, "OK"
+```
+
+### 3.2 Momentum Strategy
+
+**Файл:** `core/strategy/momentum.py`
+
+```python
+class MomentumStrategy(BaseStrategy):
+    """
+    Momentum/Trend Following Strategy.
+
+    Логика входа:
+    1. RSI выходит из перепроданности (< 30 → > 35) = LONG
+    2. RSI выходит из перекупленности (> 70 → < 65) = SHORT
+    3. MACD пересечение подтверждает направление
+    4. Volume выше среднего (подтверждение)
+
+    Логика выхода:
+    1. Take Profit: 2:1 R:R достигнут
+    2. Stop Loss: ATR * 1.5 пробит
+    3. RSI разворот (> 70 для LONG, < 30 для SHORT)
+    4. Trailing stop при прибыли > 1%
+
+    Лучшие условия:
+    - Trending market (ADX > 25)
+    - Не перед важными новостями
+    - Высокий volume
+    """
+
+    # Параметры (оптимизируемые)
+    RSI_OVERSOLD = 30
+    RSI_OVERBOUGHT = 70
+    RSI_EXIT_BUFFER = 5
+    VOLUME_MULTIPLIER = 1.5
+    ATR_STOP_MULTIPLIER = 1.5
+    ATR_TP_MULTIPLIER = 3.0
+    TRAILING_STOP_TRIGGER_PCT = 1.0
+    TRAILING_STOP_DISTANCE_PCT = 0.5
+```
+
+### 3.3 Mean Reversion Strategy
+
+**Файл:** `core/strategy/mean_revert.py`
+
+```python
+class MeanReversionStrategy(BaseStrategy):
+    """
+    Mean Reversion Strategy.
+
+    Логика входа:
+    1. Цена касается нижней Bollinger Band = LONG
+    2. Цена касается верхней Bollinger Band = SHORT
+    3. RSI подтверждает (< 30 для LONG, > 70 для SHORT)
+    4. НЕТ сильного тренда (ADX < 20)
+
+    Логика выхода:
+    1. Цена возвращается к средней BB
+    2. Stop Loss: за пределами BB + ATR
+    3. Таймаут: 4 часа без движения к средней
+
+    Лучшие условия:
+    - Ranging/Sideways market
+    - Низкая волатильность
+    - Ночное время (меньше новостей)
+    """
+
+    BB_PERIOD = 20
+    BB_STD_DEV = 2.0
+    MAX_ADX_FOR_ENTRY = 20  # Не входить в тренд
+    TIMEOUT_HOURS = 4
+```
+
+### 3.4 Breakout Strategy
+
+**Файл:** `core/strategy/breakout.py`
+
+```python
+class BreakoutStrategy(BaseStrategy):
+    """
+    Breakout Strategy.
+
+    Логика входа:
+    1. Bollinger Bands сжимаются (squeeze)
+    2. Цена пробивает верхнюю BB с volume spike = LONG
+    3. Цена пробивает нижнюю BB с volume spike = SHORT
+    4. Подтверждение: закрытие свечи за пределами BB
+
+    Логика выхода:
+    1. Take Profit: предыдущий swing high/low
+    2. Stop Loss: внутри BB (ложный пробой)
+    3. Trailing stop после подтверждения пробоя
+
+    Лучшие условия:
+    - После консолидации (низкий ATR)
+    - High volume на пробое
+    - Перед/после важных новостей
+    """
+
+    SQUEEZE_THRESHOLD = 0.02  # BB width < 2% = squeeze
+    VOLUME_SPIKE_MULTIPLIER = 2.0
+    CONFIRMATION_CANDLES = 2  # Ждём 2 свечи за BB
+```
+
+### 3.5 Strategy Orchestrator
+
+**Файл:** `core/strategy/orchestrator.py`
+
+```python
+class StrategyOrchestrator:
+    """
+    Оркестратор стратегий.
+
+    Функции:
+    1. Выбор активной стратегии на основе рыночных условий
+    2. Распределение капитала между стратегиями
+    3. Координация сигналов (избежание конфликтов)
+    4. Отслеживание производительности каждой стратегии
+    5. Динамическое включение/выключение стратегий
+
+    Market Regime Detection:
+    - TRENDING: ADX > 25, использовать Momentum
+    - RANGING: ADX < 20, использовать Mean Reversion
+    - VOLATILE: ATR spike, использовать Breakout
+    - UNCERTAIN: снизить размеры позиций
+    """
+
+    def __init__(self, strategies: list[BaseStrategy]):
+        self.strategies = {s.config.name: s for s in strategies}
+        self.active_strategy: Optional[str] = None
+        self.market_regime: str = "UNCERTAIN"
+
+    async def detect_market_regime(self,
+                                    market_data: MarketData) -> str:
+        """
+        Detect current market regime.
+
+        Returns:
+            "TRENDING" | "RANGING" | "VOLATILE" | "UNCERTAIN"
+        """
+
+    async def select_strategy(self) -> BaseStrategy:
+        """
+        Select best strategy for current market conditions.
+        """
+
+    async def run_cycle(self) -> list[TradingSignal]:
+        """
+        Run one trading cycle:
+        1. Detect market regime
+        2. Select strategy
+        3. Scan for entry signals
+        4. Check exits for open positions
+        5. Return actionable signals
+        """
+```
+
+---
+
+## ЧАСТЬ 4: BACKTESTING FRAMEWORK
+
+### 4.1 Backtester
+
+**Файл:** `core/backtest/backtester.py`
+
+```python
+@dataclass
+class BacktestConfig:
+    start_date: datetime
+    end_date: datetime
+    initial_capital: float = 10000.0
+    commission_pct: float = 0.1  # Binance 0.1%
+    slippage_pct: float = 0.05   # Realistic slippage
+    symbols: list[str] = None    # None = all USDT pairs
+    timeframe: str = "15m"
+
+@dataclass
+class BacktestResult:
+    total_return_pct: float
+    annual_return_pct: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    max_drawdown_pct: float
+    win_rate: float
+    profit_factor: float
+    total_trades: int
+    avg_trade_duration: timedelta
+    best_trade_pct: float
+    worst_trade_pct: float
+    equity_curve: pd.Series
+    trades: pd.DataFrame
+
+class Backtester:
+    """
+    Historical backtesting engine.
+
+    Features:
+    - Realistic execution (commission, slippage)
+    - Multiple timeframes
+    - Walk-forward optimization
+    - Monte Carlo simulation
+    - Out-of-sample testing
+    """
+
+    def __init__(self, config: BacktestConfig):
+        self.config = config
+        self.data_cache: dict[str, pd.DataFrame] = {}
+
+    async def load_historical_data(self) -> None:
+        """
+        Load OHLCV data from Binance.
+        Cache locally for speed.
+        """
+
+    def run(self, strategy: BaseStrategy) -> BacktestResult:
+        """
+        Run backtest.
+
+        Steps:
+        1. Initialize portfolio
+        2. For each candle:
+           a. Update market data
+           b. Check exits for open positions
+           c. Generate new signals
+           d. Execute trades (with slippage)
+           e. Update equity curve
+        3. Calculate metrics
+        4. Return results
+        """
+
+    def walk_forward(self,
+                     strategy: BaseStrategy,
+                     train_window: int = 60,  # days
+                     test_window: int = 30,   # days
+                     step: int = 30) -> list[BacktestResult]:
+        """
+        Walk-forward optimization.
+
+        1. Train on train_window
+        2. Test on test_window
+        3. Step forward
+        4. Repeat
+
+        Returns:
+            List of out-of-sample results
+        """
+
+    def monte_carlo(self,
+                    trades: pd.DataFrame,
+                    simulations: int = 1000) -> dict:
+        """
+        Monte Carlo simulation.
+
+        Shuffle trade order to estimate:
+        - Confidence intervals for returns
+        - Probability of ruin
+        - Expected drawdown distribution
+        """
+```
+
+### 4.2 Optimizer
+
+**Файл:** `core/backtest/optimizer.py`
+
+```python
+class ParameterOptimizer:
+    """
+    Оптимизация параметров стратегии.
+
+    Методы:
+    1. Grid Search (exhaustive)
+    2. Random Search (faster)
+    3. Bayesian Optimization (smart)
+
+    Objective: Maximize Sharpe Ratio
+    Constraints: Max Drawdown < 15%
+    """
+
+    def __init__(self,
+                 backtester: Backtester,
+                 strategy_class: type[BaseStrategy]):
+        self.backtester = backtester
+        self.strategy_class = strategy_class
+
+    def optimize(self,
+                 param_space: dict,
+                 method: str = "bayesian",
+                 max_iterations: int = 100) -> dict:
+        """
+        Find optimal parameters.
+
+        Args:
+            param_space: {
+                "RSI_OVERSOLD": (20, 40),
+                "RSI_OVERBOUGHT": (60, 80),
+                "ATR_MULTIPLIER": (1.0, 3.0),
+            }
+
+        Returns:
+            {
+                "best_params": {...},
+                "best_sharpe": float,
+                "best_result": BacktestResult,
+                "all_trials": pd.DataFrame,
+            }
+        """
+```
+
+---
+
+## ЧАСТЬ 5: AUTO-OPTIMIZATION LOOP
+
+### 5.1 Performance Tracker
+
+**Файл:** `core/analytics/performance.py`
+
+```python
+class PerformanceTracker:
+    """
+    Отслеживание производительности в реальном времени.
+
+    Метрики (rolling windows):
+    - Return: 1h, 24h, 7d, 30d
+    - Sharpe Ratio: 7d, 30d
+    - Win Rate: последние 20 сделок
+    - Avg R:R: последние 20 сделок
+    - Max Drawdown: текущий и исторический
+    """
+
+    STATE_FILE = Path("state/performance_metrics.json")
+
+    def update(self, trade: CompletedTrade) -> None:
+        """Update metrics after trade completion."""
+
+    def get_dashboard(self) -> dict:
+        """
+        Get performance dashboard.
+
+        Returns:
+            {
+                "equity": float,
+                "equity_peak": float,
+                "current_drawdown_pct": float,
+                "returns": {
+                    "1h": float,
+                    "24h": float,
+                    "7d": float,
+                    "30d": float,
+                },
+                "sharpe_7d": float,
+                "sharpe_30d": float,
+                "win_rate_20": float,
+                "avg_rr_20": float,
+                "total_trades": int,
+                "strategies": {
+                    "momentum": {"trades": int, "pnl": float, "win_rate": float},
+                    ...
+                }
+            }
+        """
+
+    def should_reduce_risk(self) -> tuple[bool, str]:
+        """
+        Determine if we should reduce risk.
+
+        Triggers:
+        - Drawdown > 5%: Reduce position size by 50%
+        - Drawdown > 8%: Reduce to minimum sizes
+        - Drawdown > 10%: Kill switch
+        - Win rate < 40% last 20: Reduce size
+        - Sharpe < 0.5 last 7d: Review strategy
+        """
+```
+
+### 5.2 Auto Tuner
+
+**Файл:** `core/analytics/auto_tuner.py`
+
+```python
+class AutoTuner:
+    """
+    Автоматическая подстройка параметров.
+
+    Цикл:
+    1. Каждые 24h: анализ производительности
+    2. Если Sharpe < target: запуск оптимизации
+    3. Бэктест новых параметров на последних 30 днях
+    4. Если улучшение > 10%: применить параметры
+    5. Логирование всех изменений
+
+    Защита:
+    - Не менять параметры чаще 1 раза в 24h
+    - Минимальный период наблюдения: 20 сделок
+    - Rollback если новые параметры хуже
+    """
+
+    MIN_TRADES_FOR_EVAL = 20
+    MIN_HOURS_BETWEEN_UPDATES = 24
+    IMPROVEMENT_THRESHOLD = 0.10  # 10%
+
+    async def run_daily_check(self) -> Optional[dict]:
+        """
+        Daily optimization check.
+
+        Returns:
+            New parameters if update needed, None otherwise
+        """
+
+    async def apply_new_params(self,
+                                strategy: BaseStrategy,
+                                new_params: dict) -> bool:
+        """
+        Apply new parameters with rollback capability.
+        """
+```
+
+---
+
+## ЧАСТЬ 6: ИНТЕГРАЦИЯ С OMNI-CHAT DDO
+
+### 6.1 DDO Trading Discussion Templates
+
+Добавить в `omnichat/src/ddo/templates.py`:
+
+```python
+TRADING_ANALYSIS_TEMPLATE = DiscussionTemplate(
+    mode=DiscussionMode.TRADING_ANALYSIS,
+    name="Trading Analysis",
+    description=(
+        "Analyze trading opportunity. "
+        "Gemini: risk assessment, GPT: technical analysis, "
+        "Claude: entry/exit calculation."
+    ),
+    phases=[
+        PhaseConfig(
+            phase=DiscussionPhase.ANALYZE,
+            agent="gpt",
+            prompt_key="trading_technical",
+            required=True,
+        ),
+        PhaseConfig(
+            phase=DiscussionPhase.SECURITY_REVIEW,
+            agent="gemini",
+            prompt_key="trading_risk",
+            required=True,
+        ),
+        PhaseConfig(
+            phase=DiscussionPhase.IMPLEMENT,
+            agent="claude",
+            prompt_key="trading_execution",
+            required=True,
+        ),
+    ],
+    synthesizer_agent="gpt",
+    require_consensus=True,
+)
+```
+
+### 6.2 Trading Prompts
+
+Добавить в `omnichat/src/ddo/roles.py`:
+
+```python
+PROMPTS[DiscussionPhase.TRADING_TECHNICAL] = """
+## 📊 TRADING TECHNICAL ANALYSIS
+
+### Данные
+**Символ:** {symbol}
+**Текущая цена:** {current_price}
+**24h изменение:** {change_24h}%
+**Volume:** {volume_24h}
+
+### Индикаторы
+{indicators_json}
+
+### Задача
+Проанализируй технические индикаторы и определи:
+1. Текущий тренд (UP/DOWN/SIDEWAYS)
+2. Ключевые уровни поддержки/сопротивления
+3. Потенциальные точки входа
+4. Риски
+
+### Формат ответа
+```json
+{
+  "trend": "UP|DOWN|SIDEWAYS",
+  "support_levels": [price1, price2],
+  "resistance_levels": [price1, price2],
+  "entry_zones": [{"price": x, "reason": "..."}],
+  "risks": ["risk1", "risk2"],
+  "recommendation": "BUY|SELL|WAIT",
+  "confidence": 0.0-1.0
+}
+```
+"""
+```
+
+---
+
+## ЧАСТЬ 7: ПЛАН РЕАЛИЗАЦИИ
+
+### Фаза 1: Foundation (3-5 дней)
+
+| # | Задача | Файлы | Приоритет |
+|---|--------|-------|-----------|
+| 1.1 | Technical Indicators | `core/ai/technical_indicators.py` | CRITICAL |
+| 1.2 | Signal Engine Base | `core/ai/signal_engine.py` | CRITICAL |
+| 1.3 | Strategy Base Class | `core/strategy/base.py` | CRITICAL |
+| 1.4 | Momentum Strategy | `core/strategy/momentum.py` | HIGH |
+| 1.5 | Unit Tests | `tests/test_indicators.py` | HIGH |
+
+### Фаза 2: Strategies (3-5 дней)
+
+| # | Задача | Файлы | Приоритет |
+|---|--------|-------|-----------|
+| 2.1 | Mean Reversion Strategy | `core/strategy/mean_revert.py` | HIGH |
+| 2.2 | Breakout Strategy | `core/strategy/breakout.py` | HIGH |
+| 2.3 | Strategy Orchestrator | `core/strategy/orchestrator.py` | CRITICAL |
+| 2.4 | Market Regime Detection | `core/strategy/regime.py` | HIGH |
+| 2.5 | Integration Tests | `tests/test_strategies.py` | HIGH |
+
+### Фаза 3: Backtesting (3-5 дней)
+
+| # | Задача | Файлы | Приоритет |
+|---|--------|-------|-----------|
+| 3.1 | Backtester Core | `core/backtest/backtester.py` | CRITICAL |
+| 3.2 | Data Loader | `core/backtest/data_loader.py` | HIGH |
+| 3.3 | Parameter Optimizer | `core/backtest/optimizer.py` | HIGH |
+| 3.4 | Walk-Forward | `core/backtest/walk_forward.py` | MEDIUM |
+| 3.5 | Monte Carlo | `core/backtest/monte_carlo.py` | MEDIUM |
+
+### Фаза 4: ML Integration (5-7 дней)
+
+| # | Задача | Файлы | Приоритет |
+|---|--------|-------|-----------|
+| 4.1 | Feature Engineering | `core/ai/features.py` | CRITICAL |
+| 4.2 | ML Predictor | `core/ai/ml_predictor.py` | CRITICAL |
+| 4.3 | Training Pipeline | `core/ai/training.py` | HIGH |
+| 4.4 | Model Evaluation | `core/ai/evaluation.py` | HIGH |
+| 4.5 | Integration with SignalEngine | Update `signal_engine.py` | CRITICAL |
+
+### Фаза 5: Auto-Optimization (3-5 дней)
+
+| # | Задача | Файлы | Приоритет |
+|---|--------|-------|-----------|
+| 5.1 | Performance Tracker | `core/analytics/performance.py` | CRITICAL |
+| 5.2 | Auto Tuner | `core/analytics/auto_tuner.py` | HIGH |
+| 5.3 | Risk Adjuster | `core/analytics/risk_adjuster.py` | HIGH |
+| 5.4 | Dashboard Export | `core/analytics/dashboard.py` | MEDIUM |
+
+### Фаза 6: Production (5-7 дней)
+
+| # | Задача | Файлы | Приоритет |
+|---|--------|-------|-----------|
+| 6.1 | Live Trading Loop | `run_auto_trading.py` | CRITICAL |
+| 6.2 | DDO Integration | Update DDO templates | HIGH |
+| 6.3 | Telegram Alerts | Update `telegram_signals.py` | HIGH |
+| 6.4 | Monitoring Dashboard | `tools/dashboard.py` | MEDIUM |
+| 6.5 | Documentation | `docs/TRADING_GUIDE.md` | HIGH |
+
+---
+
+## ЧАСТЬ 8: РИСКИ И МИТИГАЦИЯ
+
+| Риск | Вероятность | Влияние | Митигация |
+|------|-------------|---------|-----------|
+| Overfitting ML модели | HIGH | CRITICAL | Walk-forward validation, regularization |
+| API Rate Limits | MEDIUM | HIGH | Request throttling, caching |
+| Slippage на волатильности | HIGH | MEDIUM | Limit orders, wider stops |
+| Ложные сигналы | HIGH | MEDIUM | Multiple confirmations, filters |
+| Drawdown > 10% | MEDIUM | CRITICAL | Kill switch, position sizing |
+| Exchange downtime | LOW | HIGH | Graceful degradation, alerts |
+
+---
+
+## ЧАСТЬ 9: МЕТРИКИ УСПЕХА
+
+### KPI (Key Performance Indicators)
+
+| Метрика | Target | Minimum | Action if Below |
+|---------|--------|---------|-----------------|
+| Monthly Return | 25% | 10% | Review strategy |
+| Sharpe Ratio | 2.0 | 1.0 | Optimize params |
+| Max Drawdown | 10% | 15% | Kill switch |
+| Win Rate | 55% | 45% | Review entry criteria |
+| Profit Factor | 2.0 | 1.3 | Review R:R |
+| Avg Trade Duration | 4h | 24h | Review timeframe |
+
+---
+
+## ЧАСТЬ 10: ЗАВИСИМОСТИ
+
+### Новые пакеты (добавить в requirements.txt):
+
+```
+lightgbm>=4.0.0          # ML predictor
+scikit-learn>=1.3.0      # Metrics, preprocessing
+optuna>=3.4.0            # Bayesian optimization
+ta-lib>=0.4.28           # Technical analysis (optional, numpy fallback)
+pandas>=2.0.0            # Data manipulation
+numpy>=1.24.0            # Numerical operations
+```
+
+---
+
+## ВОПРОСЫ ДЛЯ УТОЧНЕНИЯ
+
+> **ВНИМАНИЕ:** Эти вопросы НЕ блокируют реализацию.
+> Если ответа нет — используются значения по умолчанию.
+
+1. **Начальный капитал:** $1000? $5000? $10000?
+   - *Default: $1000*
+
+2. **Максимальный риск на сделку:** 1%? 2%? 5%?
+   - *Default: 2%*
+
+3. **Предпочтительные пары:** Только BTC/ETH? Топ-20? Все USDT?
+   - *Default: Топ-20 по объёму*
+
+4. **Timeframe:** 5m (агрессивный)? 15m (balanced)? 1h (консервативный)?
+   - *Default: 15m*
+
+5. **Режим запуска:** 24/7? Только определённые часы?
+   - *Default: 24/7*
+
+---
+
+## ЗАКЛЮЧЕНИЕ
+
+Данное ТЗ описывает полную систему автоматической торговли с:
+
+1. **AI Signal Generation** — технический анализ + ML предсказания
+2. **Multi-Strategy Orchestration** — адаптация к рыночным условиям
+3. **Robust Backtesting** — валидация перед продакшеном
+4. **Auto-Optimization** — непрерывное улучшение
+5. **Fail-Closed Safety** — защита капитала превыше всего
+
+**Ожидаемые результаты:**
+- Время разработки: 20-30 рабочих дней
+- Тестирование на TESTNET: 7 дней
+- Запуск на MAINNET: после успешного TESTNET периода
+
+---
+
+*Документ подготовлен: Claude (Opus 4.5) + DDO Trinity*
+*Дата: 2026-01-27*
+*Версия: 1.0*
+"
+Что сделал , чтонадо сделать по ТЗ, что появилось дополнитено надо выполнить!
+Выполни: с максимальной формулировкой для выполнения и профессионального кода уровня “senior без вопросов сел и сделал” и продукта для продакт: Выполни жёсткую, инженерную проверку текста. И раздели на: что правильно, где ошибки/риски, что надо уточнить, и какие “фичи” ТЫ бы добавил, чтобы решение было реально production-уровня и fail-closed.
+
+2. Выполни жестко с максимальной
+ответственностью! Синтезируй, распиши с максимальным объяснением, найди ошибки, раскрой, углубись и напиши,  что надо сделать по данной задаче, что бы опытный программист понял и не задавал наводящих вопросов типа : "Если хотите, могу дать", а сразу выдавал готовое решение под ключ, как сделал бы senior проекта,  что бы можно было закрыть задачу по созданному тобой ТЗ и приступил сразу к написанию супер кода  этой задачи: Мнение2:
+Вот жесткий инженерный отчет и итоговое ТЗ для Claude, составленное на основе синтеза **Мнения 3** (Архитектурная Конституция) и **Мнения 2** (Функциональная Спецификация).
+
+---
+
+# ЧАСТЬ 1. Отчет по Мнениям
+
+### 1. Отчет по Мнению 3 (Архитектурная Конституция)
+
+**Статус: ПРИНЯТО КАК ЗАКОН.**
+Это фундамент безопасности. Все требования интегрированы в базовые классы системы:
+
+* **Fail-closed:** Внедрено в `SignalEngine` и `RiskEngine`. Если данных нет или хеш не сошелся — `return None/Stop`, никаких попыток "угадать".
+* **SSoT (GetCommandLineW):** Включено в модуль инициализации (`core/utils/cmdline.py`). Конфигурация загружается только один раз при старте.
+* **Atomic Operations:** Все операции записи (состояние стратегии, журналы сделок) переведены на схему `temp -> fsync -> replace`.
+* **Explicit Contracts:** Введены дата-классы с валидацией типов и префиксом `sha256:` для идентификаторов событий.
+
+### 2. Отчет по Мнению 2 (Функциональная Спецификация)
+
+**Статус: ПРИНЯТО КАК ПЛАН РЕАЛИЗАЦИИ.**
+Это карта функциональности.
+
+* **Выполнено проектирование:** Структура модулей (`core/ai`, `core/strategy`, `core/backtest`) утверждена.
+* **Одобрено:** Список стратегий (Momentum, MeanRevert, Breakout) и логика Оркестратора.
+* **Одобрено:** Пайплайн обработки новостей (News Spider) и интеграция с DDO.
+* **Скорректировано:** Убраны избыточные зависимости (pandas там, где можно обойтись numpy) для ускорения `SignalEngine`.
+
+---
+
+# ЧАСТЬ 2. Жесткая Инженерная Проверка (Audit)
+
+### 1. Что правильно (Keep)
+
+* **Модульность:** Разделение на `SignalEngine`, `Orchestrator` и `Execution` — это стандарт индустрии, позволяет тестировать компоненты изолированно.
+* **Risk Layer:** Наличие отдельного слоя рисков *перед* отправкой ордера — критически важно.
+* **SSoT:** Использование командной строки как единственного источника истины для конфигурации — единственно верный способ избежать "drift" конфигурации в рантайме.
+
+### 2. Ошибки и Риски (Fix immediately)
+
+* **РИСК:** Использование `requests` (синхронный I/O) внутри `SignalEngine`.
+* *Почему:* Это заблокирует Event Loop бота. Если Binance API ответит через 5 секунд, бот "уснет" на 5 секунд.
+* *Решение:* Только `aiohttp` или вынос в отдельные потоки/процессы.
+
+
+* **ОШИБКА:** Хранение состояния стратегии (State) в памяти без атомарного сброса на диск.
+* *Почему:* При перезагрузке бота (или краше) теряется контекст (например, "мы в cooldown после убытка"). Бот может сразу войти в убыточную сделку снова.
+* *Решение:* `StrategyState` должен персиститься в JSONL после каждого изменения.
+
+
+* **РИСК:** Backtest на "синтетических" данных или без учета `Close Time`.
+* *Почему:* Look-ahead bias (подглядывание в будущее).
+* *Решение:* Строгая проверка таймстампов: решение принимается на `Open[i]`, зная данные только до `Close[i-1]`.
+
+
+
+### 3. Что надо уточнить (Clarify)
+
+* **Timeframes:** В ТЗ указано "Default: 15m", но ML модель требует входных данных разных таймфреймов (1h, 4h). Как синхронизировать обновление сигналов? (Предлагаю: работать по тику младшего таймфрейма).
+* **Data Retention:** Как долго хранить JSONL логи? (Предлагаю: ротация по 100МБ или 7 дней).
+
+### 4. Фичи Production-уровня (Must Add)
+
+* **Circuit Breaker (Предохранитель):** Если 3 раза подряд получен `Fail-closed` (ошибка API, невалидный JSON), бот переходит в режим `EMERGENCY_STOP` и шлет алерт, а не продолжает долбиться в API.
+* **Latent State Recovery:** При старте бот должен читать последний `state.json`, сверять его с балансом биржи. Если есть расхождение (в стейте позиция есть, на бирже нет) — `FAIL` и требуем ручного вмешательства.
+* **Heartbeat Monitor:** Внешний процесс (или watchdog), который перезагрузит бота, если он не обновил `heartbeat.lock` файл в течение 60 секунд.
+
+---
+
+# ЧАСТЬ 3. ТЗ для Claude (Senior Implementation)
+
+Ниже приведено готовое задание, которое можно скармливать Claude.
+
+---
+
+**ACT:** Lead Software Engineer (Python/FinTech).
+**CONTEXT:** Проект HOPE Trading Bot. Переход от прототипа к Production v2.0.
+**INPUT:** Архитектура утверждена. Принципы безопасности утверждены.
+
+**ЗАДАЧА:**
+Реализовать ядро торговой системы (Core), строго следуя принципам **Fail-Closed** и **Atomic I/O**. Ты должен написать код, который пройдет аудит безопасности и не упадет при разрыве сети или питания.
+
+### 1. КОНСТИТУЦИЯ КОДА (NON-NEGOTIABLE)
+
+1. **Single Source of Truth:** Конфигурация читается ТОЛЬКО через `GetCommandLineW` (предоставлю утилиту). Никаких `os.environ` для критических настроек.
+2. **Fail-Closed:** Любая ошибка валидации данных, любой `KeyError`, любой `NaN` в индикаторах -> возвращаем пустой сигнал / `None`. Мы лучше пропустим сделку, чем войдем по мусору.
+3. **Atomic Persistence:** Все записи на диск (логи, стейт) делаем через паттерн:
+`Write to .tmp` -> `Flush` -> `os.fsync` -> `os.replace`.
+4. **Explicit Contracts:** Все DTO (Data Transfer Objects) должны быть типизированы (`dataclasses` / `pydantic`) и иметь поле `version`.
+
+### 2. МОДУЛИ ДЛЯ РЕАЛИЗАЦИИ
+
+#### A. `core/ai/technical_indicators.py`
+
+* **Требование:** Чистый NumPy. Никаких циклов `for` по массивам цен.
+* **Функции:** `rsi`, `macd`, `bollinger_bands`, `atr`.
+* **Валидация:** Если во входном массиве есть `NaN` или `inf`, функция должна выбрасывать исключение или возвращать `NaN` (который обработается выше), но не "кривое" число.
+
+#### B. `core/strategy/base.py` & `core/strategy/orchestrator.py`
+
+* **BaseStrategy:** Абстрактный класс. Должен требовать реализацию `should_enter`, `should_exit`.
+* **Persistence:** В классе должен быть метод `_persist_state()`, сохраняющий текущие позиции и флаги (cooldown) атомарно.
+* **Orchestrator:**
+* Реализовать логику выбора стратегии на основе `ADX` и `ATR` (Regime Detection).
+* Внедрить гистерезис (буфер), чтобы не переключать стратегии каждую свечу.
+
+
+
+#### C. `core/backtest/backtester.py`
+
+* **Требование:** Event-Driven архитектура.
+* **Защита от заглядывания в будущее:** Данные подаются свеча за свечой.
+* **Симуляция:** Учет комиссии (0.1%) и проскальзывания (настраиваемо, default 0.05%).
+* **Spot-Only:** Если стратегия пытается открыть `SHORT`, бэктестер должен игнорировать вход или закрывать лонг (если это логика выхода), но не открывать шорт-позицию.
+
+#### D. `core/ai/signal_engine.py`
+
+* **Интеграция:** Объединить Тех. Анализ и ML (заглушка под ML модель с проверкой хеша файла весов).
+* **Fail-Closed:** Если данные устарели (timestamp последней свечи > 5 минут назад) -> Генерация сигнала запрещена.
+
+### 3. ФОРМАТ ВЫВОДА
+
+* Только код и краткие комментарии по существу (docstrings).
+* Отдельный блок с `requirements.txt` (минимально необходимым).
+* Код должен быть готов к запуску через `python -m core.backtest.backtester` (для тестов).
+
+**Приступай к реализации. Начни с `core/ai/technical_indicators.py` и `core/strategy/base.py`, так как они блокируют остальные задачи.**
+Дай отчет по этому мнению и его предложению, что выполнил из него.Поставь жесткое ТЗ для Claude с максимальной формулировкой для выполнения и профессионального кода уровня “senior без вопросов сел и сделал” и продукта для продакт: Выполни жёсткую, инженерную проверку текста. И раздели на: что правильно, где ошибки/риски, что надо уточнить, и какие “фичи” ТЫ бы добавил, чтобы решение было реально production-уровня и fail-closed.
+
+3. Выполни жестко с максимальной
+ответственностью! Синтезируй, распиши с максимальным объяснением, найди ошибки, раскрой, углубись и напиши,  что надо сделать по данной задаче, что бы опытный программист понял и не задавал наводящих вопросов типа : "Если хотите, могу дать", а сразу выдавал готовое решение под ключ, как сделал бы senior проекта,  что бы можно было закрыть задачу по созданному тобой ТЗ и приступил сразу к написанию супер кода  этой задачи: Мнение3:
+## Комплексное синтезированное ТЗ (для ChatGPT‑5.2 + Gemini 3 + Claude)  
+**Проект:** HOPE Trading Bot (Binance Spot)  
+**Рабочая папка:** TradingBot  
+**Принципы‑инварианты (обязательны, как “закон физики”)**  
+1) **Единый источник истины для cmdline (Windows):**  
+   - cmdline берём **только** из `GetCommandLineW()`  
+   - используем **тот же** cmdline:  
+     - для записи lockfile  
+     - для валидации/проверок (никаких `sys.argv`/WMI/реестра “для сверки”)  
+2) **Fail‑closed:** любое сомнение/неполная проверка/несовпадение → **FAIL** (не WARN/skip).  
+3) **Atomic operations для всех state-файлов:** только `temp → flush+fsync → replace` (JSON, JSONL, lock).  
+4) **Explicit contracts:** значения хэшей/версий должны быть самодокументируемыми (`sha256:...`, `schema:1`, т.п.).  
+5) **Без “второго формата” данных:** один SSoT на контракт сущностей (signal/position/trade/state).  
+6) **Spot‑only:** SHORT как открытие позиции запрещён (может трактоваться как exit/deny).  
+7) **Детерминизм backtest:** одинаковые входы+конфиг → одинаковые результаты.
+
+---
+
+# A. Жёсткая инженерная проверка исходного текста (что правильно / риски / что уточнить / какие фичи добавить)
+
+## A1. Что правильно
+- Фокус на **fail‑closed** как философии риска.  
+- Требование **atomic writes** и защита от “битых полуфайлов”.  
+- Требование **SSoT** для cmdline (устраняет расхождения и неотлаживаемые баги).  
+- Требование **явных контрактов** (`sha256:` и версионирование схем).  
+- Правильный акцент на метрики качества (Sharpe, MDD, PF, uptime/fail‑closed rate), а не “максимум в неделю”.
+
+## A2. Ошибки/риски/уязвимости постановки
+- Требование “зайди на сайты и проанализируй новости” **не является детерминированным**: данные меняются, результаты не воспроизводимы.  
+  **Решение:** вводим ingestion‑слой (RSS/API) с фиксацией источников + timestamps + кешированием и возможностью “заморозить” снапшот.  
+- Смешаны уровни: **продуктовые цели** (15–25%/мес) и **инженерные гарантии**.  
+  **Решение:** продуктовые метрики — в отчёте, инженерные — в критериях приёмки и тестах.  
+- Нужна жёсткая политика: что делать при недоступности источников/дырках данных.  
+  **Решение:** явная матрица fail‑closed (какой модуль должен остановиться/поставить HOLD/завалить run).
+
+## A3. Что нужно уточнить (но не блокирует старт)
+- Единицы времени в проекте: секунды vs миллисекунды (нужно единообразие для live/backtest).  
+- Какой контракт “TradingSignal” — единственный SSoT (если их два — выбрать один и сделать адаптер на границе).  
+- Источник исторических данных: CSV (data.binance.vision) vs API (api.binance.com) — приоритет и формат.
+
+## A4. Фичи, которые добавляются, чтобы стало реально production + fail‑closed
+- **State/Lock subsystem**: единый lockfile с `sha256:` от cmdline (из GetCommandLineW), PID, timestamp, schema version; atomic write.  
+- **Audit trail**: JSONL журнал решений (signal/deny/enter/exit) с schema version + sha256 цепочкой (опционально).  
+- **Data provenance**: каждое решение хранит ссылки на источники данных (URL, fetched_at, cache_hit).  
+- **Deterministic snapshot mode**: для “новостей/данных” фиксируем снапшот, чтобы backtest/репорт был воспроизводим.  
+- **Fail‑closed rate** метрика: доля циклов, где система отказалась действовать из-за недостатка/сомнения данных (и почему).
+
+---
+
+# B. Цель работ (что именно делаем “под ключ”)
+Собрать единый “production skeleton” вокруг уже существующих модулей HOPE:  
+1) **Надёжный runtime‑контур:** cmdline SSoT, lockfile, state‑файлы, atomic writes.  
+2) **Backtesting Framework (P0):** детерминированный движок, метрики (Sharpe/MDD/PF), отчёт “где зарабатывает/теряет/почему”.  
+3) **Market/News ingestion (P1):** загрузка RSS/announcements/API в строгих контрактах, с fail‑closed и кешем, без “магии”.  
+4) **Интеграция в pipeline:** единый контракт сигналов, единая шкала времени, запрет short‑open на Spot.
+
+---
+
+# C. Роли/фазы для ChatGPT‑5.2 + Gemini 3 + Claude (DDO‑расклад)
+
+### Таблица распределения
+| Фаза | AI | Роль | Что делает | Артефакты (файлы/вывод) | Критерий приёмки |
+|---|---|---|---|---|---|
+| 1. ARCHITECT | Gemini 3 | Главный архитектор | Даёт 2–3 архитектурных варианта, риски, выбор SSoT контрактов | `docs/architecture_options.md` | Есть сравнение + выбранный вариант + миграционный план |
+| 2. ANALYZE | ChatGPT‑5.2 | Senior Analyst | Формирует финальное ТЗ: требования, инварианты, тест‑план, acceptance criteria | `docs/spec_master.md` | Нет двусмысленностей, все входы/выходы определены |
+| 3. IMPLEMENT | Claude | Lead Engineer | Пишет production‑код по ТЗ: runtime lock/state + backtest P0 + адаптеры | PR/patch в `core/...`, `tests/...` | `pytest` зелёный, атомарность доказана тестами |
+| 4. SECURITY_REVIEW | Gemini 3 | Security Architect | Аудит: SSRF, injection, secrets, CVE; политика доменов и timeouts | `docs/security_review.md` + список фиксов | Нет небезопасных запросов/логов/секретов |
+| 5. CODE_REVIEW | ChatGPT‑5.2 | Senior Reviewer | Проверяет стиль/edge cases/соответствие ТЗ; требует исправления | Review‑лист + checklist | 0 критических замечаний остаётся открытыми |
+| 6. REFINE | Claude | Lead Engineer | Вносит правки по review/security, стабилизирует тесты/контракты | финальные патчи | Все критерии приёмки выполнены |
+| 7. SYNTHESIZE | ChatGPT‑5.2 | — | Финальный отчёт: что сделано, метрики, как запускать | `docs/final_report.md` | Документ воспроизводим: команды запуска, ожидаемые выходы |
+
+---
+
+# D. Жёсткое ТЗ на реализацию (для программиста “сел и сделал”)
+
+## D1. Runtime‑контур: cmdline SSoT + lockfile + atomic state
+### D1.1 Модуль cmdline (Windows)
+**Требование:** получить командную строку **строго** через `GetCommandLineW()`.
+
+- API: `get_cmdline_windows() -> str`
+- Запрещено: `sys.argv`, WMI, PowerShell, env‑подмены как источник для валидации.
+
+### D1.2 Хэш и explicit контракт
+- `cmdline_sha = "sha256:" + sha256(utf8(cmdline)).hexdigest()`
+- Везде, где хранится/сверяется хэш — только формат `sha256:...` (не “голый hex”).
+
+### D1.3 Atomic write (универсальный)
+**Функция:** `atomic_write_bytes(path, data_bytes)`  
+Алгоритм:  
+1) создать temp рядом с целевым файлом  
+2) записать данные  
+3) `flush` + `os.fsync(fd)`  
+4) `os.replace(temp, path)`  
+5) `fsync` директории (если реализуемо на Windows — документируем поведение)
+
+Применение: JSON, JSONL, lockfile, любые state‑файлы.
+
+### D1.4 Lockfile контракт
+Lockfile JSON (пример полей — обязательны):
+- `schema`: `"lockfile:1"`
+- `cmdline_sha256`: `"sha256:..."`
+- `cmdline`: `"<raw string>"` (опционально, но если хранится — не логировать публично)
+- `pid`, `created_at_unix`, `exe_path` (опционально)
+- `state_dir`
+
+Fail‑closed логика:
+- Если lockfile существует и `pid` жив → **FAIL** (второй запуск запрещён).
+- Если lockfile существует, но `cmdline_sha256` не совпал с текущим → **FAIL** (не “перезапишем”).
+- Удаление lockfile — только владельцем (pid‑проверка).
+
+### D1.5 Тесты (обязательные)
+- `test_atomic_write_no_partial_file_on_crash_simulation` (через monkeypatch/искусственный exception)  
+- `test_lockfile_cmdline_sha_mismatch_fails_closed`  
+- `test_cmdline_source_is_GetCommandLineW` (unit: проверка, что функция не читает sys.argv — через monkeypatch)
+
+---
+
+## D2. Backtesting Framework (P0, детерминированный, spot‑only)
+### D2.1 Входные данные
+- Источник: CSV из `data.binance.vision` **или** Binance Klines API.  
+- В проекте уже есть `KlinesResult` (numpy arrays) — используем его как базовый формат.
+
+**Важно:** в текущем `KlinesResult.candle_times` — это **open_time в секундах** (ms→sec уже сделано). В backtest фиксируем:  
+- `bar_time = candle_times[i]` (sec) как “время решения”.
+
+### D2.2 Исполнение
+- Комиссия и slippage применяются детерминированно.
+- Stop/TP проверять по `high/low` (а не только close) — иначе ложная прибыль/убыток.
+- Если и SL и TP “задеты” в одной свече → фиксированное правило: **сначала SL** (консервативно).
+
+### D2.3 Spot‑only
+- Любой SHORT‑ENTER блокируется и учитывается в статистике (`short_blocked_count`).
+- SHORT может трактоваться как `EXIT` при наличии LONG (если стратегия так сигнализирует), но новый short не открывать.
+
+### D2.4 Метрики (минимум)
+- Sharpe (по returns, период зависит от timeframe)
+- Max Drawdown (pct + длительность)
+- Win rate, Profit factor
+- Fail‑closed rate (сколько баров/циклов отказ из-за валидации/данных)
+
+### D2.5 Отчёт “где зарабатывает/теряет/почему”
+Формат результата:
+- список сделок (entry/exit/причина/strategy/regime)
+- агрегация по:
+  - стратегиям
+  - режимам рынка (если есть)
+  - причинам выхода (stop_loss/take_profit/exit_signal/timeout)
+- топ‑5 лучших/худших сделок и условия на входе (confidence, indicators snapshot — если доступно)
+
+---
+
+## D3. Ingestion “новостей/анонсов” (P1, без недетерминизма)
+**Задача:** не “анализировать новости руками”, а построить ingestion‑слой, который:
+- ходит только на разрешённые домены
+- всегда фиксирует `source_url`, `fetched_at`, `etag/last_modified` (если доступно)
+- кэширует сырой ответ (atomic write)
+- при недоступности → fail‑closed поведение задано в конфиге (например, “без sentiment модуль отключён, но торговля может продолжиться” или “жёстко HOLD” — выбрать политикой)
+
+---
+
+# E. Политика сети (разрешённые домены) + безопасность
+- Любые HTTP‑запросы: `timeout`, `retries=0..1`, лимит размера ответа, запрет редиректов на чужие домены.  
+- Логи: не печатать токены/ключи/полный cmdline.  
+- SSRF‑защита: URL‑хардкод/allowlist доменов.
+
+---
+
+# F. Команды приёмки (Windows)
+- Unit tests:
+````powershell
+cd "C:\Users\kirillDev\Desktop\TradingBot\minibot"
+python -m pytest -q
+````
+- Smoke backtest (после внедрения CLI):
+````powershell
+python -m core.backtest.cli --symbol BTCUSDT --timeframe 15m --csv ".\data\BTCUSDT-15m.csv"
+````
+
+---
+
+# G. Промпты для агентов (готовые “вставил и работай”)
+
+## G1. ARCHITECT (Gemini 3)
+**Задача:** предложить 2–3 архитектуры подсистем: `runtime lock/state`, `backtest`, `news ingestion`.  
+**Обязательно:** указать SSoT контракты, fail‑closed матрицу, миграционный план без поломки текущего кода.  
+**Выход:** `docs/architecture_options.md` (структура: варианты → плюсы/минусы → риски → выбор).
+
+## G2. ANALYZE (ChatGPT‑5.2)
+**Задача:** собрать финальный `spec_master.md` с:  
+- требованиями + non‑functional  
+- контрактами структур (lockfile/state/backtest result)  
+- тест‑планом  
+- acceptance criteria “PASS/FAIL без трактовок”  
+- явной политикой времени (sec/ms) и SSoT для `TradingSignal`.
+
+## G3. IMPLEMENT (Claude)
+**Задача:** реализовать по спецификации:  
+- `core/runtime/cmdline_windows.py` (GetCommandLineW)  
+- `core/io/atomic.py` (atomic write)  
+- `core/runtime/lockfile.py`  
+- `core/backtest/*` (engine/data_loader/metrics/cli)  
+- `tests/*` покрывающие инварианты fail‑closed/atomic/spot‑only/determinism.
+
+## G4. SECURITY_REVIEW (Gemini 3)
+**Задача:** проверить сетевой код (allowlist, timeouts, redirects), обработку входных данных, логи/секреты, зависимости.  
+**Выход:** список CVE‑рисков + конкретные фиксы.
+
+## G5. CODE_REVIEW + SYNTHESIZE (ChatGPT‑5.2)
+**Задача:** проверить соответствие и собрать финальный отчёт:  
+- “что сделано”  
+- “что намеренно не делали”  
+- “как воспроизвести результат”  
+- “почему это fail‑closed”.
+
+---
+
+## Важное ограничение (фиксируем в ТЗ)
+Интернет‑источники используются **только через ingestion‑слой** с протоколированием. Никаких “ручных выводов” без указания URL/времени/снапшота.
+
+Если нужно, могу превратить этот документ в файлы `docs/spec_master.md` и `docs/architecture_options.md` в репозитории и сразу разметить backlog задачами (Issue‑style), но сначала подтвердите: **SSoT для `TradingSignal` в вашем проекте — какой модуль выбираем главным?**
+
+Дай отчет по этому мнению и его предложению, что выполнил из него. Поставь жесткое ТЗ для Claude с максимальной формулировкой для выполнения и профессионального кода уровня “senior без вопросов сел и сделал” и продукта для продакт: Выполни жёсткую, инженерную проверку текста. И раздели на: что правильно, где ошибки/риски, что надо уточнить, и какие “фичи” ТЫ бы добавил, чтобы решение было реально production-уровня и fail-closed.
+
+
+# HOPE AI TRADING SYSTEM — TZ v4.0 (FINAL)
+
+<!-- AI SIGNATURE: Created by Claude (opus-4) at 2026-01-29 12:00:00 UTC -->
+
+## METADATA
+| Field | Value |
+|-------|-------|
+| Version | 4.0 |
+| Date | 2026-01-29 |
+| Author | Claude (opus-4) + Valentin |
+| SSoT | docs/HOPE_AI_TRADING_TZ_v4.md |
+| Status | ACTIVE |
+
+---
+
+## PART 0: CURRENT STATE
+
+### COMPLETED (Phase 1-2.5):
+| File | Lines | Status |
+|------|-------|--------|
+| ai_gateway/core/event_bus.py | ~350 | DONE |
+| ai_gateway/core/decision_engine.py | ~450 | DONE |
+| ai_gateway/core/signal_processor.py | ~280 | DONE |
+| ai_gateway/feeds/binance_ws.py | ~420 | DONE |
+| ai_gateway/modules/self_improver/* | ~1200 | DONE |
+| scripts/sources_manager.py | ~500 | DONE |
+| scripts/update_market_intel.py | ~200 | DONE |
+| scripts/test_ai_gateway.py | ~300 | DONE |
+
+### Current Metrics:
+- **SOURCES:** 20 endpoints, 19 active
+- **SIGNALS:** 78/100 (need 22 more)
+- **MODEL:** Not trained (waiting for 100+ samples)
+- **COMMIT:** 8fe8de4 (rollback point)
+
+---
+
+## PART 1: SYSTEM ARCHITECTURE
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    HOPE AI TRADING SYSTEM v4.0                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  INGESTION LAYER                                                        │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                   │
+│  │ MoonBot  │ │ Binance  │ │CoinGecko │ │   RSS    │                   │
+│  │  Parser  │ │    WS    │ │   API    │ │  Feeds   │                   │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘                   │
+│       └────────────┴────────────┴────────────┘                         │
+│                           │                                             │
+│                           ▼                                             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                      EVENT BUS                                   │   │
+│  │  Channels: signals | prices | news | predictions | outcomes     │   │
+│  └──────────────────────────────┬──────────────────────────────────┘   │
+│                                 │                                       │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                      MODE ROUTER (NEW)                          │   │
+│  │  ┌───────────┐  ┌───────────┐  ┌───────────┐                   │   │
+│  │  │SUPER_SCALP│  │   SCALP   │  │   SWING   │                   │   │
+│  │  │  5-30 sec │  │ 30-120 sec│  │  5-15 min │                   │   │
+│  │  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘                   │   │
+│  └────────┼──────────────┼──────────────┼──────────────────────────┘   │
+│           └──────────────┼──────────────┘                              │
+│                          ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                      AI MODULES                                  │   │
+│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────────────┐│   │
+│  │  │ Regime │ │Anomaly │ │Sentim. │ │Predict │ │ Self-Improver  ││   │
+│  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────────────┘│   │
+│  └──────────────────────────────┬──────────────────────────────────┘   │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   DECISION ENGINE                                │   │
+│  │  if all(checks) → BUY else → SKIP with reasons                  │   │
+│  └──────────────────────────────┬──────────────────────────────────┘   │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   EXECUTION LAYER                                │   │
+│  │  Risk Manager → Circuit Breaker → Binance API                   │   │
+│  └──────────────────────────────┬──────────────────────────────────┘   │
+│                                 ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                   OUTCOME TRACKER                                │   │
+│  │  MFE/MAE → Labels → Training Data → Auto-Retrain               │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## PART 2: TRADING MODES
+
+| Parameter | SUPER_SCALP | SCALP | SWING |
+|-----------|-------------|-------|-------|
+| Hold Time | 5-30 sec | 30-120 sec | 5-15 min |
+| Target | +0.3-0.5% | +1-2% | +3-5% |
+| Stop Loss | -0.3% | -1% | -2% |
+| Max Position | 5% capital | 10% capital | 20% capital |
+| Circuit Break | 3 losses | 5 losses | 5 losses |
+| Min Volume | 1M | 3M | 5M |
+| Latency Req | <50ms | <200ms | <1s |
+| Model | model_ss.joblib | model_s.joblib | model_sw.joblib |
+
+### Signal Classification:
+
+```python
+def classify_signal(signal: MoonBotSignal) -> TradingMode:
+
+    if (signal.delta_pct > 5
+        and signal.buys_per_sec > 30
+        and signal.vol_raise_pct > 100):
+        return TradingMode.SUPER_SCALP
+
+    if (signal.delta_pct > 2
+        and signal.buys_per_sec > 5
+        and signal.vol_raise_pct > 50):
+        return TradingMode.SCALP
+
+    if (signal.delta_pct > 1
+        and signal.daily_volume > 5_000_000):
+        return TradingMode.SWING
+
+    return TradingMode.SKIP
+```
+
+---
+
+## PART 3: DATA SOURCES
+
+**SSoT:** `state/sources/sources.json`
+**Manager:** `scripts/sources_manager.py`
+
+### Active (19/20):
+```
+├── BINANCE (8): REST + WebSocket + Testnet
+├── MARKET DATA (3): CoinGecko ping/global/price
+├── NEWS RSS (4): CoinDesk, Cointelegraph, Decrypt, TheBlock
+├── SENTIMENT (1): Fear & Greed Index
+└── INFRASTRUCTURE (4): GitHub, PyPI, CheckIP
+```
+
+### Commands:
+```bash
+python -m scripts.sources_manager check    # Check all
+python -m scripts.sources_manager report   # Status report
+python -m scripts.sources_manager daemon   # Background mode (6h)
+```
+
+---
+
+## PART 4: FILE STRUCTURE
+
+```
+minibot/
+├── ai_gateway/
+│   ├── config.py                    ✅ EXISTS
+│   ├── contracts.py                 ✅ EXISTS
+│   ├── server.py                    ✅ EXISTS
+│   ├── telegram_panel.py            ✅ EXISTS
+│   │
+│   ├── core/
+│   │   ├── event_bus.py             ✅ DONE
+│   │   ├── decision_engine.py       ✅ DONE
+│   │   ├── signal_processor.py      ✅ DONE
+│   │   ├── circuit_breaker.py       ✅ EXISTS
+│   │   └── mode_router.py           🔴 TODO (Phase 3.1)
+│   │
+│   ├── feeds/
+│   │   ├── binance_ws.py            ✅ DONE
+│   │   ├── orderbook_ws.py          🔴 TODO (Phase 3.1)
+│   │   └── news_aggregator.py       🔴 TODO (Phase 4)
+│   │
+│   ├── modules/
+│   │   ├── regime/                  ✅ EXISTS
+│   │   ├── anomaly/                 ✅ EXISTS
+│   │   ├── sentiment/               ✅ EXISTS
+│   │   ├── predictor/               ✅ EXISTS
+│   │   ├── self_improver/           ✅ DONE
+│   │   │
+│   │   ├── scalp/                   🔴 TODO (Phase 3.1)
+│   │   │   ├── detector.py
+│   │   │   ├── executor.py
+│   │   │   └── model.py
+│   │   │
+│   │   ├── super_scalp/             🔴 TODO (Phase 3.2)
+│   │   │   ├── detector.py
+│   │   │   ├── executor.py
+│   │   │   └── model.py
+│   │   │
+│   │   └── thoughts/                🔴 TODO (Phase 3.3)
+│   │       ├── generator.py
+│   │       ├── validator.py
+│   │       └── integrator.py
+│   │
+│   └── telegram/                    🔴 TODO (Phase 4)
+│       ├── bot.py
+│       ├── handlers/
+│       └── channel.py
+│
+├── dashboard/                       🔴 TODO (Phase 4)
+│   ├── app.py
+│   ├── static/
+│   └── templates/
+│
+├── scripts/
+│   ├── sources_manager.py           ✅ DONE
+│   ├── update_market_intel.py       ✅ DONE
+│   ├── test_ai_gateway.py           ✅ DONE
+│   └── parse_moonbot_log.py         ✅ EXISTS
+│
+├── state/
+│   ├── sources/sources.json         ✅ DONE
+│   ├── market_intel.json            ✅ DONE
+│   └── ai/
+│       ├── models/registry.json
+│       └── thoughts/                🔴 TODO
+│
+├── data/moonbot_signals/            ✅ EXISTS
+├── docs/HOPE_AI_TRADING_TZ_v4.md    📄 THIS FILE
+└── CLAUDE.md                        ✅ EXISTS
+```
+
+---
+
+## PART 5: IMPLEMENTATION PHASES
+
+### PHASE 3.1: SCALPING CORE
+```
+□ ai_gateway/core/mode_router.py
+□ ai_gateway/modules/scalp/detector.py
+□ ai_gateway/modules/scalp/executor.py
+□ ai_gateway/feeds/orderbook_ws.py
+□ tests/test_scalp.py
+
+EXIT CRITERIA:
+├── Signal classified into SWING/SCALP/SUPER_SCALP
+├── Order book depth available via WebSocket
+├── Execution latency < 200ms for SCALP mode
+└── py_compile + ruff pass
+```
+
+### PHASE 3.2: SUPER SCALP
+```
+□ ai_gateway/modules/super_scalp/detector.py
+□ ai_gateway/modules/super_scalp/executor.py
+□ Latency optimization (async, connection pooling)
+□ tests/test_super_scalp.py
+
+EXIT CRITERIA:
+├── SUPER_SCALP detection < 50ms
+├── Execution < 100ms total
+├── Circuit breaker per mode (3 losses for SS)
+└── py_compile + ruff pass
+```
+
+### PHASE 3.3: AI THOUGHTS
+```
+□ ai_gateway/modules/thoughts/generator.py
+□ ai_gateway/modules/thoughts/validator.py
+□ ai_gateway/modules/thoughts/integrator.py
+□ state/ai/thoughts/*.jsonl
+
+EXIT CRITERIA:
+├── Hypotheses generated from patterns
+├── Validation cycle: pending → validated/rejected
+├── Telegram command /thoughts works
+└── py_compile + ruff pass
+```
+
+### PHASE 4: TELEGRAM + DASHBOARD
+```
+□ ai_gateway/telegram/bot.py
+□ ai_gateway/telegram/handlers/*
+□ ai_gateway/feeds/news_aggregator.py
+□ dashboard/app.py (FastAPI + WebSocket)
+□ dashboard/static + templates
+
+EXIT CRITERIA:
+├── Bot responds to all commands
+├── Dashboard shows live data
+├── WebSocket updates < 100ms
+├── Alerts arrive in Telegram < 1 sec
+└── py_compile + ruff pass
+```
+
+### PHASE 5: PRODUCTION
+```
+□ Integration with HOPE ENGINE (run_live_v5.py)
+□ TESTNET run 24h (all modes)
+□ Full audit + documentation
+□ Human approval for LIVE
+
+EXIT CRITERIA:
+├── 24h without errors on TESTNET
+├── Win Rate > 60% on test data
+├── All safety invariants PASS
+└── Manual sign-off for LIVE deployment
+```
+
+---
+
+## PART 6: SAFETY INVARIANTS (MANDATORY)
+
+```python
+# INVARIANT 1: No Trade Without All Checks
+def execute_trade(decision: Decision) -> bool:
+    if decision.action != Action.BUY:
+        return False
+    if not all(decision.checks_passed.values()):
+        log.error(f"BLOCKED: {decision.signal_id}")
+        return False
+    return execute_order(decision)
+
+# INVARIANT 2: Atomic File Operations
+def atomic_write(path: Path, data: bytes) -> None:
+    temp = path.with_suffix('.tmp')
+    with open(temp, 'wb') as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    temp.replace(path)
+
+# INVARIANT 3: Checksum Validation
+def load_model(version: int, registry: ModelRegistry) -> Model:
+    entry = registry.get(version)
+    actual = compute_sha256(MODELS_DIR / entry.file)
+    if actual != entry.checksum:
+        raise ChecksumError(f"Model {version} corrupted")
+    return joblib.load(MODELS_DIR / entry.file)
+
+# INVARIANT 4: Fail-Closed
+def check_regime(regime: Optional[Regime]) -> bool:
+    if regime is None:
+        return False  # Unknown = FAIL
+    return regime in ALLOWED_REGIMES
+
+# INVARIANT 5: Circuit Breaker Auto-Rollback
+def record_outcome(self, outcome: Outcome) -> None:
+    if outcome.label == Label.LOSS:
+        self.consecutive_losses += 1
+        if self.consecutive_losses >= self.mode_config.circuit_threshold:
+            self.circuit_breaker.open()
+            self.maybe_rollback()
+    else:
+        self.consecutive_losses = 0
+```
+
+---
+
+## PART 7: TELEGRAM COMMANDS
+
+### Control:
+| Command | Description |
+|---------|-------------|
+| `/start` | Main menu |
+| `/stop` | Emergency stop |
+| `/start_trading` | Resume trading |
+| `/mode [SS\|S\|SW\|ALL]` | Select mode |
+
+### Monitoring:
+| Command | Description |
+|---------|-------------|
+| `/status` | Current state |
+| `/ai` | AI Dashboard |
+| `/pnl` | P&L for period |
+| `/circuit` | Circuit breaker status |
+| `/model` | Model version and metrics |
+
+### Analysis:
+| Command | Description |
+|---------|-------------|
+| `/signal [SYMBOL]` | Recent signals |
+| `/predict SYMBOL` | Request prediction |
+| `/news` | Recent news |
+| `/thoughts` | AI hypotheses |
+
+### Admin:
+| Command | Description |
+|---------|-------------|
+| `/retrain` | Force retraining |
+| `/rollback` | Rollback model |
+| `/settings` | Settings |
+
+---
+
+## PART 8: IMMEDIATE ACTIONS
+
+### PRIORITY 1 (TODAY):
+```
+├── Collect 22+ MoonBot signals (78 → 100)
+├── First model training
+└── Start WebSocket feed for real-time prices
+```
+
+### PRIORITY 2 (TOMORROW):
+```
+├── mode_router.py — signal classification
+├── orderbook_ws.py — order book for scalp
+└── scalp/detector.py — scalp pattern detector
+```
+
+### PRIORITY 3 (THIS WEEK):
+```
+├── super_scalp/* — ultra-fast trading
+├── thoughts/* — AI hypotheses
+└── Telegram bot MVP
+```
+
+---
+
+## PART 9: VERIFICATION
+
+```bash
+# Syntax check
+python -m py_compile ai_gateway/core/*.py ai_gateway/feeds/*.py
+
+# Integration tests
+python -m scripts.test_ai_gateway
+
+# Sources check
+python -m scripts.sources_manager check
+
+# Market intel update
+python -m scripts.update_market_intel
+
+# Signal count
+python -c "import json; d=json.load(open('data/moonbot_signals/signals_20260129.jsonl')); print(len(d))"
+```
+
+---
+
+## PART 10: CLAUDE CODE PROMPT
+
+```markdown
+# HOPE AI TASK
+
+## CONTEXT
+Project: HOPE AI Trading System v4.0
+SSoT: docs/HOPE_AI_TRADING_TZ_v4.md
+Sources: state/sources/sources.json
+
+## PRINCIPLES
+- Fail-closed: doubt = FAIL
+- Atomic: temp → fsync → replace
+- Contracts: sha256: prefix
+- Execute NOW, no offers
+
+## STATE
+python -m scripts.sources_manager report
+python -m scripts.test_ai_gateway
+
+## TASK
+[Specific task here]
+
+## DELIVERABLES
+1. Audit inputs (find hidden errors)
+2. Working code (not "can do" but DONE)
+3. Verification: py_compile + test
+4. TASK COMPLETION summary
+```
+
+---
+
+## CHECKSUM
+
+```
+Document: HOPE_AI_TRADING_TZ_v4.md
+Version: 4.0
+SHA256: [auto-computed on save]
+```
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+ПРОВЕРКА ВЫПОЛНЕНА ✅
+┌──────────────────────────────────────────────────────────────────┐
+│                    TZ v4.0 VERIFICATION                          │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  FILE: docs/HOPE_AI_TRADING_TZ_v4.md                            │
+│  ├── Size: 18,812 bytes                              ✅         │
+│  ├── Lines: 474                                      ✅         │
+│  └── Checksum: sha256:062b2e73b762f98c               ✅         │
+│                                                                  │
+│  TESTS: 4/4 PASS                                                │
+│  ├── EventBus                                        ✅         │
+│  ├── DecisionEngine                                  ✅         │
+│  ├── PriceFeed                                       ✅         │
+│  └── OutcomeTracker                                  ✅         │
+│                                                                  │
+│  WARNINGS (non-critical):                                       │
+│  ├── datetime.utcnow() deprecated → use datetime.now(UTC)      │
+│  └── 24h ticker fetch returned empty (network/rate limit)      │
+│                                                                  │
+│  SIGNALS: 78/100 (need 22 more)                                 │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+
+КОМАНДЫ ДЛЯ ПРОВЕРКИ НА ТВОЕЙ МАШИНЕ
+powershell# Среда: PowerShell
+cd C:\Users\kirillDev\Desktop\TradingBot\minibot
+
+# 1. Проверить файл TZ
+cat docs\HOPE_AI_TRADING_TZ_v4.md | Select-Object -First 50
+
+# 2. Запустить тесты
+python -m scripts.test_ai_gateway
+
+# 3. Проверить источники
+python -m scripts.sources_manager report
+
+# 4. Посчитать сигналы
+python -c "import json; print(len([l for l in open('data/moonbot_signals/signals_20260129.jsonl')]))"
+```
+
+---
+
+## СТАТУС ПРОЕКТА
+```
+READY:
+✅ TZ v4.0 сохранён
+✅ Event Bus работает
+✅ Decision Engine работает
+✅ Price Feed работает
+✅ Outcome Tracker работает
+✅ Sources Manager (19/20 active)
+
+WAITING:
+⏳ 78/100 сигналов (нужно ещё 22)
+⏳ Первое обучение модели
+
+TODO (Phase 3.1):
+🔴 mode_router.py
+🔴 orderbook_ws.py
+🔴 scalp/detector.py
+
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

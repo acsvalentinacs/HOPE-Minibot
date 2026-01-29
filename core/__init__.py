@@ -1,4 +1,4 @@
-﻿"""
+"""
 HOPE Minibot Core Package.
 """
 

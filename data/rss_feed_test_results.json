@@ -1,0 +1,68 @@
+{
+  "timestamp": "2026-01-29T09:26:38.571115Z",
+  "total_feeds": 5,
+  "passed": 4,
+  "failed": 1,
+  "feeds": [
+    {
+      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+      "http_status": 200,
+      "status_reason": "OK",
+      "content_type": "application/xml",
+      "is_valid_xml": true,
+      "is_valid_feed": true,
+      "item_count": 25,
+      "most_recent_date": "Thu, 29 Jan 2026 08:53:54 +0000",
+      "error_message": null,
+      "result": "PASS"
+    },
+    {
+      "url": "https://cointelegraph.com/rss",
+      "http_status": 200,
+      "status_reason": "OK",
+      "content_type": "application/xml",
+      "is_valid_xml": true,
+      "is_valid_feed": true,
+      "item_count": 30,
+      "most_recent_date": "Thu, 29 Jan 2026 09:14:39 +0000",
+      "error_message": null,
+      "result": "PASS"
+    },
+    {
+      "url": "https://decrypt.co/feed",
+      "http_status": 200,
+      "status_reason": "OK",
+      "content_type": "application/xml",
+      "is_valid_xml": true,
+      "is_valid_feed": true,
+      "item_count": 56,
+      "most_recent_date": "Thu, 29 Jan 2026 06:30:21 +0000",
+      "error_message": null,
+      "result": "PASS"
+    },
+    {
+      "url": "https://www.theblock.co/rss.xml",
+      "http_status": 200,
+      "status_reason": "OK",
+      "content_type": "text/xml",
+      "is_valid_xml": true,
+      "is_valid_feed": true,
+      "item_count": 20,
+      "most_recent_date": "Thu, 29 Jan 2026 03:08:42 -0500",
+      "error_message": null,
+      "result": "PASS"
+    },
+    {
+      "url": "https://bitcoinmagazine.com/feed",
+      "http_status": 403,
+      "status_reason": "Forbidden",
+      "content_type": "text/html",
+      "is_valid_xml": false,
+      "is_valid_feed": false,
+      "item_count": 0,
+      "most_recent_date": null,
+      "error_message": "HTTP 403: Forbidden",
+      "result": "FAIL"
+    }
+  ]
+}

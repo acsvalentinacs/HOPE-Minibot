@@ -1,0 +1,25 @@
+{
+  "type": "rule_based_v1",
+  "version": "1.0.0",
+  "trained_at": "2026-01-29T10:28:38.113555Z",
+  "samples": 136,
+  "positive_rate": 0.3161764705882353,
+  "mean_delta": 4.979191176470588,
+  "thresholds": {
+    "delta_min": 3.0,
+    "delta_strong": 6.0,
+    "delta_very_strong": 10.0,
+    "buys_per_sec_min": 30
+  },
+  "strategy_weights": {
+    "Drops": 0.05555555555555555,
+    "TopMarket": 0.5,
+    "Pump": 0.25
+  },
+  "feature_importance": {
+    "delta_pct": 0.45,
+    "strategy": 0.25,
+    "buys_per_sec": 0.2,
+    "direction": 0.1
+  }
+}

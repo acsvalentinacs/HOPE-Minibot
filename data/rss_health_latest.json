@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-01-29T09:27:21.417808Z",
+  "feeds": {
+    "coindesk": {
+      "status": "ok",
+      "http_code": 200,
+      "xml_valid": true,
+      "item_count": 25,
+      "timestamp": "2026-01-29T09:27:20.102763Z"
+    },
+    "cointelegraph": {
+      "status": "ok",
+      "http_code": 200,
+      "xml_valid": true,
+      "item_count": 30,
+      "timestamp": "2026-01-29T09:27:20.552446Z"
+    },
+    "decrypt": {
+      "status": "ok",
+      "http_code": 200,
+      "xml_valid": true,
+      "item_count": 56,
+      "timestamp": "2026-01-29T09:27:20.973437Z"
+    },
+    "theblock": {
+      "status": "ok",
+      "http_code": 200,
+      "xml_valid": true,
+      "item_count": 20,
+      "timestamp": "2026-01-29T09:27:21.415716Z"
+    }
+  },
+  "all_healthy": true
+}
