@@ -178,7 +178,15 @@ def create_app() -> "FastAPI":
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """Application lifespan handler."""
-        logger.info("AI-Gateway server starting...")
+        logger.info("=" * 50)
+        logger.info("AI-GATEWAY v2.1.0 STARTING")
+        logger.info("=" * 50)
+
+        # Validate configuration (fail-open with warnings)
+        from .config import validate_config
+        config_errors = validate_config()
+        for error in config_errors:
+            logger.warning("CONFIG: %s", error)
 
         # Initialize scheduler
         from .scheduler import get_scheduler
@@ -205,7 +213,7 @@ def create_app() -> "FastAPI":
     app = FastAPI(
         title="HOPE AI-Gateway",
         description="Intelligence Layer for HOPE Trading Bot",
-        version="1.0.0",
+        version="2.1.0",
         lifespan=lifespan,
     )
 
