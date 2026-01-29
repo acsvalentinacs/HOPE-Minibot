@@ -622,7 +622,12 @@ class OrderExecutor:
         # DRY mode
         if self.mode == TradingMode.DRY:
             logger.info(f"[DRY] Would sell {quantity} of {symbol}")
-            
+
+            # Get real price for simulation
+            price = self._get_gateway_price(symbol)
+            if price <= 0 and position:
+                price = position.entry_price  # Fallback to entry price
+
             result = OrderResult(
                 success=True,
                 order_id=f"dry_{int(time.time()*1000)}",
@@ -631,13 +636,15 @@ class OrderExecutor:
                 type="MARKET",
                 status=OrderStatus.FILLED,
                 quantity=quantity,
+                price=price,
                 filled_quantity=quantity,
+                avg_price=price,
                 timestamp=now.isoformat(),
             )
-            
+
             if position:
-                self._close_position(position, result.avg_price or position.entry_price, "MANUAL")
-            
+                self._close_position(position, price, "MANUAL")
+
             return result
         
         # TESTNET or LIVE
