@@ -2,7 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 08:00:00 UTC
-# Purpose: XGBoost signal classifier for pump/dump prediction
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 20:35:00 UTC
+# Purpose: XGBoost signal classifier with empirical filters
 # === END SIGNATURE ===
 """
 Signal Classifier — XGBoost model for predicting signal outcomes.
@@ -45,6 +47,95 @@ try:
     JOBLIB_AVAILABLE = True
 except ImportError:
     JOBLIB_AVAILABLE = False
+
+
+# === Empirical Filters (based on training data analysis) ===
+# Updated: 2026-01-29 22:35 UTC
+# Source: 47 samples from MoonBot signals
+
+EMPIRICAL_FILTERS = {
+    # Symbols with 0% win rate - always skip
+    "blacklist_symbols": ["SYNUSDT", "DODOUSDT", "AXSUSDT", "ARPAUSDT"],
+
+    # Strategy + Symbol combinations to skip (0% win rate)
+    "blacklist_combos": [
+        ("Delta", "SYNUSDT"),      # 0/4 wins, -32% total
+        ("Delta", "DODOUSDT"),     # 0/2 wins, -25% total
+        ("TopMarket", "AXSUSDT"),  # 0/2 wins, -18% total
+        ("TopMarket", "SYNUSDT"),  # 0/2 wins, -14% total
+    ],
+
+    # Strategy + Symbol combinations to boost (high win rate)
+    "whitelist_combos": [
+        ("Drop", "SENTUSDT"),      # 3/3 wins, +45% total
+        ("Pump", "SENTUSDT"),      # 1/2 wins, +14% total
+    ],
+
+    # Strategy adjustments
+    "strategy_penalties": {
+        "Delta": -0.15,            # 18% win rate, penalize
+        "TopMarket": -0.10,        # 27% win rate, penalize
+    },
+    "strategy_bonuses": {
+        "Drop": +0.05,             # 38% win rate, positive avg PnL
+        "Pump": +0.03,             # 40% win rate
+    },
+}
+
+
+def normalize_strategy(strategy: str) -> str:
+    """Normalize strategy name for filter matching."""
+    strat_lower = strategy.lower()
+    if "delta" in strat_lower:
+        return "Delta"
+    elif "pump" in strat_lower:
+        return "Pump"
+    elif "drop" in strat_lower:
+        return "Drop"
+    elif "top" in strat_lower or "market" in strat_lower:
+        return "TopMarket"
+    return "Unknown"
+
+
+def apply_empirical_filters(signal: Dict[str, Any], base_proba: float) -> Tuple[float, str, bool]:
+    """
+    Apply empirical filters to adjust prediction.
+
+    Args:
+        signal: Signal dictionary
+        base_proba: Base probability from model
+
+    Returns:
+        (adjusted_proba, filter_reason, should_skip)
+    """
+    symbol = signal.get("symbol", "")
+    strategy = normalize_strategy(signal.get("strategy", ""))
+
+    # Check blacklist symbols
+    if symbol in EMPIRICAL_FILTERS["blacklist_symbols"]:
+        return 0.0, f"blacklist_symbol:{symbol}", True
+
+    # Check blacklist combos
+    for combo in EMPIRICAL_FILTERS["blacklist_combos"]:
+        if strategy == combo[0] and symbol == combo[1]:
+            return 0.0, f"blacklist_combo:{strategy}+{symbol}", True
+
+    # Check whitelist combos - boost probability
+    adjusted_proba = base_proba
+    for combo in EMPIRICAL_FILTERS["whitelist_combos"]:
+        if strategy == combo[0] and symbol == combo[1]:
+            adjusted_proba = min(1.0, base_proba + 0.20)
+            return adjusted_proba, f"whitelist_combo:{strategy}+{symbol}", False
+
+    # Apply strategy adjustments
+    if strategy in EMPIRICAL_FILTERS["strategy_penalties"]:
+        penalty = EMPIRICAL_FILTERS["strategy_penalties"][strategy]
+        adjusted_proba = max(0.0, base_proba + penalty)
+    elif strategy in EMPIRICAL_FILTERS["strategy_bonuses"]:
+        bonus = EMPIRICAL_FILTERS["strategy_bonuses"][strategy]
+        adjusted_proba = min(1.0, base_proba + bonus)
+
+    return adjusted_proba, None, False
 
 
 # === Feature Engineering ===
@@ -269,10 +360,22 @@ class SignalClassifier:
                 "win_probability": float (0-1),
                 "prediction": "WIN" | "LOSS",
                 "confidence": "HIGH" | "MEDIUM" | "LOW",
-                "recommendation": "BUY" | "SKIP" | "WATCH"
+                "recommendation": "BUY" | "SKIP" | "WATCH",
+                "filter_applied": str | None
             }
         """
         if not self.is_trained or self.model is None:
+            # Even without model, apply empirical filters
+            adjusted_proba, filter_reason, should_skip = apply_empirical_filters(signal, 0.5)
+            if should_skip:
+                return {
+                    "win_probability": 0.0,
+                    "prediction": "LOSS",
+                    "confidence": "HIGH",
+                    "recommendation": "SKIP",
+                    "reason": "Model not trained",
+                    "filter_applied": filter_reason,
+                }
             return {
                 "win_probability": 0.5,
                 "prediction": "UNKNOWN",
@@ -284,8 +387,26 @@ class SignalClassifier:
         # Extract features
         features = extract_features(signal).reshape(1, -1)
 
-        # Predict
-        proba = self.model.predict_proba(features)[0, 1]
+        # Get base prediction from model
+        base_proba = self.model.predict_proba(features)[0, 1]
+
+        # Apply empirical filters
+        adjusted_proba, filter_reason, should_skip = apply_empirical_filters(signal, base_proba)
+
+        # Force skip for blacklisted
+        if should_skip:
+            return {
+                "win_probability": 0.0,
+                "prediction": "LOSS",
+                "confidence": "HIGH",
+                "recommendation": "SKIP",
+                "filter_applied": filter_reason,
+                "base_probability": float(base_proba),
+                "features_used": len(self.feature_names),
+            }
+
+        # Use adjusted probability for recommendation
+        proba = adjusted_proba
 
         # Determine confidence and recommendation
         if proba >= 0.7:
@@ -298,13 +419,20 @@ class SignalClassifier:
             confidence = "LOW"
             recommendation = "SKIP"
 
-        return {
+        result = {
             "win_probability": float(proba),
             "prediction": "WIN" if proba >= 0.5 else "LOSS",
             "confidence": confidence,
             "recommendation": recommendation,
             "features_used": len(self.feature_names),
         }
+
+        # Add filter info if applied
+        if filter_reason:
+            result["filter_applied"] = filter_reason
+            result["base_probability"] = float(base_proba)
+
+        return result
 
     def get_feature_importance(self) -> Dict[str, float]:
         """
