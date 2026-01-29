@@ -1,0 +1,7 @@
+# -*- coding: utf-8 -*-
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-29 07:30:00 UTC
+# Purpose: TradingView data snapshots
+# === END SIGNATURE ===
+{"timestamp": "2026-01-29T07:30:00Z", "symbol": "KITEUSDT", "source": "tradingview", "price": 0.1431, "change_24h_pct": 8.93, "change_7d_pct": 39.84, "change_30d_pct": 53.08, "change_1y_pct": 377.0, "ath": 0.1333, "ath_date": "2025-11-05", "atl": 0.0300, "atl_date": "2025-11-03", "exchange": "binance"}

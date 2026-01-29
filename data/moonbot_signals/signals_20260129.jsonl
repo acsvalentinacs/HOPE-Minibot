@@ -1,0 +1,12 @@
+# -*- coding: utf-8 -*-
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-29 07:30:00 UTC
+# Purpose: MoonBot signal log for AI training
+# === END SIGNATURE ===
+{"timestamp": "2026-01-29T09:15:43", "symbol": "SENT", "price": 0.030010, "strategy": "TopMarketDetect", "delta_pct": 1.92, "direction": "Long", "daily_vol_m": 46, "dBTC": 0.02, "dBTC5m": 0.03, "dMarkets": 0.12, "dMarkets24": -1.84, "signal_type": "topmarket"}
+{"timestamp": "2026-01-29T09:15:45", "symbol": "SENT", "price": 0.030000, "strategy": "Dropdetect1_USDT", "delta_pct": 3.0, "direction": "Long", "daily_vol_m": 46, "dBTC": 0.02, "dBTC5m": 0.03, "dMarkets": 0.11, "dMarkets24": -1.84, "signal_type": "drop", "price_is_low": false}
+{"timestamp": "2026-01-29T09:16:41", "symbol": "DODO", "price": 0.021400, "strategy": "Pumpdetect1_USDT", "delta_pct": 1.9, "direction": "Long", "daily_vol_m": 2.0, "buys_per_sec": 4.36, "vol_per_sec_k": 12.32, "ppl_per_sec": 1, "dBTC": 0.00, "dBTC5m": 0.04, "dMarkets": 0.07, "signal_type": "pump"}
+{"timestamp": "2026-01-29T09:17:13", "symbol": "SYN", "price": 0.067000, "strategy": "Dropdetect1_USDT", "delta_pct": 2.6, "direction": "Long", "daily_vol_m": 6.0, "dBTC": -0.05, "dBTC5m": 0.10, "dMarkets": 0.03, "signal_type": "drop", "price_is_low": false}
+{"timestamp": "2026-01-29T09:17:16", "symbol": "SYN", "price": 0.067300, "strategy": "TopMarketDetect", "delta_pct": 9.51, "direction": "Long", "daily_vol_m": 6.0, "dBTC": -0.04, "dBTC5m": 0.10, "dMarkets": 0.04, "signal_type": "topmarket"}
+{"timestamp": "2026-01-29T09:27:52", "symbol": "SYN", "price": 0.067600, "strategy": "Delta_1_SIGNAL", "delta_pct": 1.5, "last_delta": 0.4, "direction": "Long", "daily_vol_m": 6.1, "hourly_vol_k": 495, "vol_raise_pct": 71.5, "buyers": 59, "vol_per_sec_k": 0.53, "signal_type": "delta"}
