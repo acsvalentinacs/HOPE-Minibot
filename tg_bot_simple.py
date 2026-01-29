@@ -3,9 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-28T16:30:00Z
-# v2.3.5: Added /mode command for DRY/LIVE switching with confirmation
-# v2.3.6: Added systemd watchdog integration (sd_notify)
+# Modified at: 2026-01-29T04:10:00Z
+# v2.5.0: Added AI-Gateway integration with /ai command and status panel
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -104,6 +103,20 @@ try:
     MARKET_DISPLAY_AVAILABLE = True
 except ImportError:
     MARKET_DISPLAY_AVAILABLE = False
+
+# AI-Gateway status manager (fail-open: works without AI module)
+try:
+    from ai_gateway.status_manager import get_status_manager, MODULE_NAMES_RU
+    from ai_gateway.jsonl_writer import read_valid
+    AI_GATEWAY_AVAILABLE = True
+except ImportError:
+    AI_GATEWAY_AVAILABLE = False
+    MODULE_NAMES_RU = {
+        "sentiment": "Анализ настроений",
+        "regime": "Детектор режима",
+        "doctor": "Доктор стратегии",
+        "anomaly": "Сканер аномалий",
+    }
 
 THIS_FILE = Path(__file__).resolve()
 if THIS_FILE.parent.name.lower() == "minibot":
@@ -1137,7 +1150,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v2.4.0-market-intel"
+    VERSION = "tgbot-v2.5.0-ai-gateway"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
@@ -1209,10 +1222,157 @@ class HopeMiniBot:
                 InlineKeyboardButton(f"{chat_icon} Чат", callback_data="hope_chat"),
             ],
             [
+                InlineKeyboardButton("🤖 AI", callback_data="hope_ai"),
                 InlineKeyboardButton("ℹ️ Help", callback_data="hope_help"),
             ],
         ]
         return InlineKeyboardMarkup(buttons)
+
+    def _ai_keyboard(self) -> InlineKeyboardMarkup:
+        """AI-Gateway control panel keyboard."""
+        if AI_GATEWAY_AVAILABLE:
+            sm = get_status_manager()
+            sentiment_emoji = sm.get_emoji("sentiment")
+            regime_emoji = sm.get_emoji("regime")
+            doctor_emoji = sm.get_emoji("doctor")
+            anomaly_emoji = sm.get_emoji("anomaly")
+        else:
+            sentiment_emoji = "⚪"
+            regime_emoji = "⚪"
+            doctor_emoji = "⚪"
+            anomaly_emoji = "⚪"
+
+        buttons = [
+            [
+                InlineKeyboardButton(f"{sentiment_emoji} Настроения", callback_data="ai_sentiment"),
+                InlineKeyboardButton(f"{regime_emoji} Режим", callback_data="ai_regime"),
+            ],
+            [
+                InlineKeyboardButton(f"{doctor_emoji} Доктор", callback_data="ai_doctor"),
+                InlineKeyboardButton(f"{anomaly_emoji} Аномалии", callback_data="ai_anomaly"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Обновить", callback_data="ai_refresh"),
+                InlineKeyboardButton("⬅️ Назад", callback_data="hope_refresh"),
+            ],
+        ]
+        return InlineKeyboardMarkup(buttons)
+
+    def _ai_status_text(self) -> str:
+        """Build AI-Gateway status text for Telegram."""
+        if not AI_GATEWAY_AVAILABLE:
+            return (
+                "🤖 AI-GATEWAY\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "⚪ Модуль не установлен\n\n"
+                "Для установки:\n"
+                "pip install anthropic fastapi uvicorn"
+            )
+
+        sm = get_status_manager()
+        gateway_status = sm.get_gateway_status()
+        gateway_emoji = {
+            "healthy": "🟢",
+            "warning": "🟡",
+            "error": "🔴",
+            "disabled": "⚪",
+        }.get(gateway_status.value, "⚪")
+
+        lines = [
+            "🤖 AI-GATEWAY СТАТУС",
+            "━━━━━━━━━━━━━━━━━━",
+            f"Шлюз: {gateway_emoji} ({sm.get_active_count()}/4 активно)",
+            "",
+        ]
+
+        for module in ["sentiment", "regime", "doctor", "anomaly"]:
+            emoji = sm.get_emoji(module)
+            name_ru = MODULE_NAMES_RU.get(module, module)
+            tooltip = sm.get_tooltip(module)
+            enabled = "✓" if sm.is_enabled(module) else "✗"
+            lines.append(f"{emoji} {name_ru} [{enabled}]")
+            lines.append(f"   └─ {tooltip}")
+
+        lines.append("")
+        lines.append("Нажмите модуль для деталей")
+
+        return "\n".join(lines)
+
+    def _ai_module_detail(self, module: str) -> str:
+        """Build detailed status for single AI module."""
+        name_ru = MODULE_NAMES_RU.get(module, module)
+
+        if not AI_GATEWAY_AVAILABLE:
+            return f"⚪ {name_ru}\n\nМодуль AI-Gateway не установлен"
+
+        sm = get_status_manager()
+        emoji = sm.get_emoji(module)
+        status = sm.get_status(module)
+        tooltip = sm.get_tooltip(module)
+        enabled = sm.is_enabled(module)
+        last_run = sm.get_last_run(module)
+        error_count = sm.get_error_count(module)
+        last_error = sm.get_last_error(module)
+
+        lines = [
+            f"{emoji} {name_ru}",
+            "━━━━━━━━━━━━━━━━━━",
+            f"Статус: {tooltip}",
+            f"Включен: {'Да' if enabled else 'Нет'}",
+        ]
+
+        if last_run:
+            from datetime import datetime
+            age_sec = (datetime.utcnow() - last_run).total_seconds()
+            if age_sec < 60:
+                age_str = f"{int(age_sec)} сек назад"
+            elif age_sec < 3600:
+                age_str = f"{int(age_sec / 60)} мин назад"
+            else:
+                age_str = f"{int(age_sec / 3600)} ч назад"
+            lines.append(f"Последний запуск: {age_str}")
+
+        if error_count > 0:
+            lines.append(f"Ошибок подряд: {error_count}")
+            if last_error:
+                lines.append(f"Последняя ошибка: {last_error[:50]}...")
+
+        # Try to get latest artifact
+        artifact = read_valid(module) if AI_GATEWAY_AVAILABLE else None
+        if artifact:
+            lines.append("")
+            lines.append("📊 Последние данные:")
+            if module == "sentiment":
+                score = artifact.get("overall_score", 0)
+                sentiment = artifact.get("overall_sentiment", "?")
+                bias = artifact.get("bias", "neutral")
+                lines.append(f"  Настроение: {sentiment}")
+                lines.append(f"  Оценка: {score:+.2f}")
+                lines.append(f"  Направление: {bias}")
+            elif module == "regime":
+                regime = artifact.get("current_regime", "?")
+                confidence = artifact.get("regime_confidence", 0)
+                strategy = artifact.get("recommended_strategy", "?")
+                lines.append(f"  Режим: {regime}")
+                lines.append(f"  Уверенность: {confidence:.0%}")
+                lines.append(f"  Стратегия: {strategy}")
+            elif module == "doctor":
+                health = artifact.get("health_status", "?")
+                score = artifact.get("health_score", 0)
+                issues = artifact.get("top_issues", [])
+                lines.append(f"  Здоровье: {health}")
+                lines.append(f"  Оценка: {score:.0f}/100")
+                if issues:
+                    lines.append(f"  Главная проблема: {issues[0][:40]}...")
+            elif module == "anomaly":
+                count = artifact.get("anomalies_found", 0)
+                alert = artifact.get("alert_level", "normal")
+                stress = artifact.get("market_stress_level", 0)
+                lines.append(f"  Аномалий: {count}")
+                lines.append(f"  Уровень: {alert}")
+                lines.append(f"  Стресс рынка: {stress:.0%}")
+
+        return "\n".join(lines)
 
     def _panel_text(self) -> str:
         h = _health()
@@ -1434,6 +1594,71 @@ class HopeMiniBot:
         self._cached_tickers = tickers
         self._cached_metrics = metrics
         self._market_cache_ts = time.time()
+
+    # === AI-GATEWAY COMMANDS (v2.5.0) ===
+
+    async def cmd_ai(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Display AI-Gateway control panel."""
+        if not await self._guard_admin(update):
+            return
+
+        uid = update.effective_user.id if update.effective_user else 0
+        _audit_log(uid, "ai", True)
+
+        text = self._ai_status_text()
+        keyboard = self._ai_keyboard()
+        await self._reply(update, text, markup=keyboard)
+
+    async def cmd_ai_module(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, module: str
+    ) -> None:
+        """Display detailed status for a specific AI module."""
+        text = self._ai_module_detail(module)
+
+        # Module-specific keyboard
+        buttons = []
+        if AI_GATEWAY_AVAILABLE:
+            sm = get_status_manager()
+            if sm.is_enabled(module):
+                buttons.append([
+                    InlineKeyboardButton("⏸️ Отключить", callback_data=f"ai_disable_{module}"),
+                ])
+            else:
+                buttons.append([
+                    InlineKeyboardButton("▶️ Включить", callback_data=f"ai_enable_{module}"),
+                ])
+        buttons.append([
+            InlineKeyboardButton("⬅️ Назад", callback_data="ai_refresh"),
+        ])
+
+        await self._reply(update, text, markup=InlineKeyboardMarkup(buttons))
+
+    async def cmd_ai_toggle(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, module: str, enable: bool
+    ) -> None:
+        """Enable or disable an AI module."""
+        if not AI_GATEWAY_AVAILABLE:
+            await self._reply(update, "⚪ AI-Gateway не установлен")
+            return
+
+        sm = get_status_manager()
+        action = "enable" if enable else "disable"
+
+        if enable:
+            success = sm.enable_module(module)
+        else:
+            success = sm.disable_module(module)
+
+        if success:
+            status = "включен ✅" if enable else "отключен ⏸️"
+            name_ru = MODULE_NAMES_RU.get(module, module)
+            await self._reply(update, f"🤖 {name_ru} {status}")
+            # Refresh AI panel
+            await self.cmd_ai(update, context)
+        else:
+            await self._reply(update, f"❌ Не удалось {action} модуль {module}")
 
     # === NEW COMMANDS v2.3.0 (GPT TZ) ===
 
@@ -2459,6 +2684,34 @@ class HopeMiniBot:
         if data == "hope_help":
             await self.cmd_help(update, context)
             return
+        if data == "hope_ai":
+            await self.cmd_ai(update, context)
+            return
+
+        # AI-Gateway callbacks (v2.5.0)
+        if data == "ai_refresh":
+            await self.cmd_ai(update, context)
+            return
+        if data == "ai_sentiment":
+            await self.cmd_ai_module(update, context, "sentiment")
+            return
+        if data == "ai_regime":
+            await self.cmd_ai_module(update, context, "regime")
+            return
+        if data == "ai_doctor":
+            await self.cmd_ai_module(update, context, "doctor")
+            return
+        if data == "ai_anomaly":
+            await self.cmd_ai_module(update, context, "anomaly")
+            return
+        if data.startswith("ai_enable_"):
+            module = data.replace("ai_enable_", "")
+            await self.cmd_ai_toggle(update, context, module, True)
+            return
+        if data.startswith("ai_disable_"):
+            module = data.replace("ai_disable_", "")
+            await self.cmd_ai_toggle(update, context, module, False)
+            return
 
         # Friend Chat callbacks (v2.2.0)
         if data == "chat_tunnel_status" or data == "chat_bridge_status" or data == "chat_full_status":
@@ -2667,6 +2920,7 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("version", self.cmd_version))
         app.add_handler(CommandHandler("help", self.cmd_help))
         app.add_handler(CommandHandler("mode", self.cmd_mode))
+        app.add_handler(CommandHandler("ai", self.cmd_ai))
 
         app.add_handler(CallbackQueryHandler(self.on_callback))
         return app
