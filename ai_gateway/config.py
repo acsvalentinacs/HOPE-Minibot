@@ -2,6 +2,8 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 16:30:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 11:35:00 UTC
 # Purpose: Centralized configuration with ALLOWED_DOMAINS whitelist
 # Security: Fail-closed defaults, explicit contracts
 # === END SIGNATURE ===
@@ -27,18 +29,19 @@ ALLOWED_DOMAINS: Final[frozenset[str]] = frozenset({
 
     # === BINANCE (Market Data) ===
     "api.binance.com",            # REST API для Regime, Anomaly
+    "stream.binance.com",         # WebSocket real-time data
     "testnet.binance.vision",     # Testnet trading
     "data.binance.vision",        # Historical data archives
-    "developers.binance.com",     # API changelog
 
     # === RSS FEEDS (News) ===
+    # Validated 2026-01-29: 4/4 working
     "www.coindesk.com",
     "coindesk.com",
     "cointelegraph.com",
     "www.theblock.co",
     "theblock.co",
     "decrypt.co",
-    "bitcoinmagazine.com",
+    # REMOVED: bitcoinmagazine.com - HTTP 403 Forbidden
 
     # === CRYPTO DATA ===
     "api.coingecko.com",
@@ -49,9 +52,10 @@ ALLOWED_DOMAINS: Final[frozenset[str]] = frozenset({
     "github.com",
     "api.github.com",
     "raw.githubusercontent.com",
-
-    # === DIAGNOSTICS ===
     "checkip.amazonaws.com",
+
+    # === SENTIMENT ===
+    "api.alternative.me",         # Fear & Greed Index
 })
 
 
@@ -135,6 +139,40 @@ BINANCE_TIMEOUT_SECONDS: Final[float] = 10.0
 # ============================================================================
 
 TELEGRAM_ADMIN_CHAT_ID: int = int(os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "0"))
+
+
+# ============================================================================
+# SOURCES MANAGER INTEGRATION
+# ============================================================================
+
+def get_active_sources(category: str = None) -> list[str]:
+    """
+    Получить активные источники данных.
+
+    Args:
+        category: Категория (binance, market_data, news, infrastructure)
+                  None = все категории
+
+    Returns:
+        List of URLs
+    """
+    try:
+        from scripts.sources_manager import SourcesManager
+        manager = SourcesManager()
+        return manager.get_source_urls(category)
+    except ImportError:
+        # Fallback to static list
+        return []
+
+
+def get_binance_endpoints() -> list[str]:
+    """Получить активные Binance эндпоинты."""
+    return get_active_sources("binance")
+
+
+def get_news_feeds() -> list[str]:
+    """Получить активные RSS feeds."""
+    return get_active_sources("news")
 
 
 # ============================================================================
