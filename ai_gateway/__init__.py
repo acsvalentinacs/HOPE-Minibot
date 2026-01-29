@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 03:30:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-29 16:25:00 UTC
-# Change: Added scheduler, diagnostics, telegram_panel exports
+# Modified at: 2026-01-29 17:00:00 UTC
+# Change: Added config.py with centralized ALLOWED_DOMAINS whitelist
 # Purpose: AI-Gateway package - Separate from Trading Core
 # === END SIGNATURE ===
 """
@@ -33,7 +33,19 @@ Components:
 - server: FastAPI HTTP API
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
+
+# Config (centralized SSoT)
+from .config import (
+    ALLOWED_DOMAINS,
+    is_domain_allowed,
+    STATE_DIR,
+    INTERVALS,
+    MAX_CONSECUTIVE_ERRORS,
+    ANTHROPIC_API_URL,
+    ANTHROPIC_DEFAULT_MODEL,
+    validate_config,
+)
 
 # Core exports
 from .contracts import (
@@ -82,6 +94,15 @@ from .base_module import (
 __all__ = [
     # Version
     "__version__",
+    # Config
+    "ALLOWED_DOMAINS",
+    "is_domain_allowed",
+    "STATE_DIR",
+    "INTERVALS",
+    "MAX_CONSECUTIVE_ERRORS",
+    "ANTHROPIC_API_URL",
+    "ANTHROPIC_DEFAULT_MODEL",
+    "validate_config",
     # Contracts
     "ModuleStatus",
     "SentimentLevel",
