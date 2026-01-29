@@ -48,6 +48,8 @@ ALLOWED_DOMAINS = {
     "www.theblock.co",
     "theblock.co",
     "bitcoinmagazine.com",
+    # AI APIs
+    "api.anthropic.com",
 }
 
 # Top symbols to fetch

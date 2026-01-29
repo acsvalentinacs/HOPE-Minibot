@@ -2,8 +2,8 @@
 # Created by: Kirill Dev
 # Created at: 2026-01-19 18:24:32 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-29 13:00:00 UTC
-# Change: Added developers.binance.com, checkip, pypi, github to ALLOWED_DOMAINS
+# Modified at: 2026-01-29 15:30:00 UTC
+# Change: Added api.anthropic.com to ALLOWED_DOMAINS for AI-Gateway
 # === END SIGNATURE ===
 """
 Snapshot Store - Atomic evidence persistence with sha256 verification.
@@ -69,6 +69,8 @@ ALLOWED_DOMAINS: FrozenSet[str] = frozenset({
     "pypi.org",
     "api.github.com",
     "raw.githubusercontent.com",
+    # AI APIs
+    "api.anthropic.com",
 })
 
 
