@@ -2,8 +2,10 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 16:30:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 20:55:00 UTC
 # Purpose: Phase 1 - Live MoonBot Signal Integration Pipeline
-# Contract: MoonBot → PumpPrecursor → ModeRouter → DecisionEngine
+# Contract: MoonBot → PumpPrecursor → ModeRouter → EmpiricalFilters → DecisionEngine
 # === END SIGNATURE ===
 """
 HOPE AI - MoonBot Live Integration (Phase 1)
@@ -46,6 +48,7 @@ from typing import Any, Callable, Dict, List, Optional
 # Internal imports
 from ..patterns.pump_precursor_detector import PumpPrecursorDetector, PrecursorResult
 from ..core.mode_router import ModeRouter, TradingMode, RouteResult
+from ..modules.predictor.signal_classifier import apply_empirical_filters, EMPIRICAL_FILTERS
 from ..core.decision_engine import (
     DecisionEngine,
     Decision,
@@ -357,11 +360,29 @@ class MoonBotLiveIntegration:
             decision_reasons = [r.value for r in decision.reasons]
 
         # ═══════════════════════════════════════════════════════════════
+        # STAGE 4: EMPIRICAL FILTERS
+        # ═══════════════════════════════════════════════════════════════
+
+        filter_input = {
+            "symbol": symbol,
+            "strategy": signal.get("strategy", signal.get("signal_type", "")),
+        }
+        _, filter_reason, should_skip = apply_empirical_filters(filter_input, 0.5)
+
+        if should_skip:
+            logger.info(f"🚫 FILTERED: {symbol} ({filter_reason})")
+            decision_action = "SKIP"
+            decision_reasons.append(f"empirical_filter:{filter_reason}")
+
+        # ═══════════════════════════════════════════════════════════════
         # FINAL ACTION
         # ═══════════════════════════════════════════════════════════════
 
         # Final action: require both precursor AND decision engine approval
-        if precursor_result.prediction == "BUY" and decision_action == "BUY":
+        # AND pass empirical filters
+        if should_skip:
+            final_action = "SKIP"
+        elif precursor_result.prediction == "BUY" and decision_action == "BUY":
             final_action = "BUY"
             self._stats["buys_generated"] += 1
         elif precursor_result.prediction == "WATCH" and decision_action == "BUY":
