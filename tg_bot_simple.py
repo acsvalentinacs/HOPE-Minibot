@@ -57,6 +57,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,13 @@ try:
 except ImportError:
     CCXT_AVAILABLE = False
 
+# aiohttp for async HTTP requests (required for /market command)
+try:
+    import aiohttp
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+
 # Systemd watchdog integration (fail-open: works without systemd)
 try:
     from core.runtime.systemd_notify import sd_ready, sd_watchdog, sd_stopping
@@ -86,6 +94,16 @@ except ImportError:
     def sd_ready() -> bool: return False
     def sd_watchdog() -> bool: return False
     def sd_stopping() -> bool: return False
+
+# Market display formatting (fail-open: basic formatting if missing)
+try:
+    from core.market_display import (
+        build_full_panel, build_action_report, build_balance_report,
+        MarketTicker, GlobalMetrics, NewsItem, format_usd, format_duration,
+    )
+    MARKET_DISPLAY_AVAILABLE = True
+except ImportError:
+    MARKET_DISPLAY_AVAILABLE = False
 
 THIS_FILE = Path(__file__).resolve()
 if THIS_FILE.parent.name.lower() == "minibot":
@@ -122,11 +140,13 @@ PIDS_DIR.mkdir(parents=True, exist_ok=True)
 SECRETS_ENV_PATH = Path(r"C:\secrets\hope\.env")
 FALLBACK_ENV_PATH = ROOT / ".env"
 
-PS_MORNING = TOOLS_DIR / "hope_morning.ps1"
-PS_NIGHT = TOOLS_DIR / "hope_night.ps1"
-PS_START_CLEAN = TOOLS_DIR / "start_hope_stack_clean.ps1"
-PS_START_NOW = TOOLS_DIR / "start_hope_stack_now.ps1"
-PS_LAUNCHER_V2 = TOOLS_DIR / "launch_hope_stack_pidtruth_v2.ps1"
+# Cross-platform script paths
+_SCRIPT_EXT = ".ps1" if sys.platform == "win32" else ".sh"
+PS_MORNING = TOOLS_DIR / f"hope_morning{_SCRIPT_EXT}"
+PS_NIGHT = TOOLS_DIR / f"hope_night{_SCRIPT_EXT}"
+PS_START_CLEAN = TOOLS_DIR / f"start_hope_stack_clean{_SCRIPT_EXT}"
+PS_START_NOW = TOOLS_DIR / f"start_hope_stack_now{_SCRIPT_EXT}"
+PS_LAUNCHER_V2 = TOOLS_DIR / f"launch_hope_stack_pidtruth_v2{_SCRIPT_EXT}"
 
 HEALTH_JSON = STATE_DIR / "health_v5.json"
 # v2.3.3: TGBOT health must be in minibot/state/ for PowerShell detection
@@ -215,11 +235,17 @@ BALANCE_CANDIDATES = [
 
 
 def _ps_exe() -> str:
-    return "powershell.exe"
+    """Return shell executable: PowerShell on Windows, bash on Linux."""
+    if sys.platform == "win32":
+        return "powershell.exe"
+    return "/bin/bash"
 
 
 def _create_no_window_flag() -> int:
-    return 0x08000000
+    """Windows-only flag to hide console window. Returns 0 on Linux."""
+    if sys.platform == "win32":
+        return 0x08000000
+    return 0
 
 
 def _looks_like_utf16(data: bytes) -> bool:
@@ -1111,7 +1137,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v2.3.0-gpt-tz"
+    VERSION = "tgbot-v2.4.0-market-intel"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
@@ -1120,6 +1146,11 @@ class HopeMiniBot:
         self._action_lock = asyncio.Lock()
         self._restart_lock = asyncio.Lock()
         self._last_restart_ts = 0.0
+        # Market data cache (updated by background task or /market command)
+        self._cached_tickers: list = []
+        self._cached_metrics = None
+        self._cached_news: list = []
+        self._market_cache_ts: float = 0.0
 
     async def _reply(
         self, update: Update, text: str, markup: InlineKeyboardMarkup | None = None,
@@ -1194,8 +1225,29 @@ class HopeMiniBot:
             q = int(q)
         except Exception:
             q = 0
-        stop = "ON" if _bool_flag(STOP_FLAG) else "OFF"
-        pin = "ON" if _get_pin_flag() else "OFF"
+        stop_on = _bool_flag(STOP_FLAG)
+        pin_on = _get_pin_flag()
+
+        # Use enhanced display if available
+        if MARKET_DISPLAY_AVAILABLE:
+            from datetime import datetime, timezone
+            return build_full_panel(
+                tickers=self._cached_tickers,
+                metrics=self._cached_metrics,
+                engine_ok=engine_ok,
+                mode=mode,
+                uptime_sec=uptime_s,
+                hb_ago_sec=hb_ago,
+                queue_len=q,
+                stop_flag=stop_on,
+                pin_live=pin_on,
+                news=self._cached_news,
+                timestamp=datetime.now(timezone.utc),
+            )
+
+        # Fallback to simple format
+        stop = "ON" if stop_on else "OFF"
+        pin = "ON" if pin_on else "OFF"
         return (
             "📊 Панель HOPE v5\n"
             "━━━━━━━━━━━━━━━━━━\n"
@@ -1246,29 +1298,38 @@ class HopeMiniBot:
         if not await self._guard_admin(update):
             return
         txt = (
-            "🛠 Команды HOPEminiBOT v2.3.5:\n"
+            "🛠 Команды HOPEminiBOT v2.3.6:\n"
             "━━━━━━━━━━━━━━━━━━\n"
+            "📊 ОСНОВНЫЕ\n"
             "/start — меню\n"
             "/panel — панель + кнопки\n"
             "/status — краткий статус\n"
-            "/mode — ⚙️ режим DRY/LIVE\n"
-            "/health — 🏥 статус всех систем\n"
-            "/logs — 📋 последние ошибки\n"
-            "/balance — баланс\n"
+            "/market — 💹 рынок (BTC/ETH/SOL)\n"
+            "/balance — 💰 баланс\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚙️ УПРАВЛЕНИЕ\n"
+            "/mode — режим DRY/LIVE\n"
             "/stop — статус STOP.flag\n"
-            "/stop_on — включить STOP.flag ⚠️\n"
-            "/stop_off — выключить STOP.flag\n"
+            "/stop_on — включить STOP ⚠️\n"
+            "/stop_off — выключить STOP\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔄 СТЕК\n"
             "/morning — 🌅 УТРО\n"
             "/night — 🌙 НОЧЬ\n"
-            "/restart — 🔄 RESTART\n"
-            "/stack — 🧱 управление stack\n"
-            "/chat — 💬 чат друзей\n"
-            "/signals — последние сигналы\n"
-            "/trades — последние сделки\n"
+            "/restart — перезапуск\n"
+            "/stack — управление\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📡 ТОРГОВЛЯ\n"
+            "/signals — сигналы\n"
+            "/trades — сделки\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔧 СЕРВИС\n"
+            "/health — статус систем\n"
+            "/logs — ошибки\n"
             "/diag — диагностика\n"
-            "/whoami — твой ID\n"
-            "/version — версия\n"
-            "/help — помощь"
+            "/chat — 💬 чат друзей\n"
+            "/whoami — ID\n"
+            "/version — версия"
         )
         await self._reply(update, txt)
 
@@ -1282,6 +1343,97 @@ class HopeMiniBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         await self._reply(update, f"🤖 HOPEminiBOT {self.VERSION}")
+
+    async def cmd_market(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Fetch and display live market data from Binance/CoinGecko."""
+        if not await self._guard_admin(update):
+            return
+
+        await self._reply(update, "📡 Загрузка рыночных данных...")
+
+        try:
+            await self._fetch_market_data()
+            # Build market display
+            if MARKET_DISPLAY_AVAILABLE and self._cached_tickers:
+                from datetime import datetime, timezone
+                from core.market_display import build_market_header, build_global_metrics
+
+                blocks = []
+                blocks.append("💹 MARKET OVERVIEW")
+                blocks.append(f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC")
+                blocks.append("")
+
+                if self._cached_tickers:
+                    blocks.append(build_market_header(self._cached_tickers))
+
+                if self._cached_metrics:
+                    blocks.append("")
+                    blocks.append(build_global_metrics(self._cached_metrics))
+
+                await self._reply(update, f"```\n{chr(10).join(blocks)}\n```", parse_mode="Markdown")
+            else:
+                await self._reply(update, "❌ Не удалось загрузить рыночные данные")
+        except Exception as e:
+            self.log.exception("Market fetch error")
+            await self._reply(update, f"❌ Ошибка: {type(e).__name__}: {e}")
+
+    async def _fetch_market_data(self) -> None:
+        """Fetch market data from Binance and CoinGecko APIs."""
+        if not AIOHTTP_AVAILABLE:
+            self.log.warning("aiohttp not available, skipping market fetch")
+            return
+
+        cache_ttl = 60  # 1 minute cache
+        if time.time() - self._market_cache_ts < cache_ttl:
+            return  # Use cached data
+
+        tickers = []
+        metrics = None
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            # Fetch Binance tickers
+            symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
+            for sym in symbols:
+                try:
+                    async with session.get(
+                        f"https://api.binance.com/api/v3/ticker/24hr?symbol={sym}"
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if MARKET_DISPLAY_AVAILABLE:
+                                tickers.append(MarketTicker(
+                                    symbol=data["symbol"],
+                                    price=float(data["lastPrice"]),
+                                    change_pct=float(data["priceChangePercent"]),
+                                    volume_usd=float(data["quoteVolume"]),
+                                ))
+                except Exception as e:
+                    self.log.warning(f"Binance ticker {sym} error: {e}")
+
+            # Fetch CoinGecko global metrics
+            try:
+                async with session.get(
+                    "https://api.coingecko.com/api/v3/global"
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        gdata = data.get("data", {})
+                        if MARKET_DISPLAY_AVAILABLE:
+                            metrics = GlobalMetrics(
+                                total_mcap_usd=gdata.get("total_market_cap", {}).get("usd", 0),
+                                total_volume_24h=gdata.get("total_volume", {}).get("usd", 0),
+                                btc_dominance=gdata.get("market_cap_percentage", {}).get("btc", 0),
+                                eth_dominance=gdata.get("market_cap_percentage", {}).get("eth", 0),
+                                mcap_change_24h=gdata.get("market_cap_change_percentage_24h_usd", 0),
+                            )
+            except Exception as e:
+                self.log.warning(f"CoinGecko error: {e}")
+
+        self._cached_tickers = tickers
+        self._cached_metrics = metrics
+        self._market_cache_ts = time.time()
 
     # === NEW COMMANDS v2.3.0 (GPT TZ) ===
 
@@ -1682,14 +1834,19 @@ class HopeMiniBot:
 
         out_file = LOGS_DIR / spec.stdout_name
         err_file = LOGS_DIR / spec.stderr_name
-        cmd = [
-            _ps_exe(),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(spec.script),
-        ] + list(spec.args)
+        # Cross-platform command building
+        if sys.platform == "win32":
+            cmd = [
+                _ps_exe(),
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(spec.script),
+            ] + list(spec.args)
+        else:
+            # Linux: execute script directly (must be chmod +x)
+            cmd = [str(spec.script)] + list(spec.args)
 
         out_f = None
         err_f = None
@@ -1735,11 +1892,24 @@ class HopeMiniBot:
                 pass
 
         dt = time.time() - t0
-        tail = _tail_lines(out_file, 80) or "(no stdout)"
-        await self._reply(
-            update,
-            f"🧾 ACTION REPORT: {spec.key}\nRESULT: returncode={proc.returncode}\n⏱ {dt:.0f}s\n\n📜 STDOUT (tail)\n{tail}",
-        )
+        tail = _tail_lines(out_file, 80) or "(no output)"
+        stderr_tail = _tail_lines(err_file, 40) if err_file.exists() else None
+
+        # Use enhanced display if available
+        if MARKET_DISPLAY_AVAILABLE:
+            report = build_action_report(
+                action_name=spec.key,
+                return_code=proc.returncode,
+                duration_sec=dt,
+                stdout_tail=tail,
+                stderr_tail=stderr_tail if stderr_tail and stderr_tail.strip() else None,
+            )
+            await self._reply(update, f"```\n{report}\n```", parse_mode="Markdown")
+        else:
+            await self._reply(
+                update,
+                f"🧾 ACTION REPORT: {spec.key}\nRESULT: returncode={proc.returncode}\n⏱ {dt:.0f}s\n\n📜 STDOUT (tail)\n{tail}",
+            )
 
     # === FRIEND CHAT MENU (v2.2.0) ===
 
@@ -2479,6 +2649,7 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("panel", self.cmd_panel))
         app.add_handler(CommandHandler("status", self.cmd_status))
         app.add_handler(CommandHandler("balance", self.cmd_balance))
+        app.add_handler(CommandHandler("market", self.cmd_market))
         app.add_handler(CommandHandler("stop", self.cmd_stop))
         app.add_handler(CommandHandler("stop_on", self.cmd_stop_on))
         app.add_handler(CommandHandler("stop_off", self.cmd_stop_off))
@@ -2645,9 +2816,8 @@ def _hope_venv_guard(root):
 
 
 def _hope_acquire_pid_lock(lock_path):
-    # Windows-friendly lock via msvcrt (kept open for process lifetime).
+    # Cross-platform lock: msvcrt on Windows, fcntl on Linux/Mac.
     import os, sys
-    import msvcrt
     from pathlib import Path
 
     global _LOCK_HANDLE
@@ -2658,8 +2828,13 @@ def _hope_acquire_pid_lock(lock_path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(lock_path, "a+b")
     try:
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, IOError):
         sys.stderr.write(
             f"[HOPE] TGBOT already running (lock held). Lock: {lock_path}\n"
         )

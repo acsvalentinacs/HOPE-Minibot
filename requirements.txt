@@ -1,0 +1,22 @@
+# HOPE Trading Bot - Production Dependencies
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-29T13:30:00Z
+# === END SIGNATURE ===
+
+# Telegram Bot
+python-telegram-bot>=20.0
+
+# HTTP/Async
+aiohttp>=3.9.0
+aiofiles>=23.2.0
+requests>=2.31.0
+
+# Crypto Exchange
+ccxt>=4.0.0
+
+# Data Processing
+python-dotenv>=1.0.0
+
+# Type hints (stdlib in 3.9+, but explicit)
+typing-extensions>=4.0.0
