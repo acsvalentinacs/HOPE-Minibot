@@ -249,7 +249,7 @@ def create_app() -> "FastAPI":
         sm = get_status_manager()
 
         modules = []
-        for module in ["sentiment", "regime", "doctor", "anomaly"]:
+        for module in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             last_run = sm.get_last_run(module)
             modules.append(ModuleStatusResponse(
                 module=module,
@@ -265,7 +265,7 @@ def create_app() -> "FastAPI":
             gateway_status=gateway_status.value,
             gateway_emoji={"healthy": "🟢", "warning": "🟡", "error": "🔴", "disabled": "⚪"}.get(gateway_status.value, "⚪"),
             active_modules=sm.get_active_count(),
-            total_modules=4,
+            total_modules=5,
             modules=modules,
             updated_at=datetime.utcnow().isoformat() + "Z",
         )
@@ -275,7 +275,7 @@ def create_app() -> "FastAPI":
         """Get specific module status."""
         sm = get_status_manager()
 
-        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+        if module not in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
 
         last_run = sm.get_last_run(module)
@@ -314,7 +314,7 @@ def create_app() -> "FastAPI":
         from .scheduler import get_scheduler
         scheduler = get_scheduler()
 
-        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+        if module not in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
 
         success = await scheduler.start_module(module)
@@ -328,7 +328,7 @@ def create_app() -> "FastAPI":
         from .scheduler import get_scheduler
         scheduler = get_scheduler()
 
-        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+        if module not in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
 
         success = await scheduler.stop_module(module)
@@ -340,7 +340,7 @@ def create_app() -> "FastAPI":
         from .scheduler import get_scheduler
         scheduler = get_scheduler()
 
-        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+        if module not in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
 
         success = await scheduler.restart_module(module)
@@ -352,7 +352,7 @@ def create_app() -> "FastAPI":
         from .scheduler import get_scheduler
         scheduler = get_scheduler()
 
-        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+        if module not in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
 
         result = await scheduler.run_module_now(module)
@@ -601,6 +601,124 @@ def create_app() -> "FastAPI":
         """Get pre-formatted module detail for Telegram."""
         sm = get_status_manager()
         return {"block": sm.format_detail_block(module)}
+
+    # === Self-Improver Specific Endpoints ===
+
+    @app.get("/self-improver/status")
+    async def get_self_improver_status():
+        """Get detailed self-improver status."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        module = scheduler._modules.get("self_improver")
+        if module is None or not hasattr(module, 'get_loop'):
+            return {
+                "status": "not_initialized",
+                "message": "Self-improver module not started. Enable with POST /modules/self_improver/enable"
+            }
+
+        loop = module.get_loop()
+        if loop is None:
+            return {"status": "not_initialized"}
+
+        info = loop.get_info()
+        return {
+            "status": "running" if module.is_running else "stopped",
+            "model_version": info.get("model_version"),
+            "is_trained": info.get("is_trained"),
+            "consecutive_losses": info.get("consecutive_losses"),
+            "active_signals": info.get("active_signals"),
+            "completed_signals": info.get("completed_signals"),
+            "ab_test_active": info.get("ab_test_active"),
+            "retrain_threshold": info.get("retrain_threshold"),
+            "outcomes_until_retrain": info.get("outcomes_until_retrain"),
+        }
+
+    @app.post("/self-improver/predict")
+    async def self_improver_predict(signal: Dict[str, Any]):
+        """
+        Get AI prediction for a signal.
+
+        Required fields:
+        - symbol: Trading pair (e.g., "BTCUSDT")
+        - price: Current price
+        - delta_pct: Price delta percentage
+        - direction: "Long" or "Short"
+        """
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        module = scheduler._modules.get("self_improver")
+        if module is None or not hasattr(module, 'get_loop'):
+            raise HTTPException(status_code=400, detail="Self-improver not initialized")
+
+        loop = module.get_loop()
+        if loop is None:
+            raise HTTPException(status_code=400, detail="Self-improver loop not started")
+
+        prediction = loop.predict(signal)
+        return prediction
+
+    @app.post("/self-improver/retrain")
+    async def force_retrain():
+        """Force model retraining (requires confirmation)."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        module = scheduler._modules.get("self_improver")
+        if module is None or not hasattr(module, 'get_loop'):
+            raise HTTPException(status_code=400, detail="Self-improver not initialized")
+
+        loop = module.get_loop()
+        if loop is None:
+            raise HTTPException(status_code=400, detail="Self-improver loop not started")
+
+        result = await loop._retrain()
+        return {
+            "status": "retrained" if result else "failed",
+            "model_version": loop.model_registry.get_active_version(),
+        }
+
+    @app.post("/self-improver/rollback")
+    async def rollback_model():
+        """Rollback to previous model version."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        module = scheduler._modules.get("self_improver")
+        if module is None or not hasattr(module, 'get_loop'):
+            raise HTTPException(status_code=400, detail="Self-improver not initialized")
+
+        loop = module.get_loop()
+        if loop is None:
+            raise HTTPException(status_code=400, detail="Self-improver loop not started")
+
+        loop._trigger_rollback()
+        return {
+            "status": "rolled_back",
+            "model_version": loop.model_registry.get_active_version(),
+        }
+
+    @app.get("/self-improver/model")
+    async def get_model_info():
+        """Get current model information."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        module = scheduler._modules.get("self_improver")
+        if module is None or not hasattr(module, 'get_loop'):
+            return {"status": "not_initialized"}
+
+        loop = module.get_loop()
+        if loop is None:
+            return {"status": "not_initialized"}
+
+        registry = loop.model_registry
+        return {
+            "active_version": registry.get_active_version(),
+            "is_trained": loop.classifier.is_trained if loop.classifier else False,
+            "registry_stats": registry.get_stats(),
+        }
 
     return app
 

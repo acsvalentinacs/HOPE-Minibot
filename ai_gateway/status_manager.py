@@ -40,6 +40,7 @@ MODULE_NAMES_RU = {
     "regime": "Детектор режима",
     "doctor": "Доктор стратегии",
     "anomaly": "Сканер аномалий",
+    "self_improver": "Самообучение ИИ",
 }
 
 # Default TTL for status artifacts
@@ -81,6 +82,7 @@ class StatusManager:
             "regime": ModuleStatus.DISABLED,
             "doctor": ModuleStatus.DISABLED,
             "anomaly": ModuleStatus.DISABLED,
+            "self_improver": ModuleStatus.DISABLED,
         }
 
         # Tracking data
@@ -293,7 +295,7 @@ class StatusManager:
         lines.append(f"║ Шлюз: {gateway_emoji} ({self.get_active_count()}/{len(self._modules)} активно)    ║")
         lines.append("╟──────────────────────────────╢")
 
-        for module in ["sentiment", "regime", "doctor", "anomaly"]:
+        for module in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             emoji = self.get_emoji(module)
             name_ru = MODULE_NAMES_RU.get(module, module)
             status = self.get_status(module)

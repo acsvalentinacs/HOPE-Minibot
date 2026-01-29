@@ -36,10 +36,11 @@ logger = logging.getLogger(__name__)
 
 # Module intervals (seconds)
 MODULE_INTERVALS = {
-    "sentiment": 900.0,   # 15 min - RSS + Claude API
-    "regime": 300.0,      # 5 min - Binance klines
-    "doctor": 3600.0,     # 1 hour - on-demand mainly
-    "anomaly": 60.0,      # 1 min - fast scan
+    "sentiment": 900.0,       # 15 min - RSS + Claude API
+    "regime": 300.0,          # 5 min - Binance klines
+    "doctor": 3600.0,         # 1 hour - on-demand mainly
+    "anomaly": 60.0,          # 1 min - fast scan
+    "self_improver": 60.0,    # 1 min - check for retraining + outcome updates
 }
 
 
@@ -131,11 +132,28 @@ class ModuleScheduler:
             )
             return AnomalyModuleAdapter(config)
 
+        def create_self_improver():
+            config = ModuleConfig(
+                module_id="self_improver",
+                interval_seconds=MODULE_INTERVALS["self_improver"],
+                enabled=self._status_manager.is_enabled("self_improver"),
+                extra={
+                    "retrain_threshold": 100,     # Retrain after 100 new outcomes
+                    "min_train_samples": 30,      # Minimum samples to train
+                    "max_consecutive_losses": 5,  # Rollback after 5 losses
+                    "ab_test_samples": 50,        # Samples per arm for A/B test
+                    "auto_ab_test": True,         # Automatically A/B test new models
+                    "horizon": "5m",              # Primary horizon for training
+                }
+            )
+            return SelfImproverModuleAdapter(config)
+
         self._module_factories = {
             "sentiment": create_sentiment,
             "regime": create_regime,
             "doctor": create_doctor,
             "anomaly": create_anomaly,
+            "self_improver": create_self_improver,
         }
 
     def _get_or_create_module(self, module_id: str) -> Optional[BaseAIModule]:
@@ -428,6 +446,82 @@ class AnomalyModuleAdapter(BaseAIModule):
 
         artifact = self._scanner.scan(usdt_tickers)
         return artifact
+
+
+class SelfImproverModuleAdapter(BaseAIModule):
+    """
+    Adapter for SelfImprovingLoop.
+
+    Integrates the self-improving AI system into the gateway scheduler.
+
+    Features:
+    - Auto-retrain after N outcomes (default: 100)
+    - A/B testing new vs old model
+    - Automatic rollback on 5 consecutive losses
+    - Real-time outcome tracking via PriceFeedBridge
+    """
+
+    def __init__(self, config: ModuleConfig):
+        super().__init__(config)
+        self._loop = None
+        self._price_bridge = None
+
+    async def on_start(self) -> None:
+        from pathlib import Path
+        from .modules.self_improver import SelfImprovingLoop
+
+        state_dir = Path("state/ai")
+        self._loop = SelfImprovingLoop(self.config, state_dir=state_dir)
+
+        # Connect to price bridge for real-time outcome tracking
+        try:
+            from .feeds.price_bridge import get_price_bridge
+            self._price_bridge = get_price_bridge()
+            logger.info("SelfImprover connected to PriceFeedBridge")
+        except Exception as e:
+            logger.warning(f"PriceFeedBridge not available: {e}")
+
+        logger.info(f"SelfImprovingLoop initialized (threshold={self._loop.retrain_threshold})")
+
+    async def on_stop(self) -> None:
+        if self._loop:
+            logger.info("SelfImprovingLoop stopping")
+
+    async def run_once(self):
+        """
+        Execute one self-improvement cycle:
+        1. Update prices from bridge → outcome tracker
+        2. Check if retraining needed
+        3. Check A/B test results
+        4. Return status artifact
+        """
+        if self._loop is None:
+            raise RuntimeError("SelfImprovingLoop not initialized")
+
+        # Update prices from bridge if available
+        if self._price_bridge and self._price_bridge.is_running:
+            prices = self._price_bridge.get_all_prices()
+            if prices:
+                completed = self._loop.update_prices(prices)
+                if completed > 0:
+                    logger.info(f"SelfImprover: {completed} outcomes finalized")
+
+        # Run the loop iteration (check retrain, A/B test, etc.)
+        artifact = await self._loop.run_once()
+
+        # Log status
+        info = self._loop.get_info()
+        logger.debug(
+            f"SelfImprover: model=v{info.get('model_version')}, "
+            f"trained={info.get('is_trained')}, "
+            f"until_retrain={info.get('outcomes_until_retrain')}"
+        )
+
+        return artifact
+
+    def get_loop(self) -> "SelfImprovingLoop":
+        """Get the underlying SelfImprovingLoop instance."""
+        return self._loop
 
 
 # === Convenience ===
