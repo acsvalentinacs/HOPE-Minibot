@@ -224,6 +224,14 @@ class PriceFeedBridge:
         """Periodically update outcomes with cached prices."""
         tracker = self._get_outcome_tracker()
 
+        # Lazy-load alert manager
+        alert_manager = None
+        try:
+            from ..alerts.telegram_alerts import get_alert_manager
+            alert_manager = get_alert_manager()
+        except ImportError:
+            logger.debug("Alert manager not available")
+
         while self._running:
             try:
                 # Sync subscriptions with tracked symbols
@@ -239,6 +247,10 @@ class PriceFeedBridge:
 
                         # Publish outcome events
                         await self._publish_outcomes(completed)
+
+                # Check alerts for active signals
+                if alert_manager:
+                    await self._check_alerts(tracker, alert_manager)
 
                 # Update stats
                 self._stats.symbols_tracked = len(self._prices)
@@ -303,6 +315,33 @@ class PriceFeedBridge:
             )
         except Exception as e:
             logger.error(f"Failed to publish outcome event: {e}")
+
+    async def _check_alerts(self, tracker, alert_manager) -> None:
+        """Check active signals for alert thresholds."""
+        try:
+            # Get active signals from tracker
+            active = list(tracker._active.values())
+            if not active:
+                return
+
+            # Check each signal for MFE/MAE thresholds
+            for signal in active:
+                current_price = self._prices.get(signal.symbol)
+                await alert_manager.check_and_alert(
+                    symbol=signal.symbol,
+                    mfe=signal.mfe,
+                    mae=signal.mae,
+                    entry_price=signal.entry_price,
+                    current_price=current_price,
+                )
+
+            # Check circuit breaker (avg MAE across all signals)
+            if len(active) >= 3:
+                avg_mae = sum(s.mae for s in active) / len(active)
+                await alert_manager.check_circuit_breaker(avg_mae, len(active))
+
+        except Exception as e:
+            logger.debug(f"Alert check error: {e}")
 
     def update_price(self, symbol: str, price: float) -> None:
         """
