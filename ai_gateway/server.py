@@ -403,13 +403,52 @@ def create_app() -> "FastAPI":
 
     @app.get("/price-feed/prices")
     async def get_current_prices():
-        """Get all cached prices from the feed."""
+        """
+        Get all cached prices from the feed.
+
+        PriceFeed V1 Contract:
+        - Returns ALL subscribed symbols, even if price not yet received
+        - Missing price = {"price": null, "stale": true}
+        - Includes staleness indicator (> 60s = stale)
+        """
+        import time
         from .feeds.price_bridge import get_price_bridge
         bridge = get_price_bridge()
-        prices = bridge.get_all_prices()
+
+        # Get subscribed symbols from underlying feed
+        feed = bridge._get_feed() if bridge._feed else None
+        subscribed = list(feed.symbols) if feed else []
+
+        # Get prices with staleness
+        raw_prices = bridge.get_all_prices()
+        last_updates = bridge._last_update
+
+        MAX_AGE_SEC = 60  # Price older than this is stale
+
+        prices_with_contract = {}
+        now = time.time()
+
+        # Include ALL subscribed symbols
+        all_symbols = set(subscribed) | set(raw_prices.keys())
+
+        for symbol in all_symbols:
+            price = raw_prices.get(symbol)
+            last_update = last_updates.get(symbol, 0)
+            age = now - last_update if last_update > 0 else float("inf")
+
+            prices_with_contract[symbol] = {
+                "price": price,  # null if missing
+                "last_update": last_update if last_update > 0 else None,
+                "age_sec": round(age) if age != float("inf") else None,
+                "stale": price is None or age > MAX_AGE_SEC,
+                "subscribed": symbol in subscribed,
+            }
+
         return {
-            "count": len(prices),
-            "prices": prices,
+            "count": len(prices_with_contract),
+            "subscribed_count": len(subscribed),
+            "subscribed": subscribed,
+            "prices": prices_with_contract,
         }
 
     @app.get("/price-feed/prices/{symbol}")
@@ -729,6 +768,17 @@ def run_server(host: str = "127.0.0.1", port: int = 8100):
     """Run the AI-Gateway server."""
     if not FASTAPI_AVAILABLE:
         logger.error("Cannot start server - FastAPI not installed")
+        return
+
+    # Single-instance check
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from core.lockfile import ProcessLock
+
+    lock = ProcessLock("gateway")
+    if not lock.acquire():
+        owner_pid = lock.get_owner()
+        logger.error(f"Another Gateway instance is running (PID {owner_pid})")
         return
 
     try:
