@@ -2,6 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 04:00:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 16:15:00 UTC
+# Change: Added lifecycle endpoints (start/stop/restart) and diagnostics
 # Purpose: FastAPI HTTP server for AI-Gateway
 # === END SIGNATURE ===
 """
@@ -176,8 +179,28 @@ def create_app() -> "FastAPI":
     async def lifespan(app: FastAPI):
         """Application lifespan handler."""
         logger.info("AI-Gateway server starting...")
+
+        # Initialize scheduler
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        # Auto-start enabled modules
+        try:
+            results = await scheduler.start_all_enabled()
+            for module_id, success in results.items():
+                if success:
+                    logger.info(f"Module {module_id} auto-started")
+        except Exception as e:
+            logger.warning(f"Auto-start failed: {e}")
+
         yield
+
+        # Stop all modules gracefully
         logger.info("AI-Gateway server shutting down...")
+        try:
+            await scheduler.stop_all(timeout=10.0)
+        except Exception as e:
+            logger.warning(f"Graceful shutdown failed: {e}")
 
     app = FastAPI(
         title="HOPE AI-Gateway",
@@ -255,6 +278,88 @@ def create_app() -> "FastAPI":
         if sm.disable_module(module):
             return {"status": "disabled", "module": module}
         raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
+
+    # === Lifecycle Control (Scheduler) ===
+
+    @app.post("/modules/{module}/start")
+    async def start_module(module: str):
+        """Start a module (begin scheduled execution)."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+            raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
+
+        success = await scheduler.start_module(module)
+        if success:
+            return {"status": "started", "module": module}
+        raise HTTPException(status_code=400, detail=f"Failed to start module '{module}'")
+
+    @app.post("/modules/{module}/stop")
+    async def stop_module(module: str):
+        """Stop a module (halt scheduled execution)."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+            raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
+
+        success = await scheduler.stop_module(module)
+        return {"status": "stopped" if success else "error", "module": module}
+
+    @app.post("/modules/{module}/restart")
+    async def restart_module(module: str):
+        """Restart a module."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+            raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
+
+        success = await scheduler.restart_module(module)
+        return {"status": "restarted" if success else "error", "module": module}
+
+    @app.post("/modules/{module}/run-now")
+    async def run_module_now(module: str):
+        """Execute module once immediately."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        if module not in ["sentiment", "regime", "doctor", "anomaly"]:
+            raise HTTPException(status_code=404, detail=f"Module '{module}' not found")
+
+        result = await scheduler.run_module_now(module)
+        return {
+            "status": "executed",
+            "module": module,
+            "artifact_produced": result is not None,
+        }
+
+    @app.get("/scheduler/info")
+    async def get_scheduler_info():
+        """Get scheduler and all modules info."""
+        from .scheduler import get_scheduler
+        scheduler = get_scheduler()
+        return {
+            "running_modules": scheduler.get_running_modules(),
+            "modules": scheduler.get_all_modules_info(),
+        }
+
+    # === Diagnostics ===
+
+    @app.get("/diagnostics")
+    async def run_diagnostics():
+        """Run full gateway diagnostics."""
+        from .diagnostics import run_health_check
+        return await run_health_check()
+
+    @app.get("/diagnostics/telegram")
+    async def get_diagnostics_telegram():
+        """Get diagnostics formatted for Telegram."""
+        from .diagnostics import GatewayDiagnostics, format_health_report_telegram
+        diag = GatewayDiagnostics()
+        report = await diag.run_all_checks()
+        return {"block": format_health_report_telegram(report)}
 
     # === Module Execution ===
 
