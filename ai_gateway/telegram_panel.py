@@ -2,6 +2,8 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 16:20:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 10:20:00 UTC
 # Purpose: Telegram UI handlers for AI-Gateway control panel
 # === END SIGNATURE ===
 """
@@ -54,6 +56,7 @@ MODULE_NAMES = {
     "regime": "📊 Regime",
     "doctor": "🩺 Doctor",
     "anomaly": "🚨 Anomaly",
+    "self_improver": "🧠 Self-Improver",
 }
 
 
@@ -113,7 +116,7 @@ class AIGatewayPanel:
         buttons = []
 
         # Module rows
-        for module_id in ["sentiment", "regime", "doctor", "anomaly"]:
+        for module_id in ["sentiment", "regime", "doctor", "anomaly", "self_improver"]:
             name = MODULE_NAMES.get(module_id, module_id)
             buttons.append([
                 InlineKeyboardButton(name, callback_data=f"ai:detail:{module_id}"),

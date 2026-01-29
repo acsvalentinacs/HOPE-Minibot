@@ -2,6 +2,8 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 03:32:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 10:15:00 UTC
 # Purpose: Pydantic models for AI-Gateway artifacts with checksum validation
 # === END SIGNATURE ===
 """
@@ -272,6 +274,36 @@ class ModuleStatusArtifact(BaseArtifact):
             ModuleStatus.ERROR: "🔴",
             ModuleStatus.DISABLED: "⚪",
         }.get(status, "⚪")
+
+
+# === Self-Improver Artifacts ===
+
+class SelfImproverArtifact(BaseArtifact):
+    """Self-Improving Loop status artifact."""
+
+    module: str = Field(default="self_improver")
+
+    # Model state
+    model_version: Optional[int] = Field(None, description="Active model version")
+    is_trained: bool = Field(default=False)
+    consecutive_losses: int = Field(default=0)
+
+    # Tracking stats
+    active_signals: int = Field(default=0)
+    completed_signals: int = Field(default=0)
+    win_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    # Training stats
+    last_train_samples: int = Field(default=0)
+    last_train_metrics: Dict[str, Any] = Field(default_factory=dict)
+
+    # A/B test status
+    ab_test_active: bool = Field(default=False)
+    ab_test_results: Dict[str, Any] = Field(default_factory=dict)
+
+    # Status
+    status_message: str = Field(default="")
+    outcomes_until_retrain: int = Field(default=0)
 
 
 # === Artifact Factory ===

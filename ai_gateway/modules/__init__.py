@@ -2,6 +2,8 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 03:40:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 10:15:00 UTC
 # Purpose: AI-Gateway modules package
 # === END SIGNATURE ===
 """
@@ -18,6 +20,7 @@ MODULE_REGISTRY: Dict[str, str] = {
     "regime": "ai_gateway.modules.regime.detector.RegimeDetector",
     "doctor": "ai_gateway.modules.doctor.diagnostics.StrategyDoctor",
     "anomaly": "ai_gateway.modules.anomaly.scanner.AnomalyScanner",
+    "self_improver": "ai_gateway.modules.self_improver.loop.SelfImprovingLoop",
 }
 
 
