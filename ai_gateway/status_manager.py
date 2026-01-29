@@ -51,17 +51,22 @@ class StatusManager:
     Manage AI module statuses with persistence and Telegram display.
 
     Thread-safe singleton for tracking module health across the gateway.
+
+    INVARIANT: Single instance per state_dir path.
+    INVARIANT: All public methods are thread-safe.
     """
 
-    _instance: Optional["StatusManager"] = None
+    _instances: dict[str, "StatusManager"] = {}
     _lock = Lock()
 
     def __new__(cls, state_dir: Optional[Path] = None) -> "StatusManager":
+        resolved_dir = str(state_dir or Path("state/ai"))
         with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._initialized = False
-            return cls._instance
+            if resolved_dir not in cls._instances:
+                instance = super().__new__(cls)
+                instance._initialized = False
+                cls._instances[resolved_dir] = instance
+            return cls._instances[resolved_dir]
 
     def __init__(self, state_dir: Optional[Path] = None):
         if self._initialized:

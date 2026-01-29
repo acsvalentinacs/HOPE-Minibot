@@ -14,6 +14,7 @@ Core reads artifacts without importing AI libraries.
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from datetime import datetime
 from enum import Enum
@@ -81,11 +82,16 @@ class BaseArtifact(BaseModel):
         }
 
     def compute_checksum(self) -> str:
-        """Compute SHA256 checksum of artifact payload."""
-        # Exclude checksum field from hash
+        """
+        Compute SHA256 checksum of artifact payload.
+
+        Uses JSON serialization for deterministic ordering.
+        INVARIANT: same data → same checksum (reproducible)
+        """
         data = self.dict(exclude={"checksum"})
-        payload = str(sorted(data.items())).encode("utf-8")
-        return "sha256:" + hashlib.sha256(payload).hexdigest()[:16]
+        # JSON with sort_keys=True guarantees deterministic serialization
+        canonical = json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     def with_checksum(self) -> "BaseArtifact":
         """Return copy with computed checksum."""

@@ -113,16 +113,25 @@ class JSONLWriter:
 
         Returns:
             True if write succeeded, False otherwise
+
+        FAIL-CLOSED: Invalid artifact → False (no write)
+        INVARIANT: Written artifacts always have valid checksum
         """
         module = getattr(artifact, "module", "unknown")
+
+        # FAIL-CLOSED: TTL must be positive
+        ttl = getattr(artifact, "ttl_seconds", 0)
+        if ttl <= 0:
+            logger.error(f"Invalid TTL ({ttl}) for {module} - REJECTED")
+            return False
 
         # Ensure checksum is computed
         if not artifact.checksum:
             artifact = artifact.with_checksum()
 
-        # Validate checksum
+        # FAIL-CLOSED: Checksum must be valid before write
         if not artifact.is_valid():
-            logger.error(f"Artifact checksum mismatch for {module}")
+            logger.error(f"Artifact checksum mismatch for {module} - REJECTED")
             return False
 
         # Check rotation
