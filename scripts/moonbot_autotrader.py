@@ -104,16 +104,19 @@ class MoonBotSignal:
 class MoonBotParser:
     """Parses MoonBot log output"""
     
-    # Regex patterns
+    # Regex patterns (flexible order - handles both strategy before/after symbol)
+    # Format: "08:19:51 Signal USDT-DUSK Ask:0.10950 [Pumpdetect1_USDT] DailyVol: 12.4m Buys/sec: 25.71 Vol/sec: 14.2k PriceDelta: 1.89%"
     PUMP_PATTERN = re.compile(
-        r'(\d{2}:\d{2}:\d{2}).*PumpDetection.*USDT-(\w+).*'
+        r'(\d{2}:\d{2}:\d{2}).*USDT-(\w+).*(?:PumpDetection|Pumpdetect\d*_USDT|\[Pumpdetect).*'
         r'DailyVol:\s*([\d.]+)m.*Buys/sec:\s*([\d.]+).*'
-        r'Vol/sec:\s*([\d.]+)\s*k.*PriceDelta:\s*([\d.]+)%'
+        r'Vol/sec:\s*([\d.]+)\s*k.*PriceDelta:\s*([\d.]+)%',
+        re.IGNORECASE
     )
-    
+
     DROP_PATTERN = re.compile(
-        r'(\d{2}:\d{2}:\d{2}).*DropsDetection.*USDT-(\w+).*'
-        r'DailyVol:\s*([\d.]+)m.*xPriceDelta:\s*([\d.]+)'
+        r'(\d{2}:\d{2}:\d{2}).*USDT-(\w+).*(?:DropsDetection|Dropdetect\d*_USDT|\[Dropdetect).*'
+        r'DailyVol:\s*([\d.]+)m.*(?:x)?PriceDelta:\s*([\d.]+)',
+        re.IGNORECASE
     )
     
     TOPMARKET_PATTERN = re.compile(

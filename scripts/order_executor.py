@@ -422,7 +422,19 @@ class OrderExecutor:
         with open(temp, 'w') as f:
             json.dump(state, f, indent=2)
         temp.replace(self.state_file)
-    
+
+    def _get_gateway_price(self, symbol: str, gateway_url: str = "http://127.0.0.1:8100") -> float:
+        """Get current price from AI Gateway for DRY mode simulation"""
+        try:
+            resp = httpx.get(f"{gateway_url}/price-feed/prices", timeout=3)
+            if resp.status_code == 200:
+                data = resp.json()
+                prices = data.get("prices", data)  # Handle both formats
+                return float(prices.get(symbol, 0))
+        except Exception as e:
+            logger.debug(f"Gateway price fetch failed: {e}")
+        return 0.0
+
     def _check_safety_limits(self, symbol: str, amount_usdt: float) -> Tuple[bool, str]:
         """
         Check safety limits before placing order
@@ -490,9 +502,11 @@ class OrderExecutor:
         # DRY mode - just log
         if self.mode == TradingMode.DRY:
             logger.info(f"[DRY] Would buy ${quote_amount} of {symbol}")
-            
-            # Simulate order
-            price = 0.1  # Would get from price feed
+
+            # Get real price for simulation
+            price = self._get_gateway_price(symbol)
+            if price <= 0:
+                price = 0.1  # Fallback
             quantity = quote_amount / price
             
             result = OrderResult(
