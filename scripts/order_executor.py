@@ -2,8 +2,10 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:15:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 19:10:00 UTC
 # Purpose: HOPE AI Real Order Executor - ACTUAL Binance trading, NO STUBS
-# sha256: order_executor_v1.0
+# sha256: order_executor_v1.1
 # === END SIGNATURE ===
 """
 HOPE AI - Real Order Executor v1.0
@@ -361,35 +363,45 @@ class OrderExecutor:
             logger.warning("⚠️ LIVE MODE - REAL MONEY AT RISK!")
     
     def _load_credentials(self, env_file: str = None):
-        """Load API credentials from environment or file"""
+        """Load API credentials from environment or file based on mode"""
+        # Determine key names based on mode
+        if self.mode == TradingMode.TESTNET:
+            key_name = "BINANCE_TESTNET_API_KEY"
+            secret_name = "BINANCE_TESTNET_API_SECRET"
+        else:
+            key_name = "BINANCE_API_KEY"
+            secret_name = "BINANCE_API_SECRET"
+
         # Try environment first
-        self.api_key = os.environ.get("BINANCE_API_KEY", "")
-        self.api_secret = os.environ.get("BINANCE_API_SECRET", "")
-        
+        self.api_key = os.environ.get(key_name, "")
+        self.api_secret = os.environ.get(secret_name, "")
+
         # Try env file
         if not self.api_key and env_file:
             env_path = Path(env_file)
             if env_path.exists():
-                with open(env_path, 'r') as f:
+                with open(env_path, 'r', encoding='utf-8') as f:
                     for line in f:
-                        if line.startswith("BINANCE_API_KEY="):
+                        line = line.strip()
+                        if line.startswith(f"{key_name}="):
                             self.api_key = line.split("=", 1)[1].strip()
-                        elif line.startswith("BINANCE_API_SECRET="):
+                        elif line.startswith(f"{secret_name}="):
                             self.api_secret = line.split("=", 1)[1].strip()
-        
+
         # Try default secrets location
         if not self.api_key:
             default_env = Path("C:/secrets/hope.env")
             if default_env.exists():
-                with open(default_env, 'r') as f:
+                with open(default_env, 'r', encoding='utf-8') as f:
                     for line in f:
-                        if line.startswith("BINANCE_API_KEY="):
+                        line = line.strip()
+                        if line.startswith(f"{key_name}="):
                             self.api_key = line.split("=", 1)[1].strip()
-                        elif line.startswith("BINANCE_API_SECRET="):
+                        elif line.startswith(f"{secret_name}="):
                             self.api_secret = line.split("=", 1)[1].strip()
-        
+
         if self.mode != TradingMode.DRY and not self.api_key:
-            raise ValueError("BINANCE_API_KEY not found in environment or secrets file")
+            raise ValueError(f"{key_name} not found in environment or secrets file")
     
     def _load_state(self):
         """Load executor state"""
