@@ -264,12 +264,24 @@ class AlphaCommittee:
         },
     }
     
-    def __init__(self):
-        self.whitelist: Set[str] = {
+    def __init__(self, use_dynamic_allowlist: bool = True):
+        self.use_dynamic_allowlist = use_dynamic_allowlist
+        self._static_whitelist: Set[str] = {
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
             "KITEUSDT", "DUSKUSDT", "XVSUSDT", "SOMIUSDT"
         }
         self.symbol_stats: Dict[str, Dict] = {}
+
+    @property
+    def whitelist(self) -> Set[str]:
+        """Get whitelist - dynamic or static."""
+        if self.use_dynamic_allowlist:
+            try:
+                from core.allowlist_manager import get_allowlist_manager
+                return get_allowlist_manager().get_symbols_set()
+            except Exception:
+                pass
+        return self._static_whitelist
     
     def _score_precursor(self, signal) -> Tuple[float, List[str]]:
         """Score precursor patterns"""

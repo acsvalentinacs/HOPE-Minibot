@@ -187,9 +187,18 @@ class ProductionOrchestrator:
                 use_testnet=(self.mode == TradingMode.TESTNET),
             )
 
-            # Subscribe to default symbols
-            default_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "SOMIUSDT"]
-            await self.realtime_feed.subscribe(default_symbols)
+            # Subscribe to dynamic AllowList symbols
+            try:
+                from core.allowlist_manager import get_allowlist_manager
+                allowlist_manager = get_allowlist_manager()
+                await allowlist_manager.update(force=True)  # Get fresh list
+                dynamic_symbols = allowlist_manager.get_symbols()
+                logger.info(f"[OK] Dynamic AllowList: {len(dynamic_symbols)} symbols")
+            except Exception as e:
+                logger.warning(f"[WARN] Dynamic AllowList failed: {e}, using defaults")
+                dynamic_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+
+            await self.realtime_feed.subscribe(dynamic_symbols)
 
             logger.info("[OK] Binance WebSocket Feed initialized")
         except Exception as e:
@@ -275,6 +284,9 @@ class ProductionOrchestrator:
 
         # Heartbeat writer
         tasks.append(asyncio.create_task(self._heartbeat_loop()))
+
+        # AllowList updater (hourly)
+        tasks.append(asyncio.create_task(self._allowlist_update_loop()))
 
         logger.info(f"Started {len(tasks)} background tasks")
 
@@ -554,6 +566,39 @@ class ProductionOrchestrator:
                 pass
 
             await asyncio.sleep(5)
+
+    async def _allowlist_update_loop(self):
+        """Update AllowList every hour and resubscribe WebSocket."""
+        UPDATE_INTERVAL = 3600  # 1 hour
+
+        while self.running:
+            try:
+                await asyncio.sleep(UPDATE_INTERVAL)
+
+                if not self.running:
+                    break
+
+                logger.info("Updating Dynamic AllowList...")
+
+                try:
+                    from core.allowlist_manager import get_allowlist_manager
+                    manager = get_allowlist_manager()
+                    new_symbols = await manager.update(force=True)
+
+                    # Resubscribe WebSocket to new symbols
+                    if self.realtime_feed and new_symbols:
+                        await self.realtime_feed.subscribe(new_symbols)
+                        logger.info(f"AllowList updated: {len(new_symbols)} symbols")
+                        logger.info(f"Top 5: {', '.join(new_symbols[:5])}")
+
+                except Exception as e:
+                    logger.warning(f"AllowList update failed: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"AllowList loop error: {e}")
+                await asyncio.sleep(60)
 
     def _acquire_lock(self) -> bool:
         """Acquire single-instance lock."""
