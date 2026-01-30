@@ -96,6 +96,15 @@ except ImportError:
     # Fallback for standalone testing
     TradingMode = Enum('TradingMode', ['DRY', 'TESTNET', 'LIVE'])
 
+# Import Eye of God V3 for two-chamber decision making
+try:
+    from eye_of_god_v3 import EyeOfGodV3, DecisionAction
+    EYE_OF_GOD_AVAILABLE = True
+except ImportError:
+    EYE_OF_GOD_AVAILABLE = False
+    EyeOfGodV3 = None
+    logging.warning("EyeOfGodV3 not available, using simple SignalProcessor")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s'
@@ -444,14 +453,23 @@ class AutoTrader:
     def __init__(self, config: AutoTraderConfig):
         self.config = config
         self.running = False
-        
+
         # Initialize components
         self.mode = TradingMode[config.mode]
-        self.signal_processor = SignalProcessor(config)
+        self.signal_processor = SignalProcessor(config)  # Simple fallback
         self.price_feed = PriceFeed(config.gateway_url)
         self.trade_logger = TradeLogger(config.log_file)
         self.circuit_breaker = CircuitBreaker()
-        
+
+        # Eye of God V3 - Two-chamber decision system (PREFERRED)
+        self.eye_of_god = None
+        if EYE_OF_GOD_AVAILABLE:
+            try:
+                self.eye_of_god = EyeOfGodV3(base_position_size=config.default_position_usdt)
+                logger.info("EyeOfGodV3 initialized - using two-chamber decisions")
+            except Exception as e:
+                logger.warning(f"EyeOfGodV3 init failed: {e}, using simple processor")
+
         # Order executor
         try:
             from order_executor import OrderExecutor
@@ -484,39 +502,107 @@ class AutoTrader:
         self.stats["signals_received"] += 1
     
     def _process_signals(self):
-        """Process queued signals"""
+        """Process queued signals using Eye of God V3 or fallback SignalProcessor"""
         while self.signal_queue:
             raw_signal = self.signal_queue.popleft()
-            
-            # Process signal
+            logger.info(f"Processing signal: {raw_signal.get('symbol')} | eye_of_god={self.eye_of_god is not None}")
+
+            # === TWO-CHAMBER DECISION (Eye of God V3) ===
+            if self.eye_of_god is not None:
+                decision = self._process_with_eye_of_god(raw_signal)
+                if decision is None:
+                    logger.warning("Eye of God returned None")
+                    continue
+                logger.info(f"Decision: {decision.action} | conf={decision.confidence:.0%}")
+                if decision.action == "SKIP":  # action is str, not Enum
+                    self.stats["signals_skipped"] += 1
+                    logger.info(f"SKIP reasons: {decision.reasons[:3]}")
+                    continue
+                # BUY decision - execute
+                self._execute_trade_from_eye(decision)
+                continue
+
+            # === FALLBACK: Simple SignalProcessor ===
             signal = self.signal_processor.process(raw_signal)
             if not signal:
                 continue
-            
-            # Log
+
             logger.info(f"Signal: {signal.symbol} | {signal.mode} | conf={signal.confidence:.0%}")
-            
-            # Check if should trade
+
             if not signal.should_trade():
                 self.trade_logger.log_signal(signal, "SKIP")
                 self.stats["signals_skipped"] += 1
                 continue
-            
-            # Check confidence threshold
+
             if signal.confidence < self.config.min_confidence:
                 self.trade_logger.log_signal(signal, "LOW_CONFIDENCE")
                 self.stats["signals_skipped"] += 1
                 logger.info(f"  → Skip: confidence {signal.confidence:.0%} < {self.config.min_confidence:.0%}")
                 continue
-            
-            # Check circuit breaker
+
             if not self.circuit_breaker.check():
                 self.trade_logger.log_signal(signal, "CIRCUIT_BREAKER")
                 logger.warning(f"  → Skip: circuit breaker open")
                 continue
-            
-            # === EXECUTE TRADE ===
+
             self._execute_trade(signal)
+
+    def _process_with_eye_of_god(self, raw_signal: Dict):
+        """
+        Process signal with Eye of God V3 two-chamber system.
+
+        Alpha Committee: "Do we WANT to trade?"
+        Risk Committee: "Are we ALLOWED to trade?"
+        """
+        symbol = raw_signal.get("symbol", "")
+        if not symbol:
+            return None
+
+        # Update price in Eye of God
+        price = raw_signal.get("price")
+        if price:
+            self.eye_of_god.update_price(symbol, float(price))
+
+        # Get two-chamber decision
+        decision = self.eye_of_god.decide(raw_signal)
+
+        # Log decision
+        logger.info(
+            f"EYE: {decision.symbol} | {decision.action} | "
+            f"conf={decision.confidence:.0%} | mode={decision.mode} | "
+            f"reasons={decision.reasons[:2]}"
+        )
+
+        return decision
+
+    def _execute_trade_from_eye(self, decision):
+        """Execute trade based on Eye of God decision."""
+        logger.info(f"🔥 EYE DECISION: BUY {decision.symbol} | ${decision.position_size_usdt}")
+
+        # Subscribe to price feed
+        self.watch_symbols.add(decision.symbol)
+        self._subscribe_symbol(decision.symbol)
+
+        # Execute order
+        if self.executor:
+            result = self.executor.market_buy(
+                symbol=decision.symbol,
+                quote_amount=decision.position_size_usdt,
+                target_pct=1.0,  # Default TP
+                stop_pct=-0.5,   # Default SL
+                timeout_seconds=60,
+            )
+
+            if result.success:
+                self.stats["signals_traded"] += 1
+                self.stats["positions_opened"] += 1
+                logger.info(f"  ✅ Order filled: {result.filled_quantity} @ {result.avg_price}")
+            else:
+                logger.error(f"  ❌ Order failed: {result.error}")
+        else:
+            # DRY mode
+            logger.info(f"  [DRY] Would buy ${decision.position_size_usdt} of {decision.symbol}")
+            self.stats["signals_traded"] += 1
     
     def _execute_trade(self, signal: ProcessedSignal):
         """Execute trade for signal"""
@@ -688,16 +774,23 @@ def create_api(autotrader: AutoTrader):
     
     class SignalRequest(BaseModel):
         symbol: str
+        timestamp: str = ""  # ISO format, auto-filled if empty
         strategy: str = "unknown"
         direction: str = "Long"
         price: float = 0
         buys_per_sec: float = 0
         delta_pct: float = 0
         vol_raise_pct: float = 0
+        daily_volume_m: float = 100  # Default daily volume in millions
     
     @app.post("/signal")
     async def inject_signal(signal: SignalRequest):
-        autotrader.add_signal(signal.dict())
+        from datetime import datetime, timezone
+        data = signal.model_dump()
+        # Auto-fill timestamp if empty
+        if not data.get("timestamp"):
+            data["timestamp"] = datetime.now(timezone.utc).isoformat()
+        autotrader.add_signal(data)
         return {"status": "queued", "queue_size": len(autotrader.signal_queue)}
     
     @app.get("/status")
