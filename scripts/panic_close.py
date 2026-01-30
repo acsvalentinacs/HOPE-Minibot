@@ -313,6 +313,9 @@ async def execute_panic_close(
     # Log event
     _log_panic_event(result)
 
+    # Send Telegram notification
+    await _notify_telegram_panic(result)
+
     # Summary
     logger.info("")
     logger.info("=" * 60)
@@ -431,6 +434,45 @@ def _log_panic_event(result: PanicResult):
         logger.info(f"Event logged: {PANIC_LOG}")
     except Exception as e:
         logger.error(f"Failed to log event: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TELEGRAM NOTIFICATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _notify_telegram_panic(result: PanicResult):
+    """Send panic close notification to Telegram."""
+    import urllib.request
+    import urllib.parse
+
+    try:
+        token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        chat_id = os.environ.get("TELEGRAM_ADMIN_ID")
+
+        if not token or not chat_id:
+            logger.debug("Telegram credentials not configured - skipping notification")
+            return
+
+        # Format message
+        msg = format_panic_result(result, use_emoji=True)
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "text": msg,
+            "parse_mode": "HTML",
+        }).encode()
+
+        req = urllib.request.Request(url, data=data, method="POST")
+        resp = urllib.request.urlopen(req, timeout=10)
+
+        if resp.status == 200:
+            logger.info("Telegram notification sent")
+        else:
+            logger.warning(f"Telegram notification failed: {resp.status}")
+
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
