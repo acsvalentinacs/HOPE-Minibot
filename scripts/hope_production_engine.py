@@ -954,7 +954,7 @@ class EyeOfGod:
         except Exception as e:
             logger.warning(f"Failed to load oracle config: {e}")
             return {
-                "whitelist": {"BTCUSDT", "ETHUSDT", "KITEUSDT"},
+                "whitelist": {"BTCUSDT", "ETHUSDT", "KITEUSDT", "SOMIUSDT"},
                 "blacklist": {"SYNUSDT", "DODOUSDT"},
                 "min_confidence": 0.50,
                 "calibration": 1.0,

@@ -112,7 +112,7 @@ class SignalFilters:
     """Signal filtering configuration."""
     min_score: float = 85.0
     min_strength: str = "STRONG"
-    symbol_whitelist: list = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"])
+    symbol_whitelist: list = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "SOMIUSDT"])
     symbol_blacklist: list = field(default_factory=lambda: ["LEVERUSDT", "LUNAUSDT", "USTCUSDT"])
 
     @classmethod
@@ -127,7 +127,7 @@ class SignalFilters:
             return cls(
                 min_score=filters.get("min_score", 85.0),
                 min_strength=filters.get("min_strength", "STRONG"),
-                symbol_whitelist=filters.get("symbol_whitelist", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]),
+                symbol_whitelist=filters.get("symbol_whitelist", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "SOMIUSDT"]),
                 symbol_blacklist=filters.get("symbol_blacklist", ["LEVERUSDT", "LUNAUSDT", "USTCUSDT"]),
             )
         except Exception as e:

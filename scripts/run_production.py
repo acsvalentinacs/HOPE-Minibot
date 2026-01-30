@@ -188,7 +188,7 @@ class ProductionOrchestrator:
             )
 
             # Subscribe to default symbols
-            default_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+            default_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "SOMIUSDT"]
             await self.realtime_feed.subscribe(default_symbols)
 
             logger.info("[OK] Binance WebSocket Feed initialized")

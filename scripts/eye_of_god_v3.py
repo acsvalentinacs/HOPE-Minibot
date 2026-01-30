@@ -267,7 +267,7 @@ class AlphaCommittee:
     def __init__(self):
         self.whitelist: Set[str] = {
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
-            "KITEUSDT", "DUSKUSDT", "XVSUSDT"
+            "KITEUSDT", "DUSKUSDT", "XVSUSDT", "SOMIUSDT"
         }
         self.symbol_stats: Dict[str, Dict] = {}
     
