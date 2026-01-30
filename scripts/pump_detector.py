@@ -572,8 +572,13 @@ class PumpDetector:
         # Forward to AutoTrader
         await self._forward_signal(signal)
 
-        # === SIGNAL AGGREGATOR: Reduce Telegram spam ===
-        if self.telegram:
+        # === TELEGRAM HARD FILTER: ONLY delta >= 10% ===
+        # HARD CHECK: Skip Telegram if delta < 10%
+        delta_pct = signal.get("delta_pct", 0)
+        if delta_pct < 10.0:
+            log.info(f"[TG-BLOCK] {signal['symbol']} delta={delta_pct:.2f}% < 10% - NO TELEGRAM")
+
+        if self.telegram and delta_pct >= 10.0:
             try:
                 # Prepare signal data for aggregator
                 agg_signal = {
@@ -596,8 +601,8 @@ class PumpDetector:
                     else:
                         log.debug(f"[TG-SKIP] {agg_result['reason']}")
                 else:
-                    # Fallback: original behavior (but only for delta > 0.5%)
-                    if signal["delta_pct"] >= 0.5:
+                    # Fallback: ONLY delta >= 10% (HARD FILTER)
+                    if signal["delta_pct"] >= 10.0:
                         ai_info = ""
                         if ai_decision:
                             ai_info = (
