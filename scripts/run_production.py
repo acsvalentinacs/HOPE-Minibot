@@ -224,8 +224,9 @@ class ProductionOrchestrator:
                     api_secret = os.getenv("BINANCE_TESTNET_API_SECRET")
                     self.executor = Client(api_key, api_secret, testnet=True)
                 else:
-                    api_key = os.getenv("BINANCE_API_KEY")
-                    api_secret = os.getenv("BINANCE_API_SECRET")
+                    # LIVE: use MAINNET keys (fallback to generic keys)
+                    api_key = os.getenv("BINANCE_MAINNET_API_KEY") or os.getenv("BINANCE_API_KEY")
+                    api_secret = os.getenv("BINANCE_MAINNET_API_SECRET") or os.getenv("BINANCE_API_SECRET")
                     self.executor = Client(api_key, api_secret)
 
                 # Get starting equity
