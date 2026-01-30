@@ -1,15 +1,25 @@
 # -*- coding: utf-8 -*-
+# === AI SIGNATURE ===
+# Created by: Claude (opus-4)
+# Created at: 2026-01-29 16:00:00 UTC
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-31 10:40:00 UTC
+# Purpose: HOPE Trading Engine with WATCHDOG INTEGRATION
+# FIX: Added register_position_for_watching() - no more naked positions
+# sha256: trading_engine_v1.1_watchdog
+# === END SIGNATURE ===
 """
 ══════════════════════════════════════════════════════════════════════════════
-HOPE TRADING ENGINE v1.0 - ПОЛНЫЙ ТОРГОВЫЙ ЦИКЛ
+HOPE TRADING ENGINE v1.1 - ПОЛНЫЙ ТОРГОВЫЙ ЦИКЛ + WATCHDOG
 ══════════════════════════════════════════════════════════════════════════════
 
-Signal → Signal Gate → Adaptive TP → Binance Executor → Logger → Learning
+Signal → Signal Gate → Adaptive TP → Binance Executor → WATCHDOG → Logger
 
 ИНТЕГРАЦИЯ ВСЕХ КОМПОНЕНТОВ:
   - core/signal_gate.py
   - core/adaptive_tp_engine.py
   - execution/binance_oco_executor.py
+  - scripts/position_watchdog.py  ← NEW: Position watchdog registration
   - learning/trade_outcome_logger.py
   - config/live_trade_policy.py
 
@@ -146,7 +156,30 @@ class HopeTradingEngine:
             timeout_sec=tp_result.timeout_sec,
             signal_data=signal,
         )
-        
+
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 5.5: Register with Watchdog (CRITICAL - FAIL-CLOSED)
+        # ═══════════════════════════════════════════════════════════════════
+
+        if result.entry_price > 0 and result.quantity > 0:
+            try:
+                from scripts.position_watchdog import register_position_for_watching
+                register_position_for_watching(
+                    position_id=f"pos_{int(result.entry_time * 1000)}_{symbol}",
+                    symbol=symbol,
+                    entry_price=result.entry_price,
+                    quantity=result.quantity,
+                    target_pct=tp_result.target_pct,
+                    stop_pct=abs(tp_result.stop_loss_pct),
+                    timeout_sec=tp_result.timeout_sec,
+                )
+                log.info(f"Registered with watchdog: {symbol}")
+            except Exception as e:
+                log.error(f"CRITICAL: Watchdog registration failed: {e}")
+                # FAIL-CLOSED: Activate kill switch if cannot register
+                self.emergency_stop()
+                log.critical(f"Kill switch activated due to watchdog failure")
+
         # ═══════════════════════════════════════════════════════════════════
         # STEP 6: Log Outcome
         # ═══════════════════════════════════════════════════════════════════

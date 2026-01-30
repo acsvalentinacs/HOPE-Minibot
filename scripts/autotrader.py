@@ -3,10 +3,10 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-30 19:35:00 UTC
+# Modified at: 2026-01-31 10:35:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# Changes: FIX 1,2 - Use decision targets + fee adjustment + trailing stop params
-# sha256: autotrader_v1.1
+# Changes: FIX 1,2,3 - Fee adjustment + trailing + WATCHDOG INTEGRATION (CRITICAL)
+# sha256: autotrader_v1.2_watchdog
 # === END SIGNATURE ===
 """
 HOPE AI - AutoTrader v1.0
@@ -613,6 +613,29 @@ class AutoTrader:
                 self.stats["signals_traded"] += 1
                 self.stats["positions_opened"] += 1
                 logger.info(f"  ✅ Order filled: {result.filled_quantity} @ {result.avg_price}")
+
+                # === WATCHDOG REGISTRATION (CRITICAL - FAIL-CLOSED) ===
+                try:
+                    from scripts.position_watchdog import register_position_for_watching
+                    register_position_for_watching(
+                        position_id=f"pos_{result.order_id if hasattr(result, 'order_id') else int(time.time()*1000)}",
+                        symbol=decision.symbol,
+                        entry_price=result.avg_price,
+                        quantity=result.filled_quantity,
+                        target_pct=fee_adjusted_target,
+                        stop_pct=abs(fee_adjusted_stop),
+                        timeout_sec=decision.timeout_sec,
+                    )
+                    logger.info(f"  ✅ Registered with watchdog")
+                except Exception as e:
+                    logger.error(f"  ❌ CRITICAL: Watchdog registration failed: {e}")
+                    # FAIL-CLOSED: Try emergency close if watchdog fails
+                    try:
+                        if hasattr(self.executor, 'emergency_close'):
+                            self.executor.emergency_close(decision.symbol)
+                            logger.warning(f"  ⚠️ Emergency close triggered for {decision.symbol}")
+                    except Exception as close_err:
+                        logger.critical(f"  🛑 EMERGENCY CLOSE ALSO FAILED: {close_err}")
             else:
                 logger.error(f"  ❌ Order failed: {result.error}")
         else:
@@ -661,6 +684,28 @@ class AutoTrader:
                 self.stats["signals_traded"] += 1
                 self.stats["positions_opened"] += 1
                 logger.info(f"  ✅ Order filled: {result.filled_quantity} @ {result.avg_price}")
+
+                # === WATCHDOG REGISTRATION (CRITICAL - FAIL-CLOSED) ===
+                try:
+                    from scripts.position_watchdog import register_position_for_watching
+                    register_position_for_watching(
+                        position_id=f"pos_{result.order_id if hasattr(result, 'order_id') else int(time.time()*1000)}",
+                        symbol=signal.symbol,
+                        entry_price=result.avg_price,
+                        quantity=result.filled_quantity,
+                        target_pct=fee_adjusted_target,
+                        stop_pct=abs(fee_adjusted_stop),
+                        timeout_sec=signal.timeout_sec,
+                    )
+                    logger.info(f"  ✅ Registered with watchdog")
+                except Exception as e:
+                    logger.error(f"  ❌ CRITICAL: Watchdog registration failed: {e}")
+                    try:
+                        if hasattr(self.executor, 'emergency_close'):
+                            self.executor.emergency_close(signal.symbol)
+                            logger.warning(f"  ⚠️ Emergency close triggered for {signal.symbol}")
+                    except Exception as close_err:
+                        logger.critical(f"  🛑 EMERGENCY CLOSE ALSO FAILED: {close_err}")
             else:
                 logger.error(f"  ❌ Order failed: {result.error}")
         else:
