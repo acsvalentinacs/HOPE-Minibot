@@ -2,10 +2,8 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:15:00 UTC
-# Modified by: Claude (opus-4)
-# Modified at: 2026-01-29 19:10:00 UTC
 # Purpose: HOPE AI Real Order Executor - ACTUAL Binance trading, NO STUBS
-# sha256: order_executor_v1.1
+# sha256: order_executor_v1.0
 # === END SIGNATURE ===
 """
 HOPE AI - Real Order Executor v1.0
@@ -363,45 +361,35 @@ class OrderExecutor:
             logger.warning("⚠️ LIVE MODE - REAL MONEY AT RISK!")
     
     def _load_credentials(self, env_file: str = None):
-        """Load API credentials from environment or file based on mode"""
-        # Determine key names based on mode
-        if self.mode == TradingMode.TESTNET:
-            key_name = "BINANCE_TESTNET_API_KEY"
-            secret_name = "BINANCE_TESTNET_API_SECRET"
-        else:
-            key_name = "BINANCE_API_KEY"
-            secret_name = "BINANCE_API_SECRET"
-
+        """Load API credentials from environment or file"""
         # Try environment first
-        self.api_key = os.environ.get(key_name, "")
-        self.api_secret = os.environ.get(secret_name, "")
-
+        self.api_key = os.environ.get("BINANCE_API_KEY", "")
+        self.api_secret = os.environ.get("BINANCE_API_SECRET", "")
+        
         # Try env file
         if not self.api_key and env_file:
             env_path = Path(env_file)
             if env_path.exists():
-                with open(env_path, 'r', encoding='utf-8') as f:
+                with open(env_path, 'r') as f:
                     for line in f:
-                        line = line.strip()
-                        if line.startswith(f"{key_name}="):
+                        if line.startswith("BINANCE_API_KEY="):
                             self.api_key = line.split("=", 1)[1].strip()
-                        elif line.startswith(f"{secret_name}="):
+                        elif line.startswith("BINANCE_API_SECRET="):
                             self.api_secret = line.split("=", 1)[1].strip()
-
+        
         # Try default secrets location
         if not self.api_key:
             default_env = Path("C:/secrets/hope.env")
             if default_env.exists():
-                with open(default_env, 'r', encoding='utf-8') as f:
+                with open(default_env, 'r') as f:
                     for line in f:
-                        line = line.strip()
-                        if line.startswith(f"{key_name}="):
+                        if line.startswith("BINANCE_API_KEY="):
                             self.api_key = line.split("=", 1)[1].strip()
-                        elif line.startswith(f"{secret_name}="):
+                        elif line.startswith("BINANCE_API_SECRET="):
                             self.api_secret = line.split("=", 1)[1].strip()
-
+        
         if self.mode != TradingMode.DRY and not self.api_key:
-            raise ValueError(f"{key_name} not found in environment or secrets file")
+            raise ValueError("BINANCE_API_KEY not found in environment or secrets file")
     
     def _load_state(self):
         """Load executor state"""
@@ -434,19 +422,7 @@ class OrderExecutor:
         with open(temp, 'w') as f:
             json.dump(state, f, indent=2)
         temp.replace(self.state_file)
-
-    def _get_gateway_price(self, symbol: str, gateway_url: str = "http://127.0.0.1:8100") -> float:
-        """Get current price from AI Gateway for DRY mode simulation"""
-        try:
-            resp = httpx.get(f"{gateway_url}/price-feed/prices", timeout=3)
-            if resp.status_code == 200:
-                data = resp.json()
-                prices = data.get("prices", data)  # Handle both formats
-                return float(prices.get(symbol, 0))
-        except Exception as e:
-            logger.debug(f"Gateway price fetch failed: {e}")
-        return 0.0
-
+    
     def _check_safety_limits(self, symbol: str, amount_usdt: float) -> Tuple[bool, str]:
         """
         Check safety limits before placing order
@@ -514,11 +490,9 @@ class OrderExecutor:
         # DRY mode - just log
         if self.mode == TradingMode.DRY:
             logger.info(f"[DRY] Would buy ${quote_amount} of {symbol}")
-
-            # Get real price for simulation
-            price = self._get_gateway_price(symbol)
-            if price <= 0:
-                price = 0.1  # Fallback
+            
+            # Simulate order
+            price = 0.1  # Would get from price feed
             quantity = quote_amount / price
             
             result = OrderResult(
@@ -634,12 +608,7 @@ class OrderExecutor:
         # DRY mode
         if self.mode == TradingMode.DRY:
             logger.info(f"[DRY] Would sell {quantity} of {symbol}")
-
-            # Get real price for simulation
-            price = self._get_gateway_price(symbol)
-            if price <= 0 and position:
-                price = position.entry_price  # Fallback to entry price
-
+            
             result = OrderResult(
                 success=True,
                 order_id=f"dry_{int(time.time()*1000)}",
@@ -648,15 +617,13 @@ class OrderExecutor:
                 type="MARKET",
                 status=OrderStatus.FILLED,
                 quantity=quantity,
-                price=price,
                 filled_quantity=quantity,
-                avg_price=price,
                 timestamp=now.isoformat(),
             )
-
+            
             if position:
-                self._close_position(position, price, "MANUAL")
-
+                self._close_position(position, result.avg_price or position.entry_price, "MANUAL")
+            
             return result
         
         # TESTNET or LIVE

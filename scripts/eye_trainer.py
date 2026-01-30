@@ -627,20 +627,14 @@ class EyeOfGodTrainer:
     def show_stats(self):
         """Показать статистику."""
         stats = self.collector.get_stats()
-
+        
         print("\n" + "=" * 60)
         print("EYE OF GOD TRAINING STATS")
         print("=" * 60)
-        print(f"Total trades: {stats.get('total', 0)}")
-
-        if stats.get('total', 0) == 0:
-            print("No training data yet. Start trading to collect data.")
-            print("=" * 60)
-            return
-
-        print(f"Wins: {stats.get('wins', 0)} ({stats.get('win_rate', 0)*100:.1f}%)")
-        print(f"Total PnL: {stats.get('total_pnl', 0):+.2f}%")
-        print(f"Avg PnL per trade: {stats.get('avg_pnl', 0):+.2f}%")
+        print(f"Total trades: {stats['total']}")
+        print(f"Wins: {stats['wins']} ({stats['win_rate']*100:.1f}%)")
+        print(f"Total PnL: {stats['total_pnl']:+.2f}%")
+        print(f"Avg PnL per trade: {stats['avg_pnl']:+.2f}%")
         
         print("\nBy Mode:")
         for mode, data in stats.get("by_mode", {}).items():

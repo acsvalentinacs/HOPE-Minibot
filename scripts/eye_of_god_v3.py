@@ -274,29 +274,28 @@ class AlphaCommittee:
 
     @property
     def whitelist(self) -> Set[str]:
-        """Get whitelist - dynamic + hot list + static fallback."""
-        result = set()
-
-        # Layer 1: Dynamic AllowList (top 20 by volume)
+        """Get whitelist - UNIFIED 3-layer (CORE + DYNAMIC + HOT)."""
+        # Use unified allowlist (3 layers: CORE + DYNAMIC + HOT)
         if self.use_dynamic_allowlist:
             try:
-                from core.allowlist_manager import get_allowlist_manager
-                result.update(get_allowlist_manager().get_symbols_set())
-            except Exception:
-                pass
+                from core.unified_allowlist import get_unified_allowlist
+                allowlist = get_unified_allowlist()
+                result = allowlist.get_symbols_set()
+                if result:
+                    return result
+            except Exception as e:
+                log.warning(f"Unified allowlist unavailable: {e}")
 
-        # Layer 2: Hot AllowList (auto-added pumps)
+        # Fallback to static if unified not available
+        return self._static_whitelist
+
+    def get_trading_params(self, symbol: str) -> Dict[str, Any]:
+        """Get trading params from unified allowlist."""
         try:
-            from core.hot_allowlist import get_hot_allowlist
-            result.update(get_hot_allowlist().get_hot_symbols())
+            from core.unified_allowlist import get_trading_params
+            return get_trading_params(symbol)
         except Exception:
-            pass
-
-        # Fallback to static if empty
-        if not result:
-            return self._static_whitelist
-
-        return result
+            return {"position_multiplier": 1.0, "timeout_override": None}
     
     def _score_precursor(self, signal) -> Tuple[float, List[str]]:
         """Score precursor patterns"""
