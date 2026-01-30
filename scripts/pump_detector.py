@@ -97,14 +97,25 @@ except ImportError as e:
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HOPE v4.0 TRADING ENGINE INTEGRATION
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 TRADING_ENGINE_READY = False
 try:
     from core.trading_engine import handle_signal as trading_engine_handle
     TRADING_ENGINE_READY = True
 except ImportError as e:
     pass  # Trading Engine not available - will use legacy path
-# ═══════════════════════════════════════════════════════════════════════════════
+
+# HOPE v4.0 LIVE TRADING SAFETY (Circuit Breaker, Rate Limiter, Health)
+LIVE_SAFETY_READY = False
+try:
+    from core.live_trading_patch import (
+        patch_for_live, get_circuit_breaker, get_rate_limiter,
+        get_health_monitor, get_live_barrier
+    )
+    LIVE_SAFETY_READY = True
+except ImportError as e:
+    pass  # Live safety not available
+# ===============================================================================
 
 # === AI v2: TradingView Dynamic AllowList ===
 TV_ALLOWLIST_ENABLED = False
@@ -464,9 +475,28 @@ class PumpDetector:
 
         # ═══════════════════════════════════════════════════════════════════════
         # HOPE v4.0 FULL TRADING CYCLE
-        # Signal → Gate → TP/SL → Binance OCO → Exit → Log → Learn
+        # Signal → Safety Check → Gate → TP/SL → Binance OCO → Exit → Log → Learn
         # ═══════════════════════════════════════════════════════════════════════
         if TRADING_ENGINE_READY:
+            # SAFETY CHECKS (fail-closed)
+            if LIVE_SAFETY_READY:
+                cb = get_circuit_breaker()
+                rl = get_rate_limiter()
+                hm = get_health_monitor()
+
+                # Record signal for health monitoring
+                hm.record_signal()
+
+                # Circuit Breaker check
+                if cb.is_open():
+                    log.warning(f"[CB] Circuit breaker OPEN - trade blocked: {signal.get('symbol')}")
+                    return
+
+                # Rate Limiter check
+                if not rl.acquire():
+                    log.warning(f"[RL] Rate limit exceeded - trade delayed: {signal.get('symbol')}")
+                    return
+
             try:
                 # Prepare signal for trading engine
                 trade_signal = {
@@ -480,11 +510,19 @@ class PumpDetector:
                 }
                 result = await trading_engine_handle(trade_signal)
                 if result:
-                    log.info(f"✅ TRADE: {result.get('symbol')} {result.get('status')} PnL=${result.get('pnl_usdt', 0):.2f}")
+                    log.info(f"[TRADE] {result.get('symbol')} {result.get('status')} PnL=${result.get('pnl_usdt', 0):.2f}")
+
+                    # Record trade result for Circuit Breaker
+                    if LIVE_SAFETY_READY:
+                        pnl_pct = result.get('pnl_pct', 0)
+                        cb.record_trade(pnl_pct)
+                        hm.record_trade()
                 else:
-                    log.info(f"📊 Signal passed to engine but not traded (filtered)")
+                    log.debug(f"[FILTER] Signal passed to engine but not traded")
             except Exception as e:
-                log.error(f"❌ Trading engine error: {e}")
+                log.error(f"[ERROR] Trading engine error: {e}")
+                if LIVE_SAFETY_READY:
+                    hm.record_error()
         # ═══════════════════════════════════════════════════════════════════════
 
         log.info(
@@ -760,6 +798,13 @@ async def main():
     parser.add_argument("--no-ai", action="store_true", help="Disable AI Predictor v2 filtering")
 
     args = parser.parse_args()
+
+    # HOPE v4.0 LIVE SAFETY INITIALIZATION
+    if LIVE_SAFETY_READY:
+        barrier = patch_for_live()
+        log.info(f"Live Safety initialized: {barrier}")
+    else:
+        log.warning("Live Safety NOT available - trading disabled")
 
     # Get symbols
     if args.symbols:
