@@ -2,8 +2,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4.5)
 # Created at: 2026-01-30 18:30:00 UTC
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-30 19:35:00 UTC
 # Purpose: Process Watchdog with auto-restart, HTTP API and Telegram control
-# Version: 1.0
+# Changes: FIX 3 - Enabled autotrader (TESTNET mode)
+# Version: 1.1
 # === END SIGNATURE ===
 """
 HOPE PROCESS WATCHDOG v1.0
@@ -151,10 +154,11 @@ PROCESSES: Dict[str, ProcessConfig] = {
     ),
     "autotrader": ProcessConfig(
         name="autotrader",
-        command=["python", "scripts/autotrader.py"],
+        command=["python", "scripts/autotrader.py", "--mode", "TESTNET"],  # TESTNET mode for safety
         auto_restart=True,
-        enabled=False,  # Disabled until TESTNET ready
+        enabled=True,  # ENABLED - FIX 2026-01-30
         log_file="logs/autotrader.log",
+        health_check_port=8200,  # AutoTrader API port
     ),
     "tv_allowlist": ProcessConfig(
         name="tv_allowlist",

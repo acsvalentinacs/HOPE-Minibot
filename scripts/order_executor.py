@@ -2,8 +2,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:15:00 UTC
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-30 19:35:00 UTC
 # Purpose: HOPE AI Real Order Executor - ACTUAL Binance trading, NO STUBS
-# sha256: order_executor_v1.0
+# Changes: FIX 4 - Added trailing stop support (activation_pct, delta_pct, auto-update)
+# sha256: order_executor_v1.1
 # === END SIGNATURE ===
 """
 HOPE AI - Real Order Executor v1.0
@@ -153,21 +156,49 @@ class Position:
     timeout_seconds: int = 0
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
-    status: str = "OPEN"  # OPEN, CLOSED, STOPPED, TARGET_HIT, TIMEOUT
+    status: str = "OPEN"  # OPEN, CLOSED, STOPPED, TARGET_HIT, TIMEOUT, TRAILING_STOP
     close_price: float = 0.0
     close_time: str = ""
     realized_pnl: float = 0.0
-    
+
+    # === TRAILING STOP FIELDS ===
+    trailing_activation_pct: float = 0.0   # Activate trailing at this profit %
+    trailing_delta_pct: float = 0.0        # Trail by this % below peak
+    trailing_active: bool = False          # Is trailing mode active?
+    trailing_peak_price: float = 0.0       # Highest price seen since activation
+    trailing_stop_price: float = 0.0       # Current trailing stop level
+
     @property
     def notional_value(self) -> float:
         return self.quantity * self.entry_price
-    
+
     def update_pnl(self, current_price: float):
         self.current_price = current_price
         if self.side == "LONG":
             self.unrealized_pnl = (current_price - self.entry_price) / self.entry_price * 100
         else:
             self.unrealized_pnl = (self.entry_price - current_price) / self.entry_price * 100
+
+        # === UPDATE TRAILING STOP ===
+        if self.trailing_activation_pct > 0 and self.trailing_delta_pct > 0:
+            self._update_trailing_stop(current_price)
+
+    def _update_trailing_stop(self, current_price: float):
+        """Update trailing stop based on current price."""
+        if self.side != "LONG":
+            return  # Only support LONG for now
+
+        # Check if trailing should activate
+        if not self.trailing_active:
+            if self.unrealized_pnl >= self.trailing_activation_pct:
+                self.trailing_active = True
+                self.trailing_peak_price = current_price
+                self.trailing_stop_price = current_price * (1 - self.trailing_delta_pct / 100)
+        else:
+            # Update peak and trailing stop if price went higher
+            if current_price > self.trailing_peak_price:
+                self.trailing_peak_price = current_price
+                self.trailing_stop_price = current_price * (1 - self.trailing_delta_pct / 100)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -459,20 +490,26 @@ class OrderExecutor:
     
     def market_buy(self, symbol: str, quote_amount: float,
                    target_pct: float = None, stop_pct: float = None,
-                   timeout_seconds: int = None) -> OrderResult:
+                   timeout_seconds: int = None,
+                   trailing_activation_pct: float = 0.0,
+                   trailing_delta_pct: float = 0.0) -> OrderResult:
         """
         Execute market buy order
-        
+
         Args:
             symbol: Trading pair (e.g., "DUSKUSDT")
             quote_amount: Amount in USDT to spend
             target_pct: Take profit % (e.g., 1.0 for +1%)
             stop_pct: Stop loss % (e.g., -0.5 for -0.5%)
             timeout_seconds: Auto-close after N seconds
-        
+            trailing_activation_pct: Activate trailing stop at this profit % (e.g., 0.5)
+            trailing_delta_pct: Trail by this % below peak (e.g., 0.3)
+
         Returns:
             OrderResult with execution details
         """
+        # Store trailing params for _create_position
+        self._pending_trailing = (trailing_activation_pct, trailing_delta_pct)
         now = datetime.now(timezone.utc)
         
         # Safety check
@@ -680,15 +717,22 @@ class OrderExecutor:
                          stop_pct: float = None, timeout_seconds: int = None):
         """Create position from filled order"""
         position_id = f"pos_{order.order_id}"
-        
+
         target_price = 0
         stop_price = 0
-        
+
         if target_pct:
             target_price = order.avg_price * (1 + target_pct / 100)
         if stop_pct:
             stop_price = order.avg_price * (1 + stop_pct / 100)
-        
+
+        # Get trailing stop params if set
+        trailing_activation = 0.0
+        trailing_delta = 0.0
+        if hasattr(self, '_pending_trailing') and self._pending_trailing:
+            trailing_activation, trailing_delta = self._pending_trailing
+            self._pending_trailing = None  # Clear after use
+
         position = Position(
             position_id=position_id,
             symbol=order.symbol,
@@ -700,10 +744,13 @@ class OrderExecutor:
             stop_price=stop_price,
             timeout_seconds=timeout_seconds or 0,
             status="OPEN",
+            trailing_activation_pct=trailing_activation,
+            trailing_delta_pct=trailing_delta,
         )
-        
+
         self.positions[position_id] = position
-        logger.info(f"Position created: {position_id} | {order.symbol} | target={target_price:.6f} | stop={stop_price:.6f}")
+        trail_info = f" | trail={trailing_activation}%/{trailing_delta}%" if trailing_activation > 0 else ""
+        logger.info(f"Position created: {position_id} | {order.symbol} | target={target_price:.6f} | stop={stop_price:.6f}{trail_info}")
     
     def _close_position(self, position: Position, close_price: float, reason: str):
         """Close position and calculate PnL"""
@@ -766,14 +813,29 @@ class OrderExecutor:
                     closed.append({"position": position, "reason": "TARGET_HIT"})
                 continue
             
-            # Check stop
-            if position.stop_price > 0 and current_price <= position.stop_price:
-                result = self.market_sell(symbol, position_id=position.position_id)
-                if result.success:
-                    self._close_position(position, result.avg_price, "STOPPED")
-                    closed.append({"position": position, "reason": "STOPPED"})
-                continue
-            
+            # Check static stop (only if trailing not active)
+            if not position.trailing_active:
+                if position.stop_price > 0 and current_price <= position.stop_price:
+                    result = self.market_sell(symbol, position_id=position.position_id)
+                    if result.success:
+                        self._close_position(position, result.avg_price, "STOPPED")
+                        closed.append({"position": position, "reason": "STOPPED"})
+                    continue
+
+            # === CHECK TRAILING STOP ===
+            if position.trailing_active and position.trailing_stop_price > 0:
+                if current_price <= position.trailing_stop_price:
+                    logger.info(
+                        f"TRAILING STOP HIT: {symbol} | price={current_price:.6f} <= "
+                        f"trail_stop={position.trailing_stop_price:.6f} | "
+                        f"peak={position.trailing_peak_price:.6f}"
+                    )
+                    result = self.market_sell(symbol, position_id=position.position_id)
+                    if result.success:
+                        self._close_position(position, result.avg_price, "TRAILING_STOP")
+                        closed.append({"position": position, "reason": "TRAILING_STOP"})
+                    continue
+
             # Check timeout
             if position.timeout_seconds > 0:
                 entry_time = datetime.fromisoformat(position.entry_time.replace('Z', '+00:00'))

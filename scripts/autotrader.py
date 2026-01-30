@@ -2,8 +2,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-30 19:35:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# sha256: autotrader_v1.0
+# Changes: FIX 1,2 - Use decision targets + fee adjustment + trailing stop params
+# sha256: autotrader_v1.1
 # === END SIGNATURE ===
 """
 HOPE AI - AutoTrader v1.0
@@ -583,14 +586,27 @@ class AutoTrader:
         self.watch_symbols.add(decision.symbol)
         self._subscribe_symbol(decision.symbol)
 
+        # === FEE-ADJUSTED TARGETS ===
+        # Binance VIP0: 0.1% taker fee per side = 0.2% round-trip
+        TAKER_FEE_PCT = 0.10
+        fee_adjusted_target = decision.target_pct + (TAKER_FEE_PCT * 2)  # Add RT fee to target
+        fee_adjusted_stop = decision.stop_pct - TAKER_FEE_PCT  # Subtract exit fee from stop
+
+        logger.info(
+            f"  Targets: raw={decision.target_pct:+.2f}%/{decision.stop_pct:+.2f}% | "
+            f"fee-adj={fee_adjusted_target:+.2f}%/{fee_adjusted_stop:+.2f}%"
+        )
+
         # Execute order
         if self.executor:
             result = self.executor.market_buy(
                 symbol=decision.symbol,
                 quote_amount=decision.position_size_usdt,
-                target_pct=1.0,  # Default TP
-                stop_pct=-0.5,   # Default SL
-                timeout_seconds=60,
+                target_pct=fee_adjusted_target,  # Use decision target + fee adjustment
+                stop_pct=fee_adjusted_stop,       # Use decision stop - fee adjustment
+                timeout_seconds=decision.timeout_sec,
+                trailing_activation_pct=0.5,      # Activate trailing at +0.5%
+                trailing_delta_pct=0.3,           # Trail by 0.3%
             )
 
             if result.success:
@@ -605,30 +621,42 @@ class AutoTrader:
             self.stats["signals_traded"] += 1
     
     def _execute_trade(self, signal: ProcessedSignal):
-        """Execute trade for signal"""
+        """Execute trade for signal (fallback when Eye of God not available)"""
         logger.info(f"🔥 EXECUTING: {signal.symbol} | {signal.mode} | ${self.config.default_position_usdt}")
-        
+
         # Calculate position size based on confidence
         position_size = self.config.default_position_usdt
         if signal.confidence >= 0.90:
             position_size = min(position_size * 1.5, self.config.max_position_usdt)
-        
+
+        # === FEE-ADJUSTED TARGETS ===
+        TAKER_FEE_PCT = 0.10  # Binance VIP0: 0.1%
+        fee_adjusted_target = signal.target_pct + (TAKER_FEE_PCT * 2)  # Add RT fee
+        fee_adjusted_stop = signal.stop_pct - TAKER_FEE_PCT  # Subtract exit fee
+
+        logger.info(
+            f"  Targets: raw={signal.target_pct:+.2f}%/{signal.stop_pct:+.2f}% | "
+            f"fee-adj={fee_adjusted_target:+.2f}%/{fee_adjusted_stop:+.2f}%"
+        )
+
         # Subscribe to price feed
         self.watch_symbols.add(signal.symbol)
         self._subscribe_symbol(signal.symbol)
-        
+
         # Execute order
         if self.executor:
             result = self.executor.market_buy(
                 symbol=signal.symbol,
                 quote_amount=position_size,
-                target_pct=signal.target_pct,
-                stop_pct=signal.stop_pct,
+                target_pct=fee_adjusted_target,
+                stop_pct=fee_adjusted_stop,
                 timeout_seconds=signal.timeout_sec,
+                trailing_activation_pct=0.5,  # Activate trail at +0.5%
+                trailing_delta_pct=0.3,       # Trail by 0.3%
             )
-            
+
             self.trade_logger.log_order(result, signal)
-            
+
             if result.success:
                 self.stats["signals_traded"] += 1
                 self.stats["positions_opened"] += 1

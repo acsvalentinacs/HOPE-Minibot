@@ -1,0 +1,29 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "created": "2026-01-30",
+    "description": "LIVE signal filter rules"
+  },
+  "telegram_min_delta_pct": 10.0,
+  "telegram_block_types": ["MICRO", "TEST_ACTIVITY", "SCALP"],
+  "telegram_block_symbols": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"],
+  "trade_min_delta_pct": 2.0,
+  "trade_min_confidence": 0.65,
+  "btc_dump_enabled": true,
+  "btc_dump_threshold_pct": -1.0,
+  "btc_dump_field": "btc_5m_delta_pct",
+  "pump_exhaustion_enabled": true,
+  "pump_exhaustion_max_pct": 20.0,
+  "pump_exhaustion_field": "pump_60m_pct",
+  "dedupe_window_sec": 300,
+  "cooldown_per_symbol_sec": 120,
+  "global_rate_per_minute": 10,
+  "allowlist_enabled": true,
+  "core_symbols": [
+    "PEPEUSDT", "DOGEUSDT", "SHIBUSDT",
+    "SUIUSDT", "AVAXUSDT", "ADAUSDT",
+    "LINKUSDT", "AAVEUSDT", "NEARUSDT",
+    "ENSOUSDT", "WLDUSDT", "ZECUSDT",
+    "ARBUSDT", "OPUSDT", "APTUSDT"
+  ]
+}

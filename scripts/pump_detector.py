@@ -3,8 +3,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30 15:45:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-30 19:30:00 UTC
-# Purpose: Real-time pump detection from Binance WebSocket + AI Predictor v2 + TradingView AllowList
+# Modified at: 2026-01-30 21:40:00 UTC
+# Purpose: Real-time pump detection + HOPE v4.0 Trading Engine (full cycle)
+# Changes: Integrated Trading Engine v4.0 (Signal→Gate→TP/SL→Binance→Log→Learn)
 # === END SIGNATURE ===
 """
 HOPE Pump Detector - Real-time Binance Signal Generator
@@ -93,6 +94,17 @@ try:
     SIGNAL_AGGREGATOR_ENABLED = True
 except ImportError as e:
     pass
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOPE v4.0 TRADING ENGINE INTEGRATION
+# ═══════════════════════════════════════════════════════════════════════════════
+TRADING_ENGINE_READY = False
+try:
+    from core.trading_engine import handle_signal as trading_engine_handle
+    TRADING_ENGINE_READY = True
+except ImportError as e:
+    pass  # Trading Engine not available - will use legacy path
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # === AI v2: TradingView Dynamic AllowList ===
 TV_ALLOWLIST_ENABLED = False
@@ -430,10 +442,10 @@ class PumpDetector:
         """Handle detected pump signal with AI filtering."""
         self.signals_generated += 1
 
-        # ╔═══════════════════════════════════════════════════════════════════╗
-        # ║  HARD KILL: BLOCK ALL SIGNALS WITH delta < 10% OR MICRO/TEST     ║
-        # ║  This is the FIRST check - nothing below 10% goes through!       ║
-        # ╚═══════════════════════════════════════════════════════════════════╝
+        # ═══════════════════════════════════════════════════════════════════
+        # HARD TELEGRAM FILTER - BEGIN
+        # Blocks: MICRO/TEST_ACTIVITY/SCALP and delta < 10% (strict, fail-closed)
+        # ═══════════════════════════════════════════════════════════════════
         _delta = signal.get("delta_pct", 0)
         _type = signal.get("signal_type", "")
         _sym = signal.get("symbol", "")
@@ -447,7 +459,33 @@ class PumpDetector:
         if _delta < 10.0:
             log.info(f"[HARD-KILL] {_sym} delta={_delta:.2f}% < 10% - BLOCKED")
             return  # EXIT IMMEDIATELY - NO PROCESSING
-        # ╚═══════════════════════════════════════════════════════════════════╝
+        # HARD TELEGRAM FILTER - END
+        # ═══════════════════════════════════════════════════════════════════
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # HOPE v4.0 FULL TRADING CYCLE
+        # Signal → Gate → TP/SL → Binance OCO → Exit → Log → Learn
+        # ═══════════════════════════════════════════════════════════════════════
+        if TRADING_ENGINE_READY:
+            try:
+                # Prepare signal for trading engine
+                trade_signal = {
+                    "symbol": signal.get("symbol", ""),
+                    "delta_pct": signal.get("delta_pct", 0),
+                    "type": signal.get("signal_type", ""),
+                    "confidence": signal.get("confidence", 0.7),
+                    "buys_per_sec": signal.get("buys_per_sec", 0),
+                    "price": signal.get("price", 0),
+                    "timestamp": signal.get("timestamp", ""),
+                }
+                result = await trading_engine_handle(trade_signal)
+                if result:
+                    log.info(f"✅ TRADE: {result.get('symbol')} {result.get('status')} PnL=${result.get('pnl_usdt', 0):.2f}")
+                else:
+                    log.info(f"📊 Signal passed to engine but not traded (filtered)")
+            except Exception as e:
+                log.error(f"❌ Trading engine error: {e}")
+        # ═══════════════════════════════════════════════════════════════════════
 
         log.info(
             f"🚀 PUMP DETECTED: {signal['symbol']} | "
