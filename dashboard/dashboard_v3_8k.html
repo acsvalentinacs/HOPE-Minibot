@@ -1,0 +1,1682 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOPE AI Trading Dashboard V3</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        /* ═══════════════════════════════════════════════════════════════════
+           8K RESOLUTION SUPPORT (7680x4320)
+           Scale factor: 2x for 8K, 1.5x for 4K, 1x for 1080p
+           ═══════════════════════════════════════════════════════════════════ */
+        :root {
+            /* Base size multiplier */
+            --scale: 1;
+            
+            /* Color System - Professional Trading Terminal */
+            --bg-deep: #050810;
+            --bg-primary: #0a0f1a;
+            --bg-secondary: #111827;
+            --bg-card: #151d2e;
+            --bg-elevated: #1a2332;
+            --bg-hover: #1e2a3d;
+            
+            /* Accent Colors */
+            --accent-cyan: #00d4ff;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --accent-green: #10b981;
+            --accent-lime: #84cc16;
+            --accent-yellow: #eab308;
+            --accent-orange: #f97316;
+            --accent-red: #ef4444;
+            --accent-pink: #ec4899;
+            
+            /* Status Colors */
+            --status-running: #10b981;
+            --status-stopped: #6b7280;
+            --status-crashed: #ef4444;
+            --status-warning: #f59e0b;
+            
+            /* Text */
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --text-dim: #475569;
+            
+            /* Borders */
+            --border-subtle: #1e293b;
+            --border-default: #334155;
+            --border-bright: #475569;
+            
+            /* Glows */
+            --glow-cyan: 0 0 20px rgba(0, 212, 255, 0.3);
+            --glow-green: 0 0 20px rgba(16, 185, 129, 0.3);
+            --glow-red: 0 0 20px rgba(239, 68, 68, 0.3);
+            
+            /* Typography */
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            
+            /* Spacing */
+            --space-xs: calc(4px * var(--scale));
+            --space-sm: calc(8px * var(--scale));
+            --space-md: calc(16px * var(--scale));
+            --space-lg: calc(24px * var(--scale));
+            --space-xl: calc(32px * var(--scale));
+            --space-2xl: calc(48px * var(--scale));
+            
+            /* Radius */
+            --radius-sm: calc(6px * var(--scale));
+            --radius-md: calc(10px * var(--scale));
+            --radius-lg: calc(16px * var(--scale));
+            --radius-xl: calc(24px * var(--scale));
+        }
+        
+        /* 4K Support */
+        @media (min-width: 2560px) {
+            :root { --scale: 1.5; }
+        }
+        
+        /* 8K Support */
+        @media (min-width: 5120px) {
+            :root { --scale: 2; }
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            font-size: calc(14px * var(--scale));
+            line-height: 1.5;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           LAYOUT STRUCTURE
+           
+           ┌─────────────────────────────────────────────────────────────────┐
+           │ HEADER: Status indicators + Mode + Time                         │
+           ├─────────────────────────────────────────────────────────────────┤
+           │ EMERGENCY BAR: Critical actions (STOP ALL, etc)                 │
+           ├─────────────────────────────────────────────────────────────────┤
+           │ QUICK ACTIONS: Most used controls (Start/Stop/Restart)          │
+           ├──────────────┬───────────────────────────┬──────────────────────┤
+           │              │                           │                      │
+           │  PROCESSES   │   MAIN: Price + Signals   │   AI + PERFORMANCE  │
+           │  + ALLOWLIST │                           │   + CHAT            │
+           │              │                           │                      │
+           ├──────────────┴───────────────────────────┴──────────────────────┤
+           │ BOTTOM: Trade History + Risk Management + Analysis              │
+           └─────────────────────────────────────────────────────────────────┘
+           
+           ═══════════════════════════════════════════════════════════════════ */
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           HEADER - Always visible status
+           Priority: HIGHEST - constantly monitored
+           ═══════════════════════════════════════════════════════════════════ */
+        .header {
+            background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+            border-bottom: 1px solid var(--border-subtle);
+            padding: var(--space-md) var(--space-xl);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+        
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+        }
+        
+        .logo {
+            width: calc(56px * var(--scale));
+            height: calc(56px * var(--scale));
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: calc(28px * var(--scale));
+            font-weight: 800;
+            color: var(--bg-deep);
+            box-shadow: var(--glow-cyan);
+        }
+        
+        .logo-text h1 {
+            font-size: calc(24px * var(--scale));
+            font-weight: 800;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+        
+        .logo-text .version {
+            font-size: calc(11px * var(--scale));
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+        
+        /* Status Indicators */
+        .status-indicators {
+            display: flex;
+            gap: var(--space-lg);
+        }
+        
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            padding: var(--space-sm) var(--space-md);
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            font-size: calc(13px * var(--scale));
+        }
+        
+        .status-dot {
+            width: calc(10px * var(--scale));
+            height: calc(10px * var(--scale));
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.online { background: var(--status-running); box-shadow: 0 0 8px var(--status-running); }
+        .status-dot.offline { background: var(--status-crashed); animation: none; }
+        .status-dot.warning { background: var(--status-warning); }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .mode-badge {
+            padding: var(--space-sm) var(--space-md);
+            border-radius: var(--radius-md);
+            font-weight: 700;
+            font-size: calc(12px * var(--scale));
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .mode-badge.testnet {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--accent-yellow);
+            border: 1px solid var(--accent-yellow);
+        }
+        
+        .mode-badge.live {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+            border: 1px solid var(--accent-red);
+        }
+        
+        .mode-badge.dry {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--accent-blue);
+            border: 1px solid var(--accent-blue);
+        }
+        
+        .clock {
+            font-family: var(--font-mono);
+            font-size: calc(20px * var(--scale));
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           EMERGENCY BAR - Critical actions
+           Priority: HIGHEST - used in emergencies (rarely, but critical)
+           ═══════════════════════════════════════════════════════════════════ */
+        .emergency-bar {
+            background: linear-gradient(90deg, rgba(239, 68, 68, 0.1), transparent, rgba(239, 68, 68, 0.1));
+            border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+            padding: var(--space-sm) var(--space-xl);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .emergency-btn {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            padding: var(--space-sm) var(--space-lg);
+            background: linear-gradient(135deg, #dc2626, #991b1b);
+            border: none;
+            border-radius: var(--radius-md);
+            color: white;
+            font-family: var(--font-sans);
+            font-size: calc(14px * var(--scale));
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 2px 10px rgba(220, 38, 38, 0.3);
+        }
+        
+        .emergency-btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 20px rgba(220, 38, 38, 0.5);
+        }
+        
+        .emergency-btn:active {
+            transform: scale(0.98);
+        }
+        
+        .emergency-status {
+            display: flex;
+            gap: var(--space-lg);
+            font-size: calc(12px * var(--scale));
+            color: var(--text-secondary);
+        }
+        
+        .circuit-breaker {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+        
+        .circuit-breaker.ok { color: var(--accent-green); }
+        .circuit-breaker.triggered { color: var(--accent-red); }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           QUICK ACTIONS BAR - Most used controls
+           Priority: HIGH - used multiple times per hour
+           
+           Layout by frequency:
+           [Start Trading] [Pause] [Restart Pump] | [Refresh] [AllowList] | [Logs] [Settings]
+           ═══════════════════════════════════════════════════════════════════ */
+        .quick-actions {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+            padding: var(--space-md) var(--space-xl);
+            display: flex;
+            align-items: center;
+            gap: var(--space-xl);
+        }
+        
+        .action-group {
+            display: flex;
+            gap: var(--space-sm);
+            padding-right: var(--space-lg);
+            border-right: 1px solid var(--border-subtle);
+        }
+        
+        .action-group:last-child {
+            border-right: none;
+        }
+        
+        .action-group-label {
+            font-size: calc(10px * var(--scale));
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: var(--space-xs);
+        }
+        
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-sm);
+            padding: var(--space-sm) var(--space-md);
+            border: 1px solid transparent;
+            border-radius: var(--radius-md);
+            font-family: var(--font-sans);
+            font-size: calc(13px * var(--scale));
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        
+        .btn-icon {
+            font-size: calc(16px * var(--scale));
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            color: var(--bg-deep);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--glow-cyan);
+        }
+        
+        .btn-success {
+            background: var(--accent-green);
+            color: var(--bg-deep);
+        }
+        
+        .btn-success:hover {
+            box-shadow: var(--glow-green);
+        }
+        
+        .btn-warning {
+            background: var(--accent-yellow);
+            color: var(--bg-deep);
+        }
+        
+        .btn-danger {
+            background: var(--accent-red);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            box-shadow: var(--glow-red);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border-color: var(--border-default);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent-cyan);
+        }
+        
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-secondary);
+            border-color: transparent;
+        }
+        
+        .btn-ghost:hover {
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           MAIN GRID LAYOUT
+           ═══════════════════════════════════════════════════════════════════ */
+        .main-grid {
+            display: grid;
+            grid-template-columns: calc(320px * var(--scale)) 1fr calc(380px * var(--scale));
+            grid-template-rows: auto 1fr;
+            gap: var(--space-md);
+            padding: var(--space-md) var(--space-xl);
+            min-height: calc(100vh - 200px);
+        }
+        
+        @media (max-width: 1600px) {
+            .main-grid {
+                grid-template-columns: 280px 1fr 320px;
+            }
+        }
+        
+        @media (max-width: 1200px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .sidebar-left, .sidebar-right {
+                display: none;
+            }
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           CARD SYSTEM
+           ═══════════════════════════════════════════════════════════════════ */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-md);
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        
+        .card-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            font-size: calc(13px * var(--scale));
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+        
+        .card-title-icon {
+            font-size: calc(18px * var(--scale));
+        }
+        
+        .card-actions {
+            display: flex;
+            gap: var(--space-xs);
+        }
+        
+        .card-btn {
+            width: calc(32px * var(--scale));
+            height: calc(32px * var(--scale));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        
+        .card-btn:hover {
+            color: var(--accent-cyan);
+            border-color: var(--accent-cyan);
+        }
+        
+        .card-body {
+            padding: var(--space-md);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           LEFT SIDEBAR - Process Control & AllowList
+           Priority: MEDIUM-HIGH - checked frequently
+           ═══════════════════════════════════════════════════════════════════ */
+        .sidebar-left {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-md);
+        }
+        
+        /* Process List */
+        .process-list {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+        }
+        
+        .process-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-md);
+            background: var(--bg-elevated);
+            border-radius: var(--radius-md);
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .process-item.running {
+            border-left-color: var(--status-running);
+        }
+        
+        .process-item.stopped {
+            border-left-color: var(--status-stopped);
+        }
+        
+        .process-item.crashed {
+            border-left-color: var(--status-crashed);
+            background: rgba(239, 68, 68, 0.1);
+        }
+        
+        .process-item:hover {
+            background: var(--bg-hover);
+        }
+        
+        .process-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .process-name {
+            font-weight: 600;
+            font-size: calc(13px * var(--scale));
+        }
+        
+        .process-meta {
+            display: flex;
+            gap: var(--space-md);
+            font-family: var(--font-mono);
+            font-size: calc(11px * var(--scale));
+            color: var(--text-muted);
+        }
+        
+        .process-controls {
+            display: flex;
+            gap: var(--space-xs);
+        }
+        
+        .process-btn {
+            width: calc(28px * var(--scale));
+            height: calc(28px * var(--scale));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            font-size: calc(12px * var(--scale));
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        
+        .process-btn:hover {
+            color: var(--accent-cyan);
+            border-color: var(--accent-cyan);
+        }
+        
+        .process-btn.danger:hover {
+            color: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+        
+        /* AllowList */
+        .allowlist-section {
+            margin-bottom: var(--space-md);
+        }
+        
+        .allowlist-header {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            margin-bottom: var(--space-sm);
+        }
+        
+        .allowlist-badge {
+            padding: 2px var(--space-sm);
+            border-radius: var(--radius-sm);
+            font-size: calc(10px * var(--scale));
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .allowlist-badge.core {
+            background: var(--accent-cyan);
+            color: var(--bg-deep);
+        }
+        
+        .allowlist-badge.dynamic {
+            background: var(--accent-green);
+            color: var(--bg-deep);
+        }
+        
+        .allowlist-badge.hot {
+            background: var(--accent-red);
+            color: white;
+        }
+        
+        .allowlist-count {
+            font-size: calc(11px * var(--scale));
+            color: var(--text-muted);
+        }
+        
+        .allowlist-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-xs);
+        }
+        
+        .chip {
+            padding: var(--space-xs) var(--space-sm);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: calc(11px * var(--scale));
+            color: var(--text-secondary);
+        }
+        
+        .chip.hot {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+        
+        /* Blacklist */
+        .blacklist-chips .chip {
+            border-color: rgba(239, 68, 68, 0.3);
+            color: var(--accent-red);
+            opacity: 0.7;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           MAIN CONTENT - Price, Signals, Charts
+           Priority: HIGH - constantly monitored
+           ═══════════════════════════════════════════════════════════════════ */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-md);
+        }
+        
+        /* Price Ticker */
+        .price-ticker {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(calc(200px * var(--scale)), 1fr));
+            gap: var(--space-md);
+        }
+        
+        .price-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-md);
+            transition: all 0.2s;
+        }
+        
+        .price-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateY(-2px);
+        }
+        
+        .price-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: var(--space-sm);
+        }
+        
+        .price-symbol {
+            font-weight: 700;
+            font-size: calc(16px * var(--scale));
+        }
+        
+        .price-change {
+            padding: var(--space-xs) var(--space-sm);
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: calc(12px * var(--scale));
+            font-weight: 600;
+        }
+        
+        .price-change.positive {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+        
+        .price-change.negative {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+        
+        .price-value {
+            font-family: var(--font-mono);
+            font-size: calc(28px * var(--scale));
+            font-weight: 700;
+            margin-bottom: var(--space-xs);
+        }
+        
+        .price-volume {
+            font-size: calc(11px * var(--scale));
+            color: var(--text-muted);
+        }
+        
+        /* Live Signals */
+        .signals-card {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .signals-list {
+            flex: 1;
+            overflow-y: auto;
+            max-height: calc(400px * var(--scale));
+        }
+        
+        .signal-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-md);
+            border-bottom: 1px solid var(--border-subtle);
+            transition: background 0.15s;
+        }
+        
+        .signal-item:hover {
+            background: var(--bg-hover);
+        }
+        
+        .signal-item.hot {
+            background: rgba(239, 68, 68, 0.1);
+            border-left: 3px solid var(--accent-red);
+        }
+        
+        .signal-item.approved {
+            background: rgba(16, 185, 129, 0.1);
+            border-left: 3px solid var(--accent-green);
+        }
+        
+        .signal-left {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+        }
+        
+        .signal-icon {
+            width: calc(44px * var(--scale));
+            height: calc(44px * var(--scale));
+            border-radius: var(--radius-md);
+            background: var(--bg-elevated);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: calc(20px * var(--scale));
+        }
+        
+        .signal-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .signal-symbol {
+            font-weight: 600;
+            font-size: calc(14px * var(--scale));
+        }
+        
+        .signal-type {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+        
+        .signal-type-badge {
+            padding: 2px var(--space-sm);
+            border-radius: var(--radius-sm);
+            font-size: calc(10px * var(--scale));
+            font-weight: 600;
+            text-transform: uppercase;
+            background: var(--bg-elevated);
+            color: var(--text-muted);
+        }
+        
+        .signal-type-badge.pump { background: var(--accent-red); color: white; }
+        .signal-type-badge.scalp { background: var(--accent-green); color: var(--bg-deep); }
+        .signal-type-badge.volume { background: var(--accent-blue); color: white; }
+        
+        .signal-score {
+            font-family: var(--font-mono);
+            font-size: calc(11px * var(--scale));
+            color: var(--text-muted);
+        }
+        
+        .signal-right {
+            text-align: right;
+        }
+        
+        .signal-price {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: calc(14px * var(--scale));
+        }
+        
+        .signal-delta {
+            font-family: var(--font-mono);
+            font-size: calc(13px * var(--scale));
+            font-weight: 600;
+        }
+        
+        .signal-delta.positive { color: var(--accent-green); }
+        .signal-delta.negative { color: var(--accent-red); }
+        
+        .signal-time {
+            font-size: calc(10px * var(--scale));
+            color: var(--text-muted);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           RIGHT SIDEBAR - AI Analysis, Performance, Chat
+           Priority: MEDIUM - checked periodically
+           ═══════════════════════════════════════════════════════════════════ */
+        .sidebar-right {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-md);
+        }
+        
+        /* AI Confidence */
+        .confidence-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--space-sm);
+        }
+        
+        .confidence-item {
+            background: var(--bg-elevated);
+            border-radius: var(--radius-md);
+            padding: var(--space-md);
+            text-align: center;
+        }
+        
+        .confidence-label {
+            font-size: calc(10px * var(--scale));
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: var(--space-sm);
+        }
+        
+        .confidence-value {
+            font-family: var(--font-mono);
+            font-size: calc(32px * var(--scale));
+            font-weight: 700;
+        }
+        
+        .confidence-value.high { color: var(--accent-green); }
+        .confidence-value.medium { color: var(--accent-yellow); }
+        .confidence-value.low { color: var(--accent-red); }
+        
+        .confidence-bar {
+            height: 4px;
+            background: var(--bg-card);
+            border-radius: 2px;
+            margin-top: var(--space-sm);
+            overflow: hidden;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.5s;
+        }
+        
+        /* Performance Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--space-sm);
+        }
+        
+        .stat-item {
+            background: var(--bg-elevated);
+            border-radius: var(--radius-md);
+            padding: var(--space-md);
+            text-align: center;
+        }
+        
+        .stat-label {
+            font-size: calc(10px * var(--scale));
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: var(--space-sm);
+        }
+        
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: calc(24px * var(--scale));
+            font-weight: 700;
+        }
+        
+        .stat-value.positive { color: var(--accent-green); }
+        .stat-value.negative { color: var(--accent-red); }
+        
+        .stat-sub {
+            font-size: calc(10px * var(--scale));
+            color: var(--text-muted);
+            margin-top: var(--space-xs);
+        }
+        
+        /* Chat */
+        .chat-card {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: calc(300px * var(--scale));
+        }
+        
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: var(--space-md);
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+        }
+        
+        .chat-message {
+            max-width: 85%;
+            padding: var(--space-sm) var(--space-md);
+            border-radius: var(--radius-md);
+            font-size: calc(13px * var(--scale));
+            line-height: 1.4;
+        }
+        
+        .chat-message.user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            color: var(--bg-deep);
+            border-bottom-right-radius: var(--radius-sm);
+        }
+        
+        .chat-message.assistant {
+            align-self: flex-start;
+            background: var(--bg-elevated);
+            border-bottom-left-radius: var(--radius-sm);
+        }
+        
+        .chat-input-area {
+            display: flex;
+            gap: var(--space-sm);
+            padding: var(--space-md);
+            border-top: 1px solid var(--border-subtle);
+        }
+        
+        .chat-input {
+            flex: 1;
+            padding: var(--space-sm) var(--space-md);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: calc(13px * var(--scale));
+        }
+        
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+        }
+        
+        .chat-send {
+            padding: var(--space-sm) var(--space-md);
+            background: var(--accent-cyan);
+            border: none;
+            border-radius: var(--radius-md);
+            color: var(--bg-deep);
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           BOTTOM SECTION - Trade History, Risk, Analysis
+           Priority: MEDIUM - reviewed periodically
+           ═══════════════════════════════════════════════════════════════════ */
+        .bottom-section {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: var(--space-md);
+        }
+        
+        /* Trade History Table */
+        .trade-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .trade-table th {
+            text-align: left;
+            padding: var(--space-sm) var(--space-md);
+            background: var(--bg-elevated);
+            font-size: calc(11px * var(--scale));
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+        
+        .trade-table td {
+            padding: var(--space-sm) var(--space-md);
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: calc(12px * var(--scale));
+        }
+        
+        .trade-table tr:hover {
+            background: var(--bg-hover);
+        }
+        
+        .trade-side {
+            padding: var(--space-xs) var(--space-sm);
+            border-radius: var(--radius-sm);
+            font-size: calc(10px * var(--scale));
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .trade-side.buy {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+        
+        .trade-side.sell {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+        
+        .trade-pnl.positive { color: var(--accent-green); }
+        .trade-pnl.negative { color: var(--accent-red); }
+        
+        /* Risk Panel */
+        .risk-list {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .risk-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: var(--space-md);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        
+        .risk-label {
+            font-size: calc(13px * var(--scale));
+            color: var(--text-secondary);
+        }
+        
+        .risk-value {
+            font-family: var(--font-mono);
+            font-weight: 600;
+        }
+        
+        .risk-value.ok { color: var(--accent-green); }
+        .risk-value.warning { color: var(--accent-yellow); }
+        .risk-value.danger { color: var(--accent-red); }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           SCROLLBAR
+           ═══════════════════════════════════════════════════════════════════ */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-default);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <!-- HEADER -->
+    <header class="header">
+        <div class="logo-section">
+            <div class="logo">H</div>
+            <div class="logo-text">
+                <h1>HOPE AI Trading</h1>
+                <span class="version">Dashboard V3.0 | 8K Ready</span>
+            </div>
+        </div>
+        
+        <div class="status-indicators">
+            <div class="status-badge">
+                <span class="status-dot online" id="ws-status"></span>
+                <span>WebSocket</span>
+            </div>
+            <div class="status-badge">
+                <span class="status-dot online" id="binance-status"></span>
+                <span>Binance</span>
+            </div>
+            <div class="status-badge">
+                <span class="status-dot online" id="ai-status"></span>
+                <span>AI Gateway</span>
+            </div>
+            <div class="mode-badge testnet" id="mode-badge">TESTNET</div>
+            <div class="clock" id="clock">--:--:--</div>
+        </div>
+    </header>
+    
+    <!-- EMERGENCY BAR -->
+    <div class="emergency-bar">
+        <button class="emergency-btn" onclick="emergencyStop()">
+            🛑 EMERGENCY STOP ALL
+        </button>
+        <div class="emergency-status">
+            <div class="circuit-breaker ok" id="circuit-breaker">
+                ✅ Circuit Breaker: OK
+            </div>
+            <div>Daily Loss: <strong>$56 / $500</strong></div>
+            <div>Open Positions: <strong>3 / 5</strong></div>
+        </div>
+    </div>
+    
+    <!-- QUICK ACTIONS -->
+    <div class="quick-actions">
+        <!-- Group 1: Trading Controls (Most Used) -->
+        <div class="action-group">
+            <button class="btn btn-success" onclick="startTrading()">
+                <span class="btn-icon">▶</span> Start Trading
+            </button>
+            <button class="btn btn-warning" onclick="pauseTrading()">
+                <span class="btn-icon">⏸</span> Pause
+            </button>
+            <button class="btn btn-secondary" onclick="restartPump()">
+                <span class="btn-icon">🔄</span> Restart Pump
+            </button>
+        </div>
+        
+        <!-- Group 2: Data Refresh (Frequent) -->
+        <div class="action-group">
+            <button class="btn btn-secondary" onclick="refreshAll()">
+                <span class="btn-icon">🔄</span> Refresh
+            </button>
+            <button class="btn btn-secondary" onclick="updateAllowList()">
+                <span class="btn-icon">📋</span> Update AllowList
+            </button>
+        </div>
+        
+        <!-- Group 3: Analysis (Periodic) -->
+        <div class="action-group">
+            <button class="btn btn-ghost" onclick="showLogs()">
+                <span class="btn-icon">📜</span> Logs
+            </button>
+            <button class="btn btn-ghost" onclick="showAnalytics()">
+                <span class="btn-icon">📊</span> Analytics
+            </button>
+            <button class="btn btn-ghost" onclick="openSettings()">
+                <span class="btn-icon">⚙️</span> Settings
+            </button>
+        </div>
+    </div>
+    
+    <!-- MAIN GRID -->
+    <div class="main-grid">
+        <!-- LEFT SIDEBAR -->
+        <div class="sidebar-left">
+            <!-- Process Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">⚡</span> Processes
+                    </span>
+                    <div class="card-actions">
+                        <button class="card-btn" onclick="refreshProcesses()">🔄</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="process-list" id="process-list">
+                        <!-- JS fills this -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AllowList -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📋</span> AllowList
+                    </span>
+                    <div class="card-actions">
+                        <button class="card-btn" onclick="refreshAllowList()">🔄</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="allowlist-section">
+                        <div class="allowlist-header">
+                            <span class="allowlist-badge core">CORE</span>
+                            <span class="allowlist-count">10 coins</span>
+                        </div>
+                        <div class="allowlist-chips" id="core-chips"></div>
+                    </div>
+                    
+                    <div class="allowlist-section">
+                        <div class="allowlist-header">
+                            <span class="allowlist-badge dynamic">DYNAMIC</span>
+                            <span class="allowlist-count" id="dynamic-count">0</span>
+                        </div>
+                        <div class="allowlist-chips" id="dynamic-chips"></div>
+                    </div>
+                    
+                    <div class="allowlist-section">
+                        <div class="allowlist-header">
+                            <span class="allowlist-badge hot">HOT 🔥</span>
+                            <span class="allowlist-count" id="hot-count">0</span>
+                        </div>
+                        <div class="allowlist-chips" id="hot-chips"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Blacklist -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">🚫</span> Blacklist (LIVE)
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="blacklist-chips allowlist-chips">
+                        <span class="chip">BTC</span>
+                        <span class="chip">ETH</span>
+                        <span class="chip">BNB</span>
+                        <span class="chip">SOL</span>
+                        <span class="chip">XRP</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- MAIN CONTENT -->
+        <div class="main-content">
+            <!-- Price Ticker -->
+            <div class="price-ticker" id="price-ticker"></div>
+            
+            <!-- Live Signals -->
+            <div class="card signals-card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📡</span> Live Signals
+                    </span>
+                    <span style="color: var(--accent-green);">● LIVE</span>
+                </div>
+                <div class="signals-list" id="signals-list"></div>
+            </div>
+        </div>
+        
+        <!-- RIGHT SIDEBAR -->
+        <div class="sidebar-right">
+            <!-- AI Confidence -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">🤖</span> AI Confidence
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="confidence-grid">
+                        <div class="confidence-item">
+                            <div class="confidence-label">Regime</div>
+                            <div class="confidence-value high">85%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 85%; background: var(--accent-green);"></div>
+                            </div>
+                        </div>
+                        <div class="confidence-item">
+                            <div class="confidence-label">Anomaly</div>
+                            <div class="confidence-value medium">62%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 62%; background: var(--accent-yellow);"></div>
+                            </div>
+                        </div>
+                        <div class="confidence-item">
+                            <div class="confidence-label">Pump Prob</div>
+                            <div class="confidence-value high">78%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 78%; background: var(--accent-green);"></div>
+                            </div>
+                        </div>
+                        <div class="confidence-item">
+                            <div class="confidence-label">Risk</div>
+                            <div class="confidence-value low">25%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 25%; background: var(--accent-red);"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Performance -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📊</span> Performance
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Total P&L</div>
+                            <div class="stat-value negative">-$56.05</div>
+                            <div class="stat-sub">Today</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Win Rate</div>
+                            <div class="stat-value">35%</div>
+                            <div class="stat-sub">24 trades</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Max DD</div>
+                            <div class="stat-value negative">-2.1%</div>
+                            <div class="stat-sub">$56.05</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Sharpe</div>
+                            <div class="stat-value">-0.42</div>
+                            <div class="stat-sub">30d</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI Chat -->
+            <div class="card chat-card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">💬</span> AI Assistant
+                    </span>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="chat-message assistant">
+                        👋 Привет! Я AI ассистент HOPE. Чем могу помочь?
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" class="chat-input" id="chat-input" placeholder="Спросите что-нибудь..." onkeypress="if(event.key==='Enter')sendChat()">
+                    <button class="chat-send" onclick="sendChat()">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- BOTTOM SECTION -->
+        <div class="bottom-section">
+            <!-- Trade History -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📜</span> Recent Trades
+                    </span>
+                </div>
+                <div class="card-body" style="padding: 0;">
+                    <table class="trade-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Price</th>
+                                <th>Amount</th>
+                                <th>P&L</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Risk Management -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">🛡️</span> Risk Management
+                    </span>
+                </div>
+                <div class="card-body" style="padding: 0;">
+                    <div class="risk-list">
+                        <div class="risk-item">
+                            <span class="risk-label">Daily Loss Limit</span>
+                            <span class="risk-value ok">$56 / $500</span>
+                        </div>
+                        <div class="risk-item">
+                            <span class="risk-label">Max Positions</span>
+                            <span class="risk-value ok">3 / 5</span>
+                        </div>
+                        <div class="risk-item">
+                            <span class="risk-label">Position Size</span>
+                            <span class="risk-value">$100 base</span>
+                        </div>
+                        <div class="risk-item">
+                            <span class="risk-label">Stop Loss</span>
+                            <span class="risk-value">1.0% default</span>
+                        </div>
+                        <div class="risk-item">
+                            <span class="risk-label">Circuit Breaker</span>
+                            <span class="risk-value ok">✅ OK</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ═══════════════════════════════════════════════════════════════════
+        // CONFIGURATION
+        // ═══════════════════════════════════════════════════════════════════
+        const WATCHDOG_API = 'http://localhost:8080';
+        const AUTOTRADER_API = 'http://localhost:8200';
+        const AI_GATEWAY_API = 'http://localhost:8100';
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // QUICK ACTIONS
+        // ═══════════════════════════════════════════════════════════════════
+        
+        async function emergencyStop() {
+            if (!confirm('⚠️ EMERGENCY STOP: Остановить ВСЕ процессы?')) return;
+            
+            try {
+                await fetch(`${WATCHDOG_API}/api/stop/pump_detector`, {method: 'POST'});
+                await fetch(`${WATCHDOG_API}/api/stop/autotrader`, {method: 'POST'});
+                alert('✅ Все торговые процессы остановлены');
+                refreshProcesses();
+            } catch (e) {
+                alert('❌ Ошибка: ' + e.message);
+            }
+        }
+        
+        async function startTrading() {
+            await fetch(`${WATCHDOG_API}/api/start/pump_detector`, {method: 'POST'});
+            await fetch(`${WATCHDOG_API}/api/start/autotrader`, {method: 'POST'});
+            refreshProcesses();
+        }
+        
+        async function pauseTrading() {
+            await fetch(`${WATCHDOG_API}/api/stop/pump_detector`, {method: 'POST'});
+            refreshProcesses();
+        }
+        
+        async function restartPump() {
+            await fetch(`${WATCHDOG_API}/api/restart/pump_detector`, {method: 'POST'});
+            refreshProcesses();
+        }
+        
+        function refreshAll() {
+            refreshProcesses();
+            refreshAllowList();
+            refreshSignals();
+            refreshPrices();
+        }
+        
+        function updateAllowList() {
+            fetch('/api/update-allowlist', {method: 'POST'}).then(refreshAllowList);
+        }
+        
+        function showLogs() {
+            window.open(`${WATCHDOG_API}/api/logs/pump_detector?lines=200`, '_blank');
+        }
+        
+        function showAnalytics() {
+            alert('Analytics panel - TODO');
+        }
+        
+        function openSettings() {
+            alert('Settings panel - TODO');
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // DATA LOADING
+        // ═══════════════════════════════════════════════════════════════════
+        
+        async function refreshProcesses() {
+            try {
+                const resp = await fetch(`${WATCHDOG_API}/api/status`);
+                const data = await resp.json();
+                
+                const list = document.getElementById('process-list');
+                list.innerHTML = '';
+                
+                const order = ['ai_gateway', 'pump_detector', 'autotrader', 'friend_bridge', 'tradingview_allowlist', 'tg_bot'];
+                
+                for (const name of order) {
+                    const proc = data[name];
+                    if (!proc) continue;
+                    
+                    list.innerHTML += `
+                        <div class="process-item ${proc.state}">
+                            <div class="process-info">
+                                <span class="process-name">${name}</span>
+                                <div class="process-meta">
+                                    <span>${proc.uptime_str}</span>
+                                    <span>PID: ${proc.pid || '-'}</span>
+                                </div>
+                            </div>
+                            <div class="process-controls">
+                                <button class="process-btn" onclick="fetch('${WATCHDOG_API}/api/start/${name}',{method:'POST'}).then(refreshProcesses)">▶</button>
+                                <button class="process-btn danger" onclick="fetch('${WATCHDOG_API}/api/stop/${name}',{method:'POST'}).then(refreshProcesses)">⏹</button>
+                                <button class="process-btn" onclick="fetch('${WATCHDOG_API}/api/restart/${name}',{method:'POST'}).then(refreshProcesses)">🔄</button>
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('Process refresh failed:', e);
+            }
+        }
+        
+        function refreshAllowList() {
+            // Core (static)
+            const core = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA', 'AVAX', 'LINK', 'TRX'];
+            document.getElementById('core-chips').innerHTML = 
+                core.map(s => `<span class="chip">${s}</span>`).join('');
+            
+            // Dynamic & Hot from API
+            fetch('/api/allowlist')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.dynamic) {
+                        document.getElementById('dynamic-chips').innerHTML = 
+                            data.dynamic.slice(0, 10).map(s => `<span class="chip">${s.replace('USDT','')}</span>`).join('');
+                        document.getElementById('dynamic-count').textContent = `${data.dynamic.length} coins`;
+                    }
+                    if (data.hot) {
+                        document.getElementById('hot-chips').innerHTML = 
+                            data.hot.map(s => `<span class="chip hot">${s.replace('USDT','')}</span>`).join('');
+                        document.getElementById('hot-count').textContent = `${data.hot.length} coins`;
+                    }
+                })
+                .catch(() => {});
+        }
+        
+        function refreshPrices() {
+            const prices = [
+                {symbol: 'ENSOUSDT', price: 1.59, change: 28.42, volume: '249M'},
+                {symbol: 'PEPEUSDT', price: 0.0000046, change: -3.10, volume: '555M'},
+                {symbol: 'SUIUSDT', price: 1.29, change: -4.06, volume: '1.27B'},
+            ];
+            
+            document.getElementById('price-ticker').innerHTML = prices.map(p => `
+                <div class="price-card">
+                    <div class="price-header">
+                        <span class="price-symbol">${p.symbol.replace('USDT','')}</span>
+                        <span class="price-change ${p.change >= 0 ? 'positive' : 'negative'}">${p.change >= 0 ? '+' : ''}${p.change.toFixed(2)}%</span>
+                    </div>
+                    <div class="price-value">$${p.price}</div>
+                    <div class="price-volume">Vol: ${p.volume}</div>
+                </div>
+            `).join('');
+        }
+        
+        function refreshSignals() {
+            const signals = [
+                {symbol: 'ENSOUSDT', type: 'PUMP', price: 1.59, delta: 28.42, score: 0.85, hot: true},
+                {symbol: 'SENTUSDT', type: 'SCALP', price: 0.036, delta: 5.4, score: 0.72, hot: false},
+                {symbol: 'PEPEUSDT', type: 'VOLUME', price: 0.0000046, delta: -3.1, score: 0.45, hot: false},
+            ];
+            
+            document.getElementById('signals-list').innerHTML = signals.map(s => `
+                <div class="signal-item ${s.hot ? 'hot' : ''} ${s.score >= 0.7 ? 'approved' : ''}">
+                    <div class="signal-left">
+                        <div class="signal-icon">${s.hot ? '🔥' : '📊'}</div>
+                        <div class="signal-info">
+                            <span class="signal-symbol">${s.symbol}</span>
+                            <div class="signal-type">
+                                <span class="signal-type-badge ${s.type.toLowerCase()}">${s.type}</span>
+                                <span class="signal-score">Score: ${(s.score * 100).toFixed(0)}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="signal-right">
+                        <div class="signal-price">$${s.price}</div>
+                        <div class="signal-delta ${s.delta >= 0 ? 'positive' : 'negative'}">${s.delta >= 0 ? '+' : ''}${s.delta.toFixed(2)}%</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function refreshTrades() {
+            const trades = [
+                {time: '16:45:12', symbol: 'ENSOUSDT', side: 'BUY', price: 1.52, amount: '$100', pnl: '+$4.60', status: 'CLOSED'},
+                {time: '16:42:05', symbol: 'SENTUSDT', side: 'BUY', price: 0.034, amount: '$100', pnl: '-$2.10', status: 'CLOSED'},
+                {time: '16:38:21', symbol: 'PEPEUSDT', side: 'BUY', price: 0.0000048, amount: '$100', pnl: '+$0.80', status: 'CLOSED'},
+            ];
+            
+            document.getElementById('trades-body').innerHTML = trades.map(t => `
+                <tr>
+                    <td>${t.time}</td>
+                    <td>${t.symbol}</td>
+                    <td><span class="trade-side ${t.side.toLowerCase()}">${t.side}</span></td>
+                    <td>$${t.price}</td>
+                    <td>${t.amount}</td>
+                    <td class="trade-pnl ${t.pnl.startsWith('+') ? 'positive' : 'negative'}">${t.pnl}</td>
+                    <td>${t.status}</td>
+                </tr>
+            `).join('');
+        }
+        
+        function updateClock() {
+            document.getElementById('clock').textContent = new Date().toLocaleTimeString('ru-RU');
+        }
+        
+        function sendChat() {
+            const input = document.getElementById('chat-input');
+            const msg = input.value.trim();
+            if (!msg) return;
+            
+            const chat = document.getElementById('chat-messages');
+            chat.innerHTML += `<div class="chat-message user">${msg}</div>`;
+            input.value = '';
+            
+            setTimeout(() => {
+                chat.innerHTML += `<div class="chat-message assistant">Обрабатываю запрос...</div>`;
+                chat.scrollTop = chat.scrollHeight;
+            }, 500);
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // INITIALIZATION
+        // ═══════════════════════════════════════════════════════════════════
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshAll();
+            refreshTrades();
+            updateClock();
+            
+            setInterval(updateClock, 1000);
+            setInterval(refreshProcesses, 10000);
+            setInterval(refreshSignals, 5000);
+            setInterval(refreshPrices, 10000);
+        });
+    </script>
+</body>
+</html>

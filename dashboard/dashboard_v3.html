@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOPE AI Trading Dashboard V3</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* 8K Resolution Support */
+            --scale: 1;
+            
+            /* Color Palette - Professional Trading */
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-tertiary: #1f2937;
+            --bg-card: #161e2e;
+            --bg-hover: #1e293b;
+            
+            --accent-primary: #00d4ff;
+            --accent-secondary: #7c3aed;
+            --accent-success: #10b981;
+            --accent-warning: #f59e0b;
+            --accent-danger: #ef4444;
+            --accent-info: #3b82f6;
+            
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            
+            --border-color: #374151;
+            --glow-primary: rgba(0, 212, 255, 0.3);
+            
+            /* Typography */
+            --font-mono: 'JetBrains Mono', monospace;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           HEADER - Статус и главная информация (ВСЕГДА ВИДНА)
+           ═══════════════════════════════════════════════════════════════════ */
+        .header {
+            background: linear-gradient(180deg, var(--bg-secondary), var(--bg-primary));
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 24px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        .logo-text {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .logo-version {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        
+        /* Status Indicators */
+        .status-bar {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.online { background: var(--accent-success); }
+        .status-dot.offline { background: var(--accent-danger); animation: none; }
+        .status-dot.warning { background: var(--accent-warning); }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           QUICK ACTIONS BAR - Самые частые действия (ПРИОРИТЕТ 1)
+           ═══════════════════════════════════════════════════════════════════ */
+        .quick-actions {
+            background: var(--bg-secondary);
+            padding: 12px 24px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .action-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-family: var(--font-sans);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .action-btn.primary {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-info));
+            color: #000;
+        }
+        
+        .action-btn.success {
+            background: var(--accent-success);
+            color: #000;
+        }
+        
+        .action-btn.danger {
+            background: var(--accent-danger);
+            color: #fff;
+        }
+        
+        .action-btn.warning {
+            background: var(--accent-warning);
+            color: #000;
+        }
+        
+        .action-btn.secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        
+        .action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .action-btn:active {
+            transform: translateY(0);
+        }
+        
+        .action-btn-icon {
+            font-size: 18px;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           MAIN LAYOUT - Grid система
+           ═══════════════════════════════════════════════════════════════════ */
+        .main-container {
+            display: grid;
+            grid-template-columns: 300px 1fr 350px;
+            grid-template-rows: auto 1fr;
+            gap: 16px;
+            padding: 16px 24px;
+            min-height: calc(100vh - 140px);
+        }
+        
+        /* For 4K+ displays */
+        @media (min-width: 2560px) {
+            .main-container {
+                grid-template-columns: 400px 1fr 450px;
+                gap: 24px;
+                padding: 24px 32px;
+            }
+            
+            :root { --scale: 1.25; }
+        }
+        
+        /* For 8K displays */
+        @media (min-width: 5120px) {
+            .main-container {
+                grid-template-columns: 600px 1fr 700px;
+                gap: 32px;
+                padding: 32px 48px;
+            }
+            
+            :root { --scale: 2; }
+            
+            body { font-size: calc(16px * var(--scale)); }
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           CARDS - Базовый стиль карточек
+           ═══════════════════════════════════════════════════════════════════ */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+        }
+        
+        .card-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+        
+        .card-title-icon {
+            font-size: 18px;
+        }
+        
+        .card-body {
+            padding: 16px;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           LEFT SIDEBAR - Процессы и AllowList
+           ═══════════════════════════════════════════════════════════════════ */
+        .sidebar-left {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        
+        /* Process Status */
+        .process-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .process-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .process-item.running { border-left-color: var(--accent-success); }
+        .process-item.stopped { border-left-color: var(--accent-danger); }
+        .process-item.warning { border-left-color: var(--accent-warning); }
+        
+        .process-item:hover {
+            background: var(--bg-hover);
+        }
+        
+        .process-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .process-name {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        
+        .process-uptime {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        .process-actions {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .process-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        
+        .process-btn:hover {
+            background: var(--accent-primary);
+            color: #000;
+        }
+        
+        .process-btn.danger:hover {
+            background: var(--accent-danger);
+            color: #fff;
+        }
+        
+        /* AllowList */
+        .allowlist-section {
+            margin-bottom: 12px;
+        }
+        
+        .allowlist-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        
+        .allowlist-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+        }
+        
+        .allowlist-badge.core { background: var(--accent-primary); color: #000; }
+        .allowlist-badge.dynamic { background: var(--accent-success); color: #000; }
+        .allowlist-badge.hot { background: var(--accent-danger); color: #fff; }
+        
+        .allowlist-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        
+        .allowlist-chip {
+            padding: 4px 10px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           CENTER - Главный контент: Цены, Сигналы, Графики
+           ═══════════════════════════════════════════════════════════════════ */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        
+        /* Price Ticker */
+        .price-ticker {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        
+        .price-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .price-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .price-symbol {
+            font-weight: 700;
+            font-size: 16px;
+        }
+        
+        .price-change {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        
+        .price-change.positive { 
+            background: rgba(16, 185, 129, 0.2); 
+            color: var(--accent-success); 
+        }
+        
+        .price-change.negative { 
+            background: rgba(239, 68, 68, 0.2); 
+            color: var(--accent-danger); 
+        }
+        
+        .price-value {
+            font-family: var(--font-mono);
+            font-size: 24px;
+            font-weight: 700;
+        }
+        
+        .price-volume {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        /* Live Signals */
+        .signals-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .signals-list {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 400px;
+        }
+        
+        .signal-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.2s;
+        }
+        
+        .signal-item:hover {
+            background: var(--bg-hover);
+        }
+        
+        .signal-item.hot {
+            background: rgba(239, 68, 68, 0.1);
+            border-left: 3px solid var(--accent-danger);
+        }
+        
+        .signal-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .signal-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            background: var(--bg-tertiary);
+        }
+        
+        .signal-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .signal-symbol {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .signal-type {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        
+        .signal-right {
+            text-align: right;
+        }
+        
+        .signal-price {
+            font-family: var(--font-mono);
+            font-weight: 600;
+        }
+        
+        .signal-delta {
+            font-family: var(--font-mono);
+            font-size: 13px;
+        }
+        
+        .signal-delta.positive { color: var(--accent-success); }
+        .signal-delta.negative { color: var(--accent-danger); }
+        
+        .signal-time {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           RIGHT SIDEBAR - AI Confidence, Performance, Chat
+           ═══════════════════════════════════════════════════════════════════ */
+        .sidebar-right {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        
+        /* AI Confidence Meters */
+        .confidence-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        
+        .confidence-item {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .confidence-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        
+        .confidence-value {
+            font-family: var(--font-mono);
+            font-size: 28px;
+            font-weight: 700;
+        }
+        
+        .confidence-value.high { color: var(--accent-success); }
+        .confidence-value.medium { color: var(--accent-warning); }
+        .confidence-value.low { color: var(--accent-danger); }
+        
+        .confidence-bar {
+            height: 4px;
+            background: var(--bg-secondary);
+            border-radius: 2px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.5s;
+        }
+        
+        /* Performance Stats */
+        .performance-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        
+        .stat-item {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+        
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: 24px;
+            font-weight: 700;
+        }
+        
+        .stat-value.positive { color: var(--accent-success); }
+        .stat-value.negative { color: var(--accent-danger); }
+        
+        .stat-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        /* Chat */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 300px;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .chat-message {
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        .chat-message.user {
+            align-self: flex-end;
+            background: var(--accent-primary);
+            color: #000;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .chat-message.assistant {
+            align-self: flex-start;
+            background: var(--bg-tertiary);
+            border-bottom-left-radius: 4px;
+        }
+        
+        .chat-input-container {
+            display: flex;
+            gap: 8px;
+            padding: 12px;
+            border-top: 1px solid var(--border-color);
+        }
+        
+        .chat-input {
+            flex: 1;
+            padding: 10px 14px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: 13px;
+        }
+        
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+        
+        .chat-send {
+            padding: 10px 16px;
+            background: var(--accent-primary);
+            border: none;
+            border-radius: 8px;
+            color: #000;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           BOTTOM BAR - Дополнительные инструменты
+           ═══════════════════════════════════════════════════════════════════ */
+        .bottom-bar {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 16px;
+        }
+        
+        /* Trade History */
+        .trade-history {
+            flex: 2;
+        }
+        
+        .trade-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        
+        .trade-table th {
+            text-align: left;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 11px;
+        }
+        
+        .trade-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .trade-table tr:hover {
+            background: var(--bg-hover);
+        }
+        
+        /* Risk Management */
+        .risk-panel {
+            flex: 1;
+        }
+        
+        .risk-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .risk-label {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+        
+        .risk-value {
+            font-family: var(--font-mono);
+            font-weight: 600;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           RESPONSIVE
+           ═══════════════════════════════════════════════════════════════════ */
+        @media (max-width: 1400px) {
+            .main-container {
+                grid-template-columns: 280px 1fr;
+            }
+            
+            .sidebar-right {
+                display: none;
+            }
+        }
+        
+        @media (max-width: 1024px) {
+            .main-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .sidebar-left {
+                display: none;
+            }
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <!-- ═══════════════════════════════════════════════════════════════════
+         HEADER
+         ═══════════════════════════════════════════════════════════════════ -->
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">H</div>
+            <div>
+                <div class="logo-text">HOPE AI Trading</div>
+                <div class="logo-version">Dashboard V3.0 | 8K Ready</div>
+            </div>
+        </div>
+        
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-dot online" id="ws-status"></span>
+                <span>WebSocket</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot online" id="binance-status"></span>
+                <span>Binance</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot online" id="ai-status"></span>
+                <span>AI Gateway</span>
+            </div>
+            <div class="status-item">
+                <span>Mode: <strong id="trading-mode">TESTNET</strong></span>
+            </div>
+            <div class="status-item">
+                <span id="current-time">--:--:--</span>
+            </div>
+        </div>
+    </header>
+    
+    <!-- ═══════════════════════════════════════════════════════════════════
+         QUICK ACTIONS (Самые частые действия - ПРИОРИТЕТ 1)
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="quick-actions">
+        <!-- Группа 1: Экстренные действия (используются при проблемах) -->
+        <button class="action-btn danger" onclick="emergencyStop()">
+            <span class="action-btn-icon">🛑</span> EMERGENCY STOP
+        </button>
+        
+        <!-- Группа 2: Основные действия (несколько раз в час) -->
+        <button class="action-btn success" onclick="startCore()">
+            <span class="action-btn-icon">▶</span> Start Trading
+        </button>
+        <button class="action-btn warning" onclick="pauseTrading()">
+            <span class="action-btn-icon">⏸</span> Pause
+        </button>
+        <button class="action-btn secondary" onclick="restartPump()">
+            <span class="action-btn-icon">🔄</span> Restart Pump
+        </button>
+        
+        <!-- Группа 3: Мониторинг (несколько раз в день) -->
+        <button class="action-btn secondary" onclick="refreshAll()">
+            <span class="action-btn-icon">🔄</span> Refresh All
+        </button>
+        <button class="action-btn secondary" onclick="updateAllowList()">
+            <span class="action-btn-icon">📋</span> Update AllowList
+        </button>
+        <button class="action-btn secondary" onclick="showLogs()">
+            <span class="action-btn-icon">📜</span> Logs
+        </button>
+        
+        <!-- Группа 4: Настройки (раз в день) -->
+        <button class="action-btn secondary" onclick="openSettings()">
+            <span class="action-btn-icon">⚙️</span> Settings
+        </button>
+    </div>
+    
+    <!-- ═══════════════════════════════════════════════════════════════════
+         MAIN LAYOUT
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="main-container">
+        
+        <!-- LEFT SIDEBAR: Процессы и AllowList -->
+        <div class="sidebar-left">
+            <!-- Process Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">⚡</span>
+                        Process Status
+                    </span>
+                    <button class="process-btn" onclick="refreshProcesses()">🔄</button>
+                </div>
+                <div class="card-body">
+                    <div class="process-list" id="process-list">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AllowList -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📋</span>
+                        AllowList (3-Layer)
+                    </span>
+                    <button class="process-btn" onclick="refreshAllowList()">🔄</button>
+                </div>
+                <div class="card-body">
+                    <div class="allowlist-section">
+                        <div class="allowlist-title">
+                            <span class="allowlist-badge core">CORE</span>
+                            <span>10 coins</span>
+                        </div>
+                        <div class="allowlist-chips" id="core-list">
+                            <!-- Filled by JS -->
+                        </div>
+                    </div>
+                    
+                    <div class="allowlist-section">
+                        <div class="allowlist-title">
+                            <span class="allowlist-badge dynamic">DYNAMIC</span>
+                            <span id="dynamic-count">0 coins</span>
+                        </div>
+                        <div class="allowlist-chips" id="dynamic-list">
+                            <!-- Filled by JS -->
+                        </div>
+                    </div>
+                    
+                    <div class="allowlist-section">
+                        <div class="allowlist-title">
+                            <span class="allowlist-badge hot">HOT 🔥</span>
+                            <span id="hot-count">0 coins</span>
+                        </div>
+                        <div class="allowlist-chips" id="hot-list">
+                            <!-- Filled by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Blacklist -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">🚫</span>
+                        Blacklist (LIVE)
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="allowlist-chips">
+                        <span class="allowlist-chip" style="border-color: var(--accent-danger);">BTCUSDT</span>
+                        <span class="allowlist-chip" style="border-color: var(--accent-danger);">ETHUSDT</span>
+                        <span class="allowlist-chip" style="border-color: var(--accent-danger);">BNBUSDT</span>
+                        <span class="allowlist-chip" style="border-color: var(--accent-danger);">SOLUSDT</span>
+                        <span class="allowlist-chip" style="border-color: var(--accent-danger);">XRPUSDT</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- MAIN CONTENT -->
+        <div class="main-content">
+            <!-- Price Ticker -->
+            <div class="price-ticker" id="price-ticker">
+                <!-- Filled by JS -->
+            </div>
+            
+            <!-- Live Signals -->
+            <div class="card signals-container">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📡</span>
+                        Live Signals
+                    </span>
+                    <span style="color: var(--accent-success); font-size: 12px;">● LIVE</span>
+                </div>
+                <div class="signals-list" id="signals-list">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- RIGHT SIDEBAR -->
+        <div class="sidebar-right">
+            <!-- AI Confidence -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">🤖</span>
+                        AI Confidence
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="confidence-grid">
+                        <div class="confidence-item">
+                            <div class="confidence-label">Regime</div>
+                            <div class="confidence-value high" id="regime-conf">85%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 85%; background: var(--accent-success);"></div>
+                            </div>
+                        </div>
+                        <div class="confidence-item">
+                            <div class="confidence-label">Anomaly</div>
+                            <div class="confidence-value medium" id="anomaly-conf">62%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 62%; background: var(--accent-warning);"></div>
+                            </div>
+                        </div>
+                        <div class="confidence-item">
+                            <div class="confidence-label">Pump Prob</div>
+                            <div class="confidence-value high" id="pump-conf">78%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 78%; background: var(--accent-success);"></div>
+                            </div>
+                        </div>
+                        <div class="confidence-item">
+                            <div class="confidence-label">Risk Score</div>
+                            <div class="confidence-value low" id="risk-conf">25%</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: 25%; background: var(--accent-danger);"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Performance -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📊</span>
+                        Performance
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="performance-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Total P&L</div>
+                            <div class="stat-value negative" id="total-pnl">-$56.05</div>
+                            <div class="stat-sub">Today</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Win Rate</div>
+                            <div class="stat-value" id="win-rate">35%</div>
+                            <div class="stat-sub">24 trades</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Max DD</div>
+                            <div class="stat-value negative" id="max-dd">-2.1%</div>
+                            <div class="stat-sub">$56.05</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Sharpe</div>
+                            <div class="stat-value" id="sharpe">-0.42</div>
+                            <div class="stat-sub">30d</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI Chat -->
+            <div class="card chat-container">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">💬</span>
+                        AI Assistant
+                    </span>
+                </div>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="chat-message assistant">
+                        👋 Привет! Я AI ассистент HOPE. Могу помочь с анализом рынка и настройками бота.
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <input type="text" class="chat-input" id="chat-input" placeholder="Спросите что-нибудь..." onkeypress="if(event.key==='Enter')sendChat()">
+                    <button class="chat-send" onclick="sendChat()">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- BOTTOM BAR -->
+        <div class="bottom-bar">
+            <!-- Trade History -->
+            <div class="card trade-history">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">📜</span>
+                        Recent Trades
+                    </span>
+                </div>
+                <div class="card-body" style="padding: 0;">
+                    <table class="trade-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Price</th>
+                                <th>Amount</th>
+                                <th>P&L</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trade-history">
+                            <!-- Filled by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Risk Management -->
+            <div class="card risk-panel">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span class="card-title-icon">🛡️</span>
+                        Risk Management
+                    </span>
+                </div>
+                <div class="card-body" style="padding: 0;">
+                    <div class="risk-item">
+                        <span class="risk-label">Daily Loss Limit</span>
+                        <span class="risk-value">$500 / $100 used</span>
+                    </div>
+                    <div class="risk-item">
+                        <span class="risk-label">Max Positions</span>
+                        <span class="risk-value">3 / 5</span>
+                    </div>
+                    <div class="risk-item">
+                        <span class="risk-label">Position Size</span>
+                        <span class="risk-value">$100 base</span>
+                    </div>
+                    <div class="risk-item">
+                        <span class="risk-label">Stop Loss</span>
+                        <span class="risk-value">1.0% default</span>
+                    </div>
+                    <div class="risk-item">
+                        <span class="risk-label">Circuit Breaker</span>
+                        <span class="risk-value" style="color: var(--accent-success);">✅ OK</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ═══════════════════════════════════════════════════════════════════
+        // CONFIGURATION
+        // ═══════════════════════════════════════════════════════════════════
+        
+        const API_BASE = 'http://localhost:8080/api';
+        const WS_URL = 'ws://localhost:8765';
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // QUICK ACTIONS
+        // ═══════════════════════════════════════════════════════════════════
+        
+        async function emergencyStop() {
+            if (confirm('⚠️ EMERGENCY STOP: Остановить все процессы?')) {
+                await fetch(`${API_BASE}/stop/pump_detector`, {method: 'POST'});
+                await fetch(`${API_BASE}/stop/autotrader`, {method: 'POST'});
+                alert('✅ Все процессы остановлены');
+                refreshProcesses();
+            }
+        }
+        
+        async function startCore() {
+            await fetch(`${API_BASE}/start/pump_detector`, {method: 'POST'});
+            await fetch(`${API_BASE}/start/autotrader`, {method: 'POST'});
+            refreshProcesses();
+        }
+        
+        async function pauseTrading() {
+            await fetch(`${API_BASE}/stop/pump_detector`, {method: 'POST'});
+            refreshProcesses();
+        }
+        
+        async function restartPump() {
+            await fetch(`${API_BASE}/restart/pump_detector`, {method: 'POST'});
+            refreshProcesses();
+        }
+        
+        function refreshAll() {
+            refreshProcesses();
+            refreshAllowList();
+            refreshSignals();
+        }
+        
+        function updateAllowList() {
+            fetch('/api/update-allowlist', {method: 'POST'})
+                .then(() => refreshAllowList());
+        }
+        
+        function showLogs() {
+            window.open(`${API_BASE}/logs/pump_detector?lines=200`, '_blank');
+        }
+        
+        function openSettings() {
+            alert('Settings panel - TODO');
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // DATA LOADING
+        // ═══════════════════════════════════════════════════════════════════
+        
+        async function refreshProcesses() {
+            try {
+                const resp = await fetch(`${API_BASE}/status`);
+                const data = await resp.json();
+                
+                const list = document.getElementById('process-list');
+                list.innerHTML = '';
+                
+                for (const [name, proc] of Object.entries(data)) {
+                    const stateClass = proc.state === 'running' ? 'running' : 
+                                      proc.state === 'stopped' ? 'stopped' : 'warning';
+                    
+                    list.innerHTML += `
+                        <div class="process-item ${stateClass}">
+                            <div class="process-info">
+                                <span class="process-name">${name}</span>
+                                <span class="process-uptime">${proc.uptime} | PID: ${proc.pid || '-'}</span>
+                            </div>
+                            <div class="process-actions">
+                                <button class="process-btn" onclick="fetch('${API_BASE}/start/${name}',{method:'POST'}).then(refreshProcesses)" ${proc.state === 'running' ? 'disabled' : ''}>▶</button>
+                                <button class="process-btn danger" onclick="fetch('${API_BASE}/stop/${name}',{method:'POST'}).then(refreshProcesses)" ${proc.state !== 'running' ? 'disabled' : ''}>⏹</button>
+                                <button class="process-btn" onclick="fetch('${API_BASE}/restart/${name}',{method:'POST'}).then(refreshProcesses)">🔄</button>
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('Failed to refresh processes:', e);
+            }
+        }
+        
+        function refreshAllowList() {
+            // Core list (static)
+            document.getElementById('core-list').innerHTML = 
+                ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 
+                 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT']
+                .map(s => `<span class="allowlist-chip">${s.replace('USDT','')}</span>`)
+                .join('');
+            
+            // Dynamic and HOT from API
+            fetch('/api/allowlist')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.dynamic) {
+                        document.getElementById('dynamic-list').innerHTML = 
+                            data.dynamic.slice(0, 10).map(s => `<span class="allowlist-chip">${s.replace('USDT','')}</span>`).join('');
+                        document.getElementById('dynamic-count').textContent = `${data.dynamic.length} coins`;
+                    }
+                    if (data.hot) {
+                        document.getElementById('hot-list').innerHTML = 
+                            data.hot.map(s => `<span class="allowlist-chip" style="border-color: var(--accent-danger);">${s.replace('USDT','')}</span>`).join('');
+                        document.getElementById('hot-count').textContent = `${data.hot.length} coins`;
+                    }
+                })
+                .catch(() => {});
+        }
+        
+        function refreshSignals() {
+            // Mock data - replace with real API
+            const signals = [
+                {symbol: 'ENSOUSDT', type: 'PUMP_OVERRIDE', price: 1.59, delta: 28.42, hot: true},
+                {symbol: 'PEPEUSDT', type: 'VOLUME_SPIKE', price: 0.0000046, delta: -3.10, hot: false},
+                {symbol: 'SUIUSDT', type: 'SCALP', price: 1.29, delta: -4.06, hot: false},
+            ];
+            
+            const list = document.getElementById('signals-list');
+            list.innerHTML = signals.map(s => `
+                <div class="signal-item ${s.hot ? 'hot' : ''}">
+                    <div class="signal-left">
+                        <div class="signal-icon">${s.hot ? '🔥' : '📊'}</div>
+                        <div class="signal-info">
+                            <span class="signal-symbol">${s.symbol}</span>
+                            <span class="signal-type">${s.type}</span>
+                        </div>
+                    </div>
+                    <div class="signal-right">
+                        <div class="signal-price">$${s.price}</div>
+                        <div class="signal-delta ${s.delta >= 0 ? 'positive' : 'negative'}">${s.delta >= 0 ? '+' : ''}${s.delta.toFixed(2)}%</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function updateClock() {
+            document.getElementById('current-time').textContent = 
+                new Date().toLocaleTimeString('ru-RU');
+        }
+        
+        function sendChat() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            const messages = document.getElementById('chat-messages');
+            messages.innerHTML += `<div class="chat-message user">${message}</div>`;
+            input.value = '';
+            
+            // Mock response - replace with real API
+            setTimeout(() => {
+                messages.innerHTML += `<div class="chat-message assistant">Обрабатываю запрос...</div>`;
+                messages.scrollTop = messages.scrollHeight;
+            }, 500);
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // INITIALIZATION
+        // ═══════════════════════════════════════════════════════════════════
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshAll();
+            setInterval(updateClock, 1000);
+            setInterval(refreshProcesses, 10000);
+            setInterval(refreshSignals, 5000);
+            updateClock();
+        });
+    </script>
+</body>
+</html>

@@ -1,481 +1,734 @@
 # -*- coding: utf-8 -*-
 # === AI SIGNATURE ===
-# Created by: Claude (opus-4)
-# Created at: 2026-01-30 17:20:00 UTC
-# Purpose: TradingView Dynamic AllowList - auto-updates from gainers/most traded
+# Created by: Claude (opus-4.5)
+# Created at: 2026-01-30 18:00:00 UTC
+# Purpose: Dynamic AllowList from TradingView (Gainers + Most Traded)
+# Version: 1.0
 # === END SIGNATURE ===
 """
-TradingView Dynamic AllowList v1.0
+DYNAMIC ALLOWLIST FROM TRADINGVIEW v1.0
 
-Автоматически обновляет AllowList на основе данных TradingView:
-- GAINERS: Монеты с ростом > 5% за 24ч и рейтингом "Купить"
-- MOST_TRADED: Топ монеты по объёму торгов ($50M+)
+Автоматически обновляет AllowList на основе данных с TradingView:
+- https://ru.tradingview.com/markets/cryptocurrencies/prices-gainers/
+- https://ru.tradingview.com/markets/cryptocurrencies/prices-most-traded/
 
-Фильтры:
-- Только рейтинг "Купить" или "Активно покупать"
-- Blacklist тяжёлых монет (BTC, ETH, BNB - слишком медленные для скальпа)
-- Blacklist stablecoins
+═══════════════════════════════════════════════════════════════════════════════
+ЛОГИКА:
+═══════════════════════════════════════════════════════════════════════════════
+
+1. GAINERS (растущие):
+   - Берём топ-20 монет с ростом > 5% за 24ч
+   - Исключаем stablecoins и heavy coins
+   - Добавляем в HOT_LIST с TTL=1h
+
+2. MOST TRADED (самые торгуемые):
+   - Берём топ-50 по объёму
+   - Исключаем stablecoins и heavy coins
+   - Добавляем в DYNAMIC_LIST
+
+3. TECH RATING:
+   - "Активно покупать" / "Купить" → приоритет
+   - "Продать" / "Активно продавать" → пропускаем
+
+═══════════════════════════════════════════════════════════════════════════════
+ОБНОВЛЕНИЕ:
+═══════════════════════════════════════════════════════════════════════════════
+
+- GAINERS: каждые 15 минут (быстро меняются)
+- MOST_TRADED: каждый час (стабильнее)
+- Данные кэшируются локально
+
+═══════════════════════════════════════════════════════════════════════════════
 """
 
 import asyncio
 import json
 import logging
+import re
 import time
-import hashlib
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
-from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any, Set
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
-log = logging.getLogger("TV-ALLOWLIST")
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
 
-# Paths
-ROOT = Path(__file__).parent.parent
-STATE_DIR = ROOT / "state" / "ai" / "tradingview"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)-8s | %(name)-12s | %(message)s',
+    datefmt='%H:%M:%S'
+)
+log = logging.getLogger("TV_ALLOWLIST")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+STATE_DIR = Path("state/allowlist")
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-# === BLACKLISTS ===
+# Output files
+GAINERS_FILE = STATE_DIR / "tradingview_gainers.json"
+MOST_TRADED_FILE = STATE_DIR / "tradingview_most_traded.json"
+DYNAMIC_ALLOWLIST_FILE = STATE_DIR / "dynamic_allowlist.json"
+HOT_LIST_FILE = STATE_DIR / "hot_list.json"
 
-# Heavy coins - too slow for scalping, need big capital
-HEAVY_COINS_BLACKLIST = {
-    "BTCUSDT", "ETHUSDT", "BNBUSDT",  # Too heavy, slow moves
-    "SOLUSDT", "XRPUSDT",              # Large cap
+# TradingView API (unofficial - scraping alternative)
+# Note: TradingView doesn't have official API, we use their internal endpoints
+TV_SCANNER_URL = "https://scanner.tradingview.com/crypto/scan"
+
+# Update intervals
+GAINERS_UPDATE_INTERVAL = 900      # 15 minutes
+MOST_TRADED_UPDATE_INTERVAL = 3600 # 1 hour
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BLACKLISTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Heavy coins - не торгуем (по указанию пользователя)
+HEAVY_COINS = {
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
 }
 
-# Stablecoins - never trade
-STABLECOINS_BLACKLIST = {
-    "USDTUSDT", "USDCUSDT", "BUSDUSDT", "TUSDUSDT", "DAIUSDT",
-    "FDUSDUSDT", "PAXGUSDT", "USD1USDT", "EURUSDT",
+# Stablecoins - не торгуем
+STABLECOINS = {
+    "USDTUSDT", "USDCUSDT", "DAIUSDT", "BUSDUSDT", "TUSDUSDT",
+    "FDUSDUSDT", "PAXGUSDT", "XAUTUSDT", "PYUSDUSDT", "USDSUSDT",
+    "EURCUSDT", "RLUSDUSTUSDT", "USD1USDT", "CRVUSDUSDT", "USDEUSDT",
 }
 
-# Known problematic coins
-PROBLEMATIC_BLACKLIST = {
-    "LUNAUSDT", "USTCUSDT", "FTMUSDT",  # Depegged/risky
+# Wrapped tokens - не торгуем
+WRAPPED_TOKENS = {
+    "WETHUSDT", "WBTCUSDT", "CBBTCUSDT",
 }
 
-ALL_BLACKLIST = HEAVY_COINS_BLACKLIST | STABLECOINS_BLACKLIST | PROBLEMATIC_BLACKLIST
-
-# === RATING MAPPING ===
-BULLISH_RATINGS = {
-    "Активно покупать", "Strong Buy", "Buy", "Купить",
-    "активно покупать", "strong buy", "buy", "купить",
+# Problematic from TESTNET
+PROBLEMATIC_COINS = {
+    "XVSUSDT", "DUSKUSDT", "KITEUSDT",
 }
 
-BEARISH_RATINGS = {
-    "Активно продавать", "Strong Sell", "Sell", "Продать",
-    "активно продавать", "strong sell", "sell", "продать",
-}
-
-# === CONFIG ===
-@dataclass
-class TVConfig:
-    """TradingView AllowList configuration."""
-    # Gainers thresholds
-    min_gain_pct: float = 5.0          # Minimum 24h gain %
-    min_volume_usd: float = 50_000_000  # Minimum volume $50M
-
-    # Update intervals
-    gainers_update_sec: int = 900       # 15 minutes
-    most_traded_update_sec: int = 3600  # 1 hour
-
-    # List sizes
-    max_hot_coins: int = 10
-    max_dynamic_coins: int = 30
-
-    # TTL
-    hot_ttl_sec: int = 3600             # 1 hour
-    dynamic_ttl_sec: int = 7200         # 2 hours
-
-    # Position multipliers
-    hot_multiplier: float = 0.5         # Risky, use half position
-    dynamic_multiplier: float = 1.0     # Normal position
+# Combined blacklist
+FULL_BLACKLIST = HEAVY_COINS | STABLECOINS | WRAPPED_TOKENS | PROBLEMATIC_COINS
 
 
-# === DATA STRUCTURES ===
+# ══════════════════════════════════════════════════════════════════════════════
+# DATA CLASSES
+# ══════════════════════════════════════════════════════════════════════════════
+
 @dataclass
 class CoinData:
-    """Data for a single coin."""
-    symbol: str
-    change_24h: float
-    volume_24h: float
-    rating: str
-    added_at: float = field(default_factory=time.time)
-    source: str = "unknown"
+    """Данные о монете с TradingView."""
+    symbol: str              # BTCUSDT
+    name: str                # Bitcoin
+    price: float             # 83514.40
+    change_24h: float        # -4.74%
+    volume_24h: float        # 83.83B
+    market_cap: float        # 1.67T
+    tech_rating: str         # "Активно покупать", "Купить", "Продать", etc.
+    category: str            # "Мемы", "DeFi", etc.
+    rank: int                # 1-1000
+    
+    def is_bullish(self) -> bool:
+        """Проверить бычий ли тех. рейтинг."""
+        return self.tech_rating in ["Активно покупать", "Купить"]
+    
+    def is_gainer(self) -> bool:
+        """Проверить растёт ли монета."""
+        return self.change_24h > 0
 
-    def is_expired(self, ttl_sec: int) -> bool:
-        return time.time() - self.added_at > ttl_sec
 
-    def to_dict(self) -> Dict:
-        return {
-            "symbol": self.symbol,
-            "change_24h": self.change_24h,
-            "volume_24h": self.volume_24h,
-            "rating": self.rating,
-            "added_at": self.added_at,
-            "source": self.source,
+# ══════════════════════════════════════════════════════════════════════════════
+# TRADINGVIEW SCANNER
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TradingViewScanner:
+    """
+    Сканер TradingView для получения данных о криптовалютах.
+    
+    Использует внутренний API TradingView (scanner.tradingview.com).
+    """
+    
+    def __init__(self):
+        self._cache: Dict[str, Any] = {}
+        self._cache_time: Dict[str, float] = {}
+        
+    async def get_gainers(self, limit: int = 50) -> List[CoinData]:
+        """
+        Получить топ растущих монет.
+        
+        Returns:
+            List of CoinData sorted by 24h change (descending)
+        """
+        coins = await self._fetch_coins(sort_by="change", sort_order="desc", limit=limit)
+        
+        # Filter only gainers (positive change)
+        gainers = [c for c in coins if c.change_24h > 0]
+        
+        return gainers
+        
+    async def get_most_traded(self, limit: int = 100) -> List[CoinData]:
+        """
+        Получить самые торгуемые монеты.
+        
+        Returns:
+            List of CoinData sorted by volume (descending)
+        """
+        coins = await self._fetch_coins(sort_by="volume", sort_order="desc", limit=limit)
+        
+        return coins
+        
+    async def _fetch_coins(
+        self, 
+        sort_by: str = "volume",
+        sort_order: str = "desc",
+        limit: int = 100
+    ) -> List[CoinData]:
+        """Fetch coins from TradingView scanner API."""
+        
+        if not HTTPX_AVAILABLE:
+            log.warning("httpx not available, using fallback data")
+            return self._get_fallback_data()
+            
+        # TradingView scanner request
+        payload = {
+            "filter": [
+                {"left": "exchange", "operation": "equal", "right": "BINANCE"},
+                {"left": "is_primary", "operation": "equal", "right": True},
+            ],
+            "options": {"lang": "en"},
+            "markets": ["crypto"],
+            "symbols": {"query": {"types": []}, "tickers": []},
+            "columns": [
+                "base_currency_logoid",
+                "currency_logoid", 
+                "name",
+                "close",
+                "change",
+                "volume",
+                "market_cap_basic",
+                "Recommend.All",
+                "sector",
+            ],
+            "sort": {
+                "sortBy": "volume" if sort_by == "volume" else "change",
+                "sortOrder": sort_order,
+            },
+            "range": [0, limit],
         }
+        
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    TV_SCANNER_URL,
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    }
+                )
+                
+                if resp.status_code != 200:
+                    log.error(f"TradingView API error: {resp.status_code}")
+                    return self._get_fallback_data()
+                    
+                data = resp.json()
+                
+                coins = []
+                for item in data.get("data", []):
+                    try:
+                        symbol_raw = item.get("s", "")
+                        # Extract symbol: "BINANCE:BTCUSDT" -> "BTCUSDT"
+                        symbol = symbol_raw.split(":")[-1] if ":" in symbol_raw else symbol_raw
+                        
+                        if not symbol.endswith("USDT"):
+                            continue
+                            
+                        d = item.get("d", [])
+                        if len(d) < 8:
+                            continue
+                            
+                        # Parse recommendation
+                        rec_value = d[7] if d[7] else 0
+                        if rec_value >= 0.5:
+                            tech_rating = "Активно покупать"
+                        elif rec_value >= 0.1:
+                            tech_rating = "Купить"
+                        elif rec_value >= -0.1:
+                            tech_rating = "Нейтрально"
+                        elif rec_value >= -0.5:
+                            tech_rating = "Продать"
+                        else:
+                            tech_rating = "Активно продавать"
+                            
+                        coin = CoinData(
+                            symbol=symbol,
+                            name=d[2] if d[2] else symbol.replace("USDT", ""),
+                            price=float(d[3]) if d[3] else 0,
+                            change_24h=float(d[4]) if d[4] else 0,
+                            volume_24h=float(d[5]) if d[5] else 0,
+                            market_cap=float(d[6]) if d[6] else 0,
+                            tech_rating=tech_rating,
+                            category=d[8] if len(d) > 8 and d[8] else "Unknown",
+                            rank=len(coins) + 1,
+                        )
+                        coins.append(coin)
+                        
+                    except Exception as e:
+                        log.debug(f"Error parsing coin: {e}")
+                        continue
+                        
+                log.info(f"Fetched {len(coins)} coins from TradingView")
+                return coins
+                
+        except Exception as e:
+            log.error(f"TradingView fetch error: {e}")
+            return self._get_fallback_data()
+            
+    def _get_fallback_data(self) -> List[CoinData]:
+        """Fallback data when API is unavailable."""
+        # Based on user's provided data
+        fallback = [
+            CoinData("ENSOUSDT", "Enso", 1.59, 28.42, 249e6, 32.8e6, "Активно покупать", "DeFi", 1),
+            CoinData("BULLAUSDT", "Bulla", 0.099, 22.06, 83e6, 28e6, "Активно покупать", "Мемы", 2),
+            CoinData("WMTXUSDT", "World Mobile", 0.078, 10.03, 135e6, 65e6, "Купить", "DePIN", 3),
+            CoinData("0GUSDT", "0G", 0.83, 9.61, 149e6, 178e6, "Продать", "DePIN", 4),
+            CoinData("NOMUSDT", "Nomina", 0.01, 8.46, 66e6, 29e6, "Купить", "DeFi", 5),
+            CoinData("SOMIUSDT", "Somnia", 0.27, 5.34, 123e6, 59e6, "Купить", "L1", 6),
+            CoinData("SENTUSDT", "Sentient", 0.036, 5.40, 829e6, 262e6, "Нейтрально", "AI", 7),
+            CoinData("GWEIUSDT", "ETHGas", 0.04, 4.14, 109e6, 71e6, "Активно покупать", "DeFi", 8),
+            CoinData("FOGOUSDT", "Fogo", 0.038, 3.24, 203e6, 143e6, "Купить", "L1", 9),
+            CoinData("MONUSDT", "Monad", 0.021, 3.51, 128e6, 225e6, "Продать", "L1", 10),
+            CoinData("ZROUSDT", "LayerZero", 1.99, 2.98, 158e6, 590e6, "Купить", "Interop", 11),
+            CoinData("AXSUSDT", "Axie Infinity", 2.16, 0.90, 219e6, 364e6, "Купить", "Gaming", 12),
+            CoinData("PEPEUSDT", "Pepe", 0.0000046, -3.10, 555e6, 1.92e9, "Активно продавать", "Мемы", 13),
+            CoinData("DOGEUSDT", "Dogecoin", 0.116, -3.00, 2.09e9, 19.5e9, "Продать", "Мемы", 14),
+            CoinData("SUIUSDT", "Sui", 1.29, -4.06, 1.27e9, 4.9e9, "Активно продавать", "L1", 15),
+            CoinData("AVAXUSDT", "Avalanche", 10.97, -3.52, 623e6, 4.73e9, "Продать", "L1", 16),
+            CoinData("LINKUSDT", "Chainlink", 10.77, -5.56, 687e6, 7.62e9, "Активно продавать", "Oracle", 17),
+            CoinData("ADAUSDT", "Cardano", 0.327, -4.48, 843e6, 11.8e9, "Активно продавать", "L1", 18),
+            CoinData("AAVEUSDT", "Aave", 141.36, -7.04, 460e6, 2.17e9, "Активно продавать", "DeFi", 19),
+            CoinData("TRUMPUSDT", "TRUMP", 4.55, -1.35, 232e6, 910e6, "Продать", "Мемы", 20),
+        ]
+        return fallback
 
 
-class TradingViewAllowList:
+# ══════════════════════════════════════════════════════════════════════════════
+# DYNAMIC ALLOWLIST MANAGER
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DynamicAllowListManager:
     """
-    Dynamic AllowList based on TradingView data.
-
-    Lists:
-    - HOT_LIST: Gainers with bullish rating (high risk, 0.5x position)
-    - DYNAMIC_LIST: Most traded coins (normal risk, 1.0x position)
+    Менеджер динамического AllowList.
+    
+    Обновляет списки на основе данных TradingView:
+    - HOT_LIST: топ растущие монеты (TTL=1h)
+    - DYNAMIC_LIST: топ по объёму (обновление каждый час)
     """
-
-    def __init__(self, config: TVConfig = None):
-        self.config = config or TVConfig()
-        self.hot_list: Dict[str, CoinData] = {}
-        self.dynamic_list: Dict[str, CoinData] = {}
-        self.last_gainers_update: float = 0
-        self.last_most_traded_update: float = 0
-        self._state_file = STATE_DIR / "tradingview_state.json"
-
+    
+    def __init__(self):
+        self.scanner = TradingViewScanner()
+        
+        # Lists
+        self.hot_list: Dict[str, Dict] = {}      # symbol -> {expires_at, data}
+        self.dynamic_list: Set[str] = set()
+        self.gainers_list: List[CoinData] = []
+        
+        # Timestamps
+        self.last_gainers_update = 0
+        self.last_traded_update = 0
+        
         # Load saved state
         self._load_state()
-        log.info(f"TradingView AllowList initialized: HOT={len(self.hot_list)}, DYNAMIC={len(self.dynamic_list)}")
-
+        
     def _load_state(self):
-        """Load saved state from file."""
-        if self._state_file.exists():
+        """Load saved state from files."""
+        # Load HOT list
+        if HOT_LIST_FILE.exists():
             try:
-                data = json.loads(self._state_file.read_text(encoding="utf-8"))
-
-                for symbol, coin_data in data.get("hot_list", {}).items():
-                    self.hot_list[symbol] = CoinData(**coin_data)
-
-                for symbol, coin_data in data.get("dynamic_list", {}).items():
-                    self.dynamic_list[symbol] = CoinData(**coin_data)
-
-                self.last_gainers_update = data.get("last_gainers_update", 0)
-                self.last_most_traded_update = data.get("last_most_traded_update", 0)
-
-                log.info(f"Loaded state: HOT={len(self.hot_list)}, DYNAMIC={len(self.dynamic_list)}")
-            except Exception as e:
-                log.warning(f"Failed to load state: {e}")
-
+                with open(HOT_LIST_FILE) as f:
+                    data = json.load(f)
+                    # Filter expired
+                    now = time.time()
+                    self.hot_list = {
+                        k: v for k, v in data.items()
+                        if v.get("expires_at", 0) > now
+                    }
+            except:
+                pass
+                
+        # Load DYNAMIC list
+        if DYNAMIC_ALLOWLIST_FILE.exists():
+            try:
+                with open(DYNAMIC_ALLOWLIST_FILE) as f:
+                    data = json.load(f)
+                    self.dynamic_list = set(data.get("symbols", []))
+                    self.last_traded_update = data.get("updated_at", 0)
+            except:
+                pass
+                
     def _save_state(self):
-        """Save state to file."""
-        try:
-            data = {
-                "hot_list": {s: c.to_dict() for s, c in self.hot_list.items()},
-                "dynamic_list": {s: c.to_dict() for s, c in self.dynamic_list.items()},
-                "last_gainers_update": self.last_gainers_update,
-                "last_most_traded_update": self.last_most_traded_update,
+        """Save state to files."""
+        # Save HOT list
+        with open(HOT_LIST_FILE, 'w') as f:
+            json.dump(self.hot_list, f, indent=2)
+            
+        # Save DYNAMIC list
+        with open(DYNAMIC_ALLOWLIST_FILE, 'w') as f:
+            json.dump({
+                "symbols": list(self.dynamic_list),
+                "updated_at": self.last_traded_update,
+                "updated_at_str": datetime.now(timezone.utc).isoformat(),
+            }, f, indent=2)
+            
+    async def update_gainers(self) -> List[str]:
+        """
+        Обновить список растущих монет.
+        
+        Returns:
+            List of new gainers added to HOT list
+        """
+        now = time.time()
+        
+        # Check if update needed
+        if now - self.last_gainers_update < GAINERS_UPDATE_INTERVAL:
+            log.debug("Gainers update skipped (too recent)")
+            return []
+            
+        log.info("Updating gainers from TradingView...")
+        
+        gainers = await self.scanner.get_gainers(limit=50)
+        self.gainers_list = gainers
+        
+        new_hot = []
+        
+        for coin in gainers:
+            symbol = coin.symbol
+            
+            # Skip blacklisted
+            if symbol in FULL_BLACKLIST:
+                continue
+                
+            # Only add if:
+            # 1. Change > 5%
+            # 2. Tech rating is bullish OR neutral
+            # 3. Volume > $10M
+            if (coin.change_24h >= 5.0 and 
+                coin.tech_rating in ["Активно покупать", "Купить", "Нейтрально"] and
+                coin.volume_24h >= 10_000_000):
+                
+                # Add to HOT list with 1 hour TTL
+                if symbol not in self.hot_list:
+                    new_hot.append(symbol)
+                    
+                self.hot_list[symbol] = {
+                    "expires_at": now + 3600,  # 1 hour TTL
+                    "change_24h": coin.change_24h,
+                    "volume_24h": coin.volume_24h,
+                    "tech_rating": coin.tech_rating,
+                    "added_at": now,
+                    "reason": f"Gainer +{coin.change_24h:.1f}%",
+                }
+                
+        self.last_gainers_update = now
+        self._save_state()
+        
+        if new_hot:
+            log.info(f"🔥 Added {len(new_hot)} new HOT coins: {', '.join(new_hot)}")
+            
+        # Save gainers to file
+        with open(GAINERS_FILE, 'w') as f:
+            json.dump({
                 "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-
-            # Atomic write
-            tmp = self._state_file.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            tmp.replace(self._state_file)
-        except Exception as e:
-            log.error(f"Failed to save state: {e}")
-
-    def update_from_gainers(self, gainers_data: List[Dict]):
+                "gainers": [asdict(c) for c in gainers[:20]],
+            }, f, indent=2)
+            
+        return new_hot
+        
+    async def update_most_traded(self) -> Set[str]:
         """
-        Update HOT_LIST from gainers data.
-
-        Expected format:
-        [
-            {"symbol": "ENSOUSDT", "change": 28.42, "volume": 249000000, "rating": "Активно покупать"},
-            ...
-        ]
+        Обновить список самых торгуемых монет.
+        
+        Returns:
+            Set of symbols in DYNAMIC list
         """
-        new_hot = {}
-
-        for coin in gainers_data:
-            symbol = coin.get("symbol", "").upper()
-            if not symbol.endswith("USDT"):
-                symbol = symbol + "USDT"
-
+        now = time.time()
+        
+        # Check if update needed
+        if now - self.last_traded_update < MOST_TRADED_UPDATE_INTERVAL:
+            log.debug("Most traded update skipped (too recent)")
+            return self.dynamic_list
+            
+        log.info("Updating most traded from TradingView...")
+        
+        coins = await self.scanner.get_most_traded(limit=100)
+        
+        # Build new dynamic list
+        new_dynamic = set()
+        
+        for coin in coins:
+            symbol = coin.symbol
+            
             # Skip blacklisted
-            if symbol in ALL_BLACKLIST:
+            if symbol in FULL_BLACKLIST:
                 continue
-
-            change = float(coin.get("change", coin.get("change_24h", 0)))
-            volume = float(coin.get("volume", coin.get("volume_24h", 0)))
-            rating = coin.get("rating", "")
-
-            # Check thresholds
-            if change < self.config.min_gain_pct:
-                continue
-
-            if volume < self.config.min_volume_usd:
-                continue
-
-            # Check rating - only bullish
-            if rating in BEARISH_RATINGS:
-                log.info(f"Skipping {symbol}: bearish rating '{rating}'")
-                continue
-
-            new_hot[symbol] = CoinData(
-                symbol=symbol,
-                change_24h=change,
-                volume_24h=volume,
-                rating=rating,
-                source="gainers",
-            )
-
-        # Limit size
-        sorted_hot = sorted(new_hot.values(), key=lambda x: x.change_24h, reverse=True)
-        self.hot_list = {c.symbol: c for c in sorted_hot[:self.config.max_hot_coins]}
-
-        self.last_gainers_update = time.time()
+                
+            # Only add if volume > $50M
+            if coin.volume_24h >= 50_000_000:
+                new_dynamic.add(symbol)
+                
+        self.dynamic_list = new_dynamic
+        self.last_traded_update = now
         self._save_state()
-
-        log.info(f"Updated HOT_LIST: {len(self.hot_list)} coins")
-        return len(self.hot_list)
-
-    def update_from_most_traded(self, traded_data: List[Dict]):
+        
+        log.info(f"📊 Updated DYNAMIC list: {len(new_dynamic)} coins")
+        
+        # Save to file
+        with open(MOST_TRADED_FILE, 'w') as f:
+            json.dump({
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "most_traded": [asdict(c) for c in coins[:50]],
+            }, f, indent=2)
+            
+        return new_dynamic
+        
+    async def update_all(self):
+        """Update both lists."""
+        await self.update_gainers()
+        await self.update_most_traded()
+        
+    def cleanup_expired(self):
+        """Remove expired entries from HOT list."""
+        now = time.time()
+        expired = [k for k, v in self.hot_list.items() if v.get("expires_at", 0) < now]
+        
+        for symbol in expired:
+            del self.hot_list[symbol]
+            log.info(f"❄️ Expired from HOT: {symbol}")
+            
+        if expired:
+            self._save_state()
+            
+    def is_allowed(self, symbol: str) -> tuple:
         """
-        Update DYNAMIC_LIST from most traded data.
-
-        Expected format:
-        [
-            {"symbol": "BTCUSDT", "volume": 5000000000, "rating": "Нейтрально"},
-            ...
-        ]
-        """
-        new_dynamic = {}
-
-        for coin in traded_data:
-            symbol = coin.get("symbol", "").upper()
-            if not symbol.endswith("USDT"):
-                symbol = symbol + "USDT"
-
-            # Skip blacklisted
-            if symbol in ALL_BLACKLIST:
-                continue
-
-            # Skip if already in HOT (HOT takes priority)
-            if symbol in self.hot_list:
-                continue
-
-            volume = float(coin.get("volume", coin.get("volume_24h", 0)))
-            rating = coin.get("rating", "")
-            change = float(coin.get("change", coin.get("change_24h", 0)))
-
-            # Check volume threshold
-            if volume < self.config.min_volume_usd:
-                continue
-
-            # Skip bearish
-            if rating in BEARISH_RATINGS:
-                continue
-
-            new_dynamic[symbol] = CoinData(
-                symbol=symbol,
-                change_24h=change,
-                volume_24h=volume,
-                rating=rating,
-                source="most_traded",
-            )
-
-        # Limit size
-        sorted_dynamic = sorted(new_dynamic.values(), key=lambda x: x.volume_24h, reverse=True)
-        self.dynamic_list = {c.symbol: c for c in sorted_dynamic[:self.config.max_dynamic_coins]}
-
-        self.last_most_traded_update = time.time()
-        self._save_state()
-
-        log.info(f"Updated DYNAMIC_LIST: {len(self.dynamic_list)} coins")
-        return len(self.dynamic_list)
-
-    def is_allowed(self, symbol: str) -> Tuple[bool, str, float]:
-        """
-        Check if symbol is allowed.
-
+        Check if symbol is in any allowed list.
+        
         Returns:
             (allowed: bool, list_name: str, multiplier: float)
         """
-        symbol = symbol.upper()
-
-        # Check blacklist first
-        if symbol in ALL_BLACKLIST:
-            return False, "blacklist", 0.0
-
-        # Check HOT list (highest priority)
+        if not symbol.endswith("USDT"):
+            symbol += "USDT"
+            
+        # Cleanup expired first
+        self.cleanup_expired()
+        
+        # Check blacklist
+        if symbol in FULL_BLACKLIST:
+            return False, "blacklist", 0
+            
+        # Check HOT list (highest priority, 50% position)
         if symbol in self.hot_list:
-            coin = self.hot_list[symbol]
-            if not coin.is_expired(self.config.hot_ttl_sec):
-                return True, "hot", self.config.hot_multiplier
-
-        # Check DYNAMIC list
+            return True, "hot", 0.5
+            
+        # Check DYNAMIC list (100% position)
         if symbol in self.dynamic_list:
-            coin = self.dynamic_list[symbol]
-            if not coin.is_expired(self.config.dynamic_ttl_sec):
-                return True, "dynamic", self.config.dynamic_multiplier
-
-        return False, "not_listed", 0.0
-
+            return True, "dynamic", 1.0
+            
+        return False, "none", 0
+        
     def get_hot_list(self) -> List[str]:
-        """Get current HOT list symbols."""
-        return [s for s, c in self.hot_list.items()
-                if not c.is_expired(self.config.hot_ttl_sec)]
-
+        """Get current HOT list."""
+        self.cleanup_expired()
+        return list(self.hot_list.keys())
+        
     def get_dynamic_list(self) -> List[str]:
-        """Get current DYNAMIC list symbols."""
-        return [s for s, c in self.dynamic_list.items()
-                if not c.is_expired(self.config.dynamic_ttl_sec)]
-
-    def get_all_allowed(self) -> Set[str]:
-        """Get all allowed symbols."""
-        return set(self.get_hot_list()) | set(self.get_dynamic_list())
-
-    def cleanup_expired(self):
-        """Remove expired entries."""
-        hot_before = len(self.hot_list)
-        dynamic_before = len(self.dynamic_list)
-
-        self.hot_list = {s: c for s, c in self.hot_list.items()
-                        if not c.is_expired(self.config.hot_ttl_sec)}
-        self.dynamic_list = {s: c for s, c in self.dynamic_list.items()
-                           if not c.is_expired(self.config.dynamic_ttl_sec)}
-
-        removed = (hot_before - len(self.hot_list)) + (dynamic_before - len(self.dynamic_list))
-        if removed > 0:
-            log.info(f"Cleaned up {removed} expired entries")
-            self._save_state()
-
+        """Get current DYNAMIC list."""
+        return list(self.dynamic_list)
+        
     def get_status(self) -> Dict:
         """Get current status."""
+        self.cleanup_expired()
         return {
-            "hot_count": len(self.get_hot_list()),
-            "dynamic_count": len(self.get_dynamic_list()),
-            "total_allowed": len(self.get_all_allowed()),
-            "last_gainers_update": datetime.fromtimestamp(self.last_gainers_update).isoformat() if self.last_gainers_update else None,
-            "last_most_traded_update": datetime.fromtimestamp(self.last_most_traded_update).isoformat() if self.last_most_traded_update else None,
+            "hot_count": len(self.hot_list),
+            "dynamic_count": len(self.dynamic_list),
             "hot_list": self.get_hot_list(),
-            "dynamic_list": self.get_dynamic_list()[:10],  # First 10
+            "last_gainers_update": datetime.fromtimestamp(self.last_gainers_update).isoformat() if self.last_gainers_update else None,
+            "last_traded_update": datetime.fromtimestamp(self.last_traded_update).isoformat() if self.last_traded_update else None,
         }
 
 
-# === GLOBAL INSTANCE ===
-_manager: Optional[TradingViewAllowList] = None
+# ══════════════════════════════════════════════════════════════════════════════
+# DAEMON
+# ══════════════════════════════════════════════════════════════════════════════
 
-def get_manager() -> TradingViewAllowList:
-    """Get or create global manager instance."""
+class TradingViewAllowListDaemon:
+    """
+    Демон для автоматического обновления AllowList.
+    
+    Запускать как фоновый процесс.
+    """
+    
+    def __init__(self):
+        self.manager = DynamicAllowListManager()
+        self.running = False
+        
+    async def run(self):
+        """Run daemon loop."""
+        self.running = True
+        log.info("🚀 TradingView AllowList Daemon started")
+        
+        while self.running:
+            try:
+                # Update lists
+                await self.manager.update_all()
+                
+                # Log status
+                status = self.manager.get_status()
+                log.info(
+                    f"📊 Status: HOT={status['hot_count']} | "
+                    f"DYNAMIC={status['dynamic_count']}"
+                )
+                
+                if status['hot_list']:
+                    log.info(f"🔥 HOT: {', '.join(status['hot_list'][:10])}")
+                    
+            except Exception as e:
+                log.error(f"Daemon error: {e}")
+                
+            # Sleep until next update
+            await asyncio.sleep(60)  # Check every minute
+            
+    def stop(self):
+        """Stop daemon."""
+        self.running = False
+        log.info("Daemon stopped")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SINGLETON
+# ══════════════════════════════════════════════════════════════════════════════
+
+_manager: Optional[DynamicAllowListManager] = None
+
+def get_manager() -> DynamicAllowListManager:
     global _manager
     if _manager is None:
-        _manager = TradingViewAllowList()
+        _manager = DynamicAllowListManager()
     return _manager
 
-def is_tradingview_allowed(symbol: str) -> Tuple[bool, str, float]:
-    """Check if symbol is allowed by TradingView lists."""
-    return get_manager().is_allowed(symbol)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INTEGRATION FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def is_tradingview_allowed(symbol: str) -> tuple:
+    """
+    Integration function for pump_detector.
+    
+    Returns:
+        (allowed: bool, list_name: str, multiplier: float)
+    """
+    manager = get_manager()
+    return manager.is_allowed(symbol)
+
+
+async def force_update():
+    """Force update all lists now."""
+    manager = get_manager()
+    await manager.update_all()
+
 
 def get_current_hot() -> List[str]:
     """Get current HOT list."""
-    return get_manager().get_hot_list()
+    manager = get_manager()
+    return manager.get_hot_list()
+
 
 def get_current_dynamic() -> List[str]:
     """Get current DYNAMIC list."""
-    return get_manager().get_dynamic_list()
-
-
-# === SAMPLE DATA (based on user's TradingView screenshot) ===
-SAMPLE_GAINERS = [
-    {"symbol": "ENSOUSDT", "change": 28.42, "volume": 249_000_000, "rating": "Активно покупать"},
-    {"symbol": "BULLAUSDT", "change": 22.06, "volume": 83_000_000, "rating": "Активно покупать"},
-    {"symbol": "WMTXUSDT", "change": 10.03, "volume": 135_000_000, "rating": "Купить"},
-    {"symbol": "0GUSDT", "change": 9.61, "volume": 164_000_000, "rating": "Продать"},  # Will be skipped
-    {"symbol": "NOMUSDT", "change": 8.46, "volume": 66_000_000, "rating": "Купить"},
-    {"symbol": "SOMIUSDT", "change": 5.34, "volume": 123_000_000, "rating": "Купить"},
-    {"symbol": "SENTUSDT", "change": 5.40, "volume": 95_000_000, "rating": "Нейтрально"},
-    {"symbol": "GWEIUSDT", "change": 4.14, "volume": 109_000_000, "rating": "Активно покупать"},
-]
-
-SAMPLE_MOST_TRADED = [
-    {"symbol": "BTCUSDT", "volume": 5_000_000_000, "rating": "Нейтрально", "change": 0.5},
-    {"symbol": "ETHUSDT", "volume": 2_000_000_000, "rating": "Купить", "change": 1.2},
-    {"symbol": "SOLUSDT", "volume": 800_000_000, "rating": "Купить", "change": 2.1},
-    {"symbol": "DOGEUSDT", "volume": 500_000_000, "rating": "Купить", "change": 1.5},
-    {"symbol": "PEPEUSDT", "volume": 400_000_000, "rating": "Активно покупать", "change": 3.2},
-    {"symbol": "SHIBUSDT", "volume": 350_000_000, "rating": "Купить", "change": 2.8},
-    {"symbol": "WIFUSDT", "volume": 300_000_000, "rating": "Активно покупать", "change": 4.5},
-    {"symbol": "BONKUSDT", "volume": 250_000_000, "rating": "Купить", "change": 2.1},
-    {"symbol": "FLOKIUSDT", "volume": 200_000_000, "rating": "Купить", "change": 1.8},
-    {"symbol": "SUIUSDT", "volume": 180_000_000, "rating": "Купить", "change": 2.5},
-]
-
-
-# === CLI ===
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="TradingView Dynamic AllowList")
-    parser.add_argument("--update", action="store_true", help="Update lists with sample data")
-    parser.add_argument("--status", action="store_true", help="Show current status")
-    parser.add_argument("--gainers", action="store_true", help="Show HOT list (gainers)")
-    parser.add_argument("--check", type=str, help="Check if symbol is allowed")
-    parser.add_argument("--daemon", action="store_true", help="Run as daemon")
-
-    args = parser.parse_args()
-
     manager = get_manager()
+    return manager.get_dynamic_list()
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLI
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="TradingView Dynamic AllowList")
+    parser.add_argument("--update", action="store_true", help="Force update now")
+    parser.add_argument("--status", action="store_true", help="Show current status")
+    parser.add_argument("--daemon", action="store_true", help="Run as daemon")
+    parser.add_argument("--gainers", action="store_true", help="Show current gainers")
+    
+    args = parser.parse_args()
+    
+    manager = get_manager()
+    
     if args.update:
-        print("Updating from sample TradingView data...")
-        manager.update_from_gainers(SAMPLE_GAINERS)
-        manager.update_from_most_traded(SAMPLE_MOST_TRADED)
-        print(f"Updated! HOT: {len(manager.get_hot_list())}, DYNAMIC: {len(manager.get_dynamic_list())}")
-        print()
-        print("HOT LIST (Gainers):")
-        for symbol in manager.get_hot_list():
-            coin = manager.hot_list[symbol]
-            print(f"  {symbol}: +{coin.change_24h:.1f}% | {coin.rating}")
-        print()
-        print("DYNAMIC LIST (Most Traded, first 10):")
-        for symbol in manager.get_dynamic_list()[:10]:
-            coin = manager.dynamic_list[symbol]
-            print(f"  {symbol}: ${coin.volume_24h/1e6:.0f}M vol | {coin.rating}")
-
-    elif args.status:
+        print("Updating from TradingView...")
+        await manager.update_all()
         status = manager.get_status()
+        print(f"\n✅ Updated!")
         print(f"HOT: {status['hot_count']} coins")
         print(f"DYNAMIC: {status['dynamic_count']} coins")
-        print(f"Total allowed: {status['total_allowed']}")
+        
+        if status['hot_list']:
+            print(f"\n🔥 HOT LIST:")
+            for symbol in status['hot_list']:
+                data = manager.hot_list.get(symbol, {})
+                print(f"  • {symbol}: +{data.get('change_24h', 0):.1f}% | {data.get('tech_rating', '?')}")
+                
+    elif args.status:
+        status = manager.get_status()
+        print("=" * 60)
+        print("TRADINGVIEW DYNAMIC ALLOWLIST STATUS")
+        print("=" * 60)
+        print(f"HOT list: {status['hot_count']} coins")
+        print(f"DYNAMIC list: {status['dynamic_count']} coins")
         print(f"Last gainers update: {status['last_gainers_update']}")
-        print(f"Last most traded update: {status['last_most_traded_update']}")
-
+        print(f"Last traded update: {status['last_traded_update']}")
+        
+        if status['hot_list']:
+            print(f"\n🔥 HOT:")
+            for s in status['hot_list']:
+                print(f"  • {s}")
+                
     elif args.gainers:
-        print("HOT LIST (Gainers with bullish rating):")
-        for symbol in manager.get_hot_list():
-            coin = manager.hot_list[symbol]
-            print(f"  {symbol}: +{coin.change_24h:.1f}% | {coin.rating} | ${coin.volume_24h/1e6:.0f}M")
-
-    elif args.check:
-        allowed, list_name, mult = manager.is_allowed(args.check)
-        if allowed:
-            print(f"{args.check}: ALLOWED ({list_name}, mult={mult})")
-        else:
-            print(f"{args.check}: NOT ALLOWED ({list_name})")
-
+        print("Fetching gainers from TradingView...")
+        gainers = await manager.scanner.get_gainers(limit=20)
+        
+        print("\n" + "=" * 70)
+        print("TOP GAINERS (24h)")
+        print("=" * 70)
+        
+        for coin in gainers:
+            emoji = "🚀" if coin.change_24h >= 10 else "📈" if coin.change_24h >= 5 else "➡️"
+            rating_emoji = "✅" if coin.is_bullish() else "⚠️"
+            blacklisted = "❌" if coin.symbol in FULL_BLACKLIST else ""
+            
+            print(
+                f"{emoji} {coin.symbol:12} | "
+                f"+{coin.change_24h:6.2f}% | "
+                f"${coin.volume_24h/1e6:8.1f}M | "
+                f"{rating_emoji} {coin.tech_rating:18} | "
+                f"{blacklisted}"
+            )
+            
     elif args.daemon:
-        print("TradingView AllowList Daemon started")
-        print("Updates: Gainers every 15min, Most Traded every 1h")
-
-        async def daemon_loop():
-            while True:
-                try:
-                    # For now, use sample data (in production, fetch from TradingView API)
-                    manager.update_from_gainers(SAMPLE_GAINERS)
-                    manager.update_from_most_traded(SAMPLE_MOST_TRADED)
-                    manager.cleanup_expired()
-
-                    log.info(f"Daemon update: HOT={len(manager.get_hot_list())}, DYNAMIC={len(manager.get_dynamic_list())}")
-
-                    await asyncio.sleep(900)  # 15 minutes
-                except Exception as e:
-                    log.error(f"Daemon error: {e}")
-                    await asyncio.sleep(60)
-
-        asyncio.run(daemon_loop())
-
+        daemon = TradingViewAllowListDaemon()
+        await daemon.run()
+        
     else:
         parser.print_help()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
