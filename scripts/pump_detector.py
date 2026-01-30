@@ -2,9 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30 15:45:00 UTC
-# Modified by: Claude (opus-4)
-# Modified at: 2026-01-30 16:05:00 UTC
-# Purpose: Real-time pump detection from Binance WebSocket + AI Predictor v2
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-30 19:30:00 UTC
+# Purpose: Real-time pump detection from Binance WebSocket + AI Predictor v2 + TradingView AllowList
 # === END SIGNATURE ===
 """
 HOPE Pump Detector - Real-time Binance Signal Generator
@@ -94,6 +94,14 @@ try:
 except ImportError as e:
     pass
 
+# === AI v2: TradingView Dynamic AllowList ===
+TV_ALLOWLIST_ENABLED = False
+try:
+    from tradingview_allowlist import is_tradingview_allowed, get_manager
+    TV_ALLOWLIST_ENABLED = True
+except ImportError as e:
+    pass
+
 # Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -106,6 +114,8 @@ if ADAPTIVE_TARGET_ENABLED:
     log.info("[AI v2] Adaptive Target AI: ENABLED")
 if SIGNAL_AGGREGATOR_ENABLED:
     log.info("[AI v2] Signal Aggregator: ENABLED")
+if TV_ALLOWLIST_ENABLED:
+    log.info("[AI v2] TradingView AllowList: ENABLED")
 
 # Configuration
 SIGNALS_DIR = ROOT / "data" / "moonbot_signals"
@@ -426,6 +436,35 @@ class PumpDetector:
             f"buys={signal['buys_per_sec']:.1f}/s | "
             f"delta={signal['delta_pct']:.2f}%"
         )
+
+        # === TRADINGVIEW DYNAMIC ALLOWLIST GATE ===
+        if TV_ALLOWLIST_ENABLED:
+            try:
+                tv_allowed, tv_list, tv_multiplier = is_tradingview_allowed(signal["symbol"])
+
+                if not tv_allowed:
+                    log.info(
+                        f"[TV-GATE] {signal['symbol']} NOT in TradingView lists - SKIP"
+                    )
+                    # Save rejected signal for analysis
+                    if self.save_signals:
+                        signal["tv_rejected"] = True
+                        signal["tv_reason"] = "not_in_allowlist"
+                        await self._save_signal(signal)
+                    return  # Don't process coins not in TradingView lists
+
+                # Add TradingView metadata to signal
+                signal["tv_list"] = tv_list  # "hot" or "dynamic"
+                signal["tv_multiplier"] = tv_multiplier
+                signal["allowlist_source"] = f"tradingview_{tv_list}"
+
+                log.info(
+                    f"[TV-GATE] {signal['symbol']} ALLOWED | "
+                    f"list={tv_list} | multiplier={tv_multiplier}x"
+                )
+            except Exception as e:
+                log.warning(f"TradingView AllowList check error: {e}")
+                # Continue without TV filter on error (fail-open for trading)
 
         # === THREE-LAYER ALLOWLIST: Auto-add to HOT_LIST ===
         if self.allowlist and THREE_LAYER_ENABLED:
