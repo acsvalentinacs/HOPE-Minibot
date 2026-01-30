@@ -1,8 +1,16 @@
 {
   "_meta": {
-    "version": "1.0",
+    "version": "1.1",
     "created": "2026-01-30",
-    "description": "LIVE signal filter rules"
+    "updated": "2026-01-30T21:30:00Z",
+    "description": "LIVE signal filter rules with AI-analyzed allowlist"
+  },
+  "_ai_analysis": {
+    "source": "MoonBot log 2026-01-30 (11:45 - 23:24)",
+    "total_signals_analyzed": 212,
+    "methodology": "Score = Frequency(max 10) + AvgDelta(max 10) + StrategyDiversity(max 10)",
+    "tier1_threshold": 12,
+    "tier2_threshold": 8
   },
   "telegram_min_delta_pct": 10.0,
   "telegram_block_types": ["MICRO", "TEST_ACTIVITY", "SCALP"],
@@ -25,5 +33,43 @@
     "LINKUSDT", "AAVEUSDT", "NEARUSDT",
     "ENSOUSDT", "WLDUSDT", "ZECUSDT",
     "ARBUSDT", "OPUSDT", "APTUSDT"
-  ]
+  ],
+  "ai_recommended_tier1": {
+    "_comment": "AI Analysis: High activity, high delta, multi-strategy confirmed",
+    "symbols": [
+      "FLOWUSDT",
+      "SYNUSDT",
+      "SOMIUSDT",
+      "FTTUSDT",
+      "FIDAUSDT",
+      "ENSOUSDT",
+      "BIFIUSDT"
+    ],
+    "scores": {
+      "FLOWUSDT": {"signals": 37, "avg_delta": 3.1, "max_delta": 9.0, "strategies": 3, "score": 18.0},
+      "SYNUSDT": {"signals": 37, "avg_delta": 3.0, "max_delta": 8.4, "strategies": 3, "score": 17.9},
+      "SOMIUSDT": {"signals": 9, "avg_delta": 3.4, "max_delta": 6.6, "strategies": 4, "score": 15.2},
+      "FTTUSDT": {"signals": 17, "avg_delta": 3.4, "max_delta": 11.1, "strategies": 3, "score": 14.2},
+      "FIDAUSDT": {"signals": 15, "avg_delta": 3.7, "max_delta": 7.0, "strategies": 3, "score": 14.2},
+      "ENSOUSDT": {"signals": 24, "avg_delta": 3.9, "max_delta": 8.7, "strategies": 2, "score": 13.7},
+      "BIFIUSDT": {"signals": 11, "avg_delta": 5.5, "max_delta": 18.6, "strategies": 2, "score": 12.7}
+    }
+  },
+  "ai_recommended_tier2": {
+    "_comment": "AI Analysis: Moderate activity, review before trading",
+    "symbols": [
+      "0GUSDT",
+      "DUSDT",
+      "ZKCUSDT",
+      "INITUSDT",
+      "USTCUSDT",
+      "NOMUSDT",
+      "VANRYUSDT",
+      "MANTAUSDT"
+    ]
+  },
+  "ai_not_recommended": {
+    "_comment": "AI Analysis: Low activity or single strategy only",
+    "symbols": ["SPELLUSDT", "AUCTIONUSDT", "SENTUSDT", "ACTUSDT", "ENAUSDT", "OPENUSDT"]
+  }
 }
