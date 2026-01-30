@@ -2,7 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30 14:55:00 UTC
-# Purpose: Signal Aggregator for Telegram - reduces spam, creates digests
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-30 18:10:00 UTC
+# Purpose: Signal Aggregator for Telegram - ONLY delta >= 10% + ML training log
 # === END SIGNATURE ===
 """
 Signal Aggregator v1.0
@@ -71,10 +73,11 @@ class SignalAggregator:
     - Instant alerts for HOT signals (delta > 3%)
     """
 
-    # === THRESHOLDS ===
-    NOISE_THRESHOLD = 0.3      # Below this = noise, don't send
-    HOT_THRESHOLD = 3.0        # Above this = instant alert
-    DIGEST_INTERVAL = 300      # 5 minutes
+    # === THRESHOLDS (UPDATED: ONLY HOT SIGNALS TO TELEGRAM) ===
+    NOISE_THRESHOLD = 5.0      # Below 5% = noise, don't send to Telegram
+    HOT_THRESHOLD = 10.0       # Only >= 10% goes to Telegram instantly
+    MOONSHOT_THRESHOLD = 25.0  # 25%+ = MOONSHOT (extreme pump)
+    DIGEST_INTERVAL = 3600     # 1 hour (was 5 min)
     DEDUP_WINDOW = 60          # Same symbol within 60s = duplicate
 
     def __init__(self, state_dir: Path = None):
@@ -97,14 +100,18 @@ class SignalAggregator:
             "sent_digest": 0,
         }
 
-        # User preferences (can be loaded from config)
+        # User preferences (UPDATED: delta >= 10% for Telegram)
         self.preferences = {
             "digest_enabled": True,
             "instant_alerts": True,
-            "min_delta": 0.3,
-            "hot_delta": 3.0,
+            "min_delta": 5.0,       # Ignore below 5%
+            "hot_delta": 10.0,      # Only 10%+ goes to Telegram
             "muted": False,
         }
+
+        # ML Training data logging
+        self.ml_log_path = Path("state/ai/signals_training.jsonl")
+        self.ml_log_path.parent.mkdir(parents=True, exist_ok=True)
 
         log.info("SignalAggregator initialized")
 
@@ -160,6 +167,9 @@ class SignalAggregator:
         min_delta = self.preferences.get("min_delta", self.NOISE_THRESHOLD)
         if delta_pct < min_delta:
             self.stats["filtered_noise"] += 1
+            # Log for ML training (NOT SENT - noise)
+            self._log_for_ml_training(symbol, delta_pct, tier, sent=False,
+                                      buys_per_sec=buys_per_sec, confidence=confidence)
             return {
                 "action": "SKIP",
                 "send_now": False,
@@ -195,6 +205,9 @@ class SignalAggregator:
         if delta_pct >= hot_delta and self.preferences.get("instant_alerts", True):
             self.stats["sent_instant"] += 1
             message = self._format_instant_alert(entry)
+            # Log for ML training (SENT)
+            self._log_for_ml_training(symbol, delta_pct, tier, sent=True,
+                                      buys_per_sec=buys_per_sec, confidence=confidence)
             return {
                 "action": "INSTANT",
                 "send_now": True,
@@ -202,8 +215,11 @@ class SignalAggregator:
                 "reason": f"HOT signal (delta={delta_pct:.2f}% >= {hot_delta}%)",
             }
 
-        # Buffer for digest
+        # Buffer for digest (5% <= delta < 10%)
         self.buffer.append(entry)
+        # Log for ML training (NOT SENT - buffered)
+        self._log_for_ml_training(symbol, delta_pct, tier, sent=False,
+                                  buys_per_sec=buys_per_sec, confidence=confidence)
 
         # Check if digest ready
         if self._digest_ready():
@@ -358,7 +374,29 @@ Sent (digest): {s['sent_digest']}
 
 Buffer: {len(self.buffer)} signals
 Muted: {'Yes' if self.preferences['muted'] else 'No'}
+Min delta: {self.preferences['min_delta']}%
+HOT threshold: {self.preferences['hot_delta']}%
 """.strip()
+
+    def _log_for_ml_training(self, symbol: str, delta_pct: float, tier: str,
+                             sent: bool, buys_per_sec: float = 0, confidence: float = 0):
+        """Log ALL signals for ML model training."""
+        import time
+        entry = {
+            "ts": int(time.time()),
+            "symbol": symbol,
+            "delta": round(delta_pct, 4),
+            "tier": tier,
+            "buys_per_sec": round(buys_per_sec, 2),
+            "confidence": round(confidence, 4),
+            "sent": sent,
+            "threshold": self.preferences['hot_delta'],
+        }
+        try:
+            with open(self.ml_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            log.warning(f"ML log write error: {e}")
 
 
 # === GLOBAL INSTANCE ===
