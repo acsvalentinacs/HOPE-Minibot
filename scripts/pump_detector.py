@@ -430,6 +430,25 @@ class PumpDetector:
         """Handle detected pump signal with AI filtering."""
         self.signals_generated += 1
 
+        # ╔═══════════════════════════════════════════════════════════════════╗
+        # ║  HARD KILL: BLOCK ALL SIGNALS WITH delta < 10% OR MICRO/TEST     ║
+        # ║  This is the FIRST check - nothing below 10% goes through!       ║
+        # ╚═══════════════════════════════════════════════════════════════════╝
+        _delta = signal.get("delta_pct", 0)
+        _type = signal.get("signal_type", "")
+        _sym = signal.get("symbol", "")
+
+        # BLOCK: MICRO, TEST_ACTIVITY, SCALP - these are spam
+        if _type in ("MICRO", "TEST_ACTIVITY", "SCALP", "VOLUME_SPIKE"):
+            log.info(f"[HARD-KILL] {_sym} type={_type} - BLOCKED (spam type)")
+            return  # EXIT IMMEDIATELY - NO PROCESSING
+
+        # BLOCK: delta < 10% - not worth trading
+        if _delta < 10.0:
+            log.info(f"[HARD-KILL] {_sym} delta={_delta:.2f}% < 10% - BLOCKED")
+            return  # EXIT IMMEDIATELY - NO PROCESSING
+        # ╚═══════════════════════════════════════════════════════════════════╝
+
         log.info(
             f"🚀 PUMP DETECTED: {signal['symbol']} | "
             f"{signal['signal_type']} | "
