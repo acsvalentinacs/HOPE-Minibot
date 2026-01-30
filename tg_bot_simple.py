@@ -118,6 +118,15 @@ except ImportError:
         "anomaly": "Сканер аномалий",
     }
 
+# Signal Aggregator for digest/hot commands (fail-open)
+SIGNAL_AGGREGATOR_AVAILABLE = False
+try:
+    sys.path.insert(0, str(Path(__file__).parent / "scripts"))
+    from signal_aggregator import get_aggregator, handle_telegram_command
+    SIGNAL_AGGREGATOR_AVAILABLE = True
+except ImportError:
+    pass
+
 THIS_FILE = Path(__file__).resolve()
 if THIS_FILE.parent.name.lower() == "minibot":
     ROOT = THIS_FILE.parents[1]
@@ -1839,6 +1848,76 @@ class HopeMiniBot:
         except Exception as e:
             await self._reply(update, f"❌ Ошибка: {e}\n\nВозможно нет данных для статистики.")
 
+    # === SIGNAL AGGREGATOR COMMANDS (AI v2) ===
+
+    async def cmd_digest(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show current signal digest."""
+        if not await self._guard_admin(update):
+            return
+
+        if not SIGNAL_AGGREGATOR_AVAILABLE:
+            await self._reply(update, "❌ Signal Aggregator не доступен")
+            return
+
+        try:
+            result = await handle_telegram_command("/digest")
+            await self._reply(update, result, parse_mode="Markdown")
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
+    async def cmd_hot(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show only hot signals."""
+        if not await self._guard_admin(update):
+            return
+
+        if not SIGNAL_AGGREGATOR_AVAILABLE:
+            await self._reply(update, "❌ Signal Aggregator не доступен")
+            return
+
+        try:
+            result = await handle_telegram_command("/hot")
+            await self._reply(update, result, parse_mode="Markdown")
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
+    async def cmd_sigstats(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show signal aggregator statistics."""
+        if not await self._guard_admin(update):
+            return
+
+        if not SIGNAL_AGGREGATOR_AVAILABLE:
+            await self._reply(update, "❌ Signal Aggregator не доступен")
+            return
+
+        try:
+            result = await handle_telegram_command("/stats")
+            await self._reply(update, result, parse_mode="Markdown")
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
+    async def cmd_mute(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Toggle mute mode for signals."""
+        if not await self._guard_admin(update):
+            return
+
+        if not SIGNAL_AGGREGATOR_AVAILABLE:
+            await self._reply(update, "❌ Signal Aggregator не доступен")
+            return
+
+        try:
+            result = await handle_telegram_command("/mute")
+            await self._reply(update, result)
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
     # === NEW COMMANDS v2.3.0 (GPT TZ) ===
 
     async def cmd_health(
@@ -3261,6 +3340,192 @@ class HopeMiniBot:
         except Exception as e:
             await self._reply(update, f"❌ {action} error: {type(e).__name__}: {e}")
 
+    # === PROCESS CONTROL COMMANDS (v2.6.0) ===
+
+    async def cmd_processes(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """List all HOPE processes and their status."""
+        try:
+            # Import here to avoid circular imports
+            import sys
+            sys.path.insert(0, str(ROOT / "minibot"))
+            from scripts.hope_process_manager import ProcessManager
+
+            manager = ProcessManager()
+            status = manager.get_status()
+
+            lines = ["<b>HOPE PROCESSES</b>", ""]
+            summary = status.get("summary", {})
+            lines.append(
+                f"Running: {summary.get('running', 0)}/{summary.get('total', 0)} | "
+                f"Stopped: {summary.get('stopped', 0)} | "
+                f"Failed: {summary.get('failed', 0)}"
+            )
+            lines.append("")
+
+            for name, proc in sorted(status.get("processes", {}).items()):
+                if proc.get("running"):
+                    indicator = "[OK]"
+                elif proc.get("status") == "failed":
+                    indicator = "[!!]"
+                else:
+                    indicator = "[--]"
+
+                uptime = proc.get("uptime") or "--:--:--"
+                pid = f"PID {proc.get('pid')}" if proc.get("pid") else "N/A"
+
+                lines.append(f"{indicator} <b>{proc.get('display_name', name)}</b>")
+                lines.append(f"    {uptime} | {pid}")
+
+            lines.append("")
+            lines.append("<i>/start_process, /stop_process, /restart_process</i>")
+
+            await self._reply(update, "\n".join(lines), parse_mode="HTML")
+
+        except Exception as e:
+            self.log.error("cmd_processes error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
+    async def cmd_start_process(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Start a HOPE process: /start_process <name>"""
+        if not context.args:
+            await self._reply(
+                update,
+                "Usage: /start_process <name>\n\n"
+                "Examples:\n"
+                "  /start_process friend_bridge\n"
+                "  /start_process dashboard\n"
+                "  /start_process eye_of_god"
+            )
+            return
+
+        name = context.args[0].lower()
+
+        try:
+            import sys
+            sys.path.insert(0, str(ROOT / "minibot"))
+            from scripts.hope_process_manager import ProcessManager
+
+            manager = ProcessManager()
+            await self._reply(update, f"Starting {name}...")
+
+            success, msg = manager.start_process(name)
+
+            if success:
+                await self._reply(update, f"[OK] {name} started (PID {msg})")
+            else:
+                await self._reply(update, f"[FAIL] {name}: {msg}")
+
+        except Exception as e:
+            self.log.error("cmd_start_process error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
+    async def cmd_stop_process(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Stop a HOPE process: /stop_process <name>"""
+        if not context.args:
+            await self._reply(
+                update,
+                "Usage: /stop_process <name>\n\n"
+                "Examples:\n"
+                "  /stop_process friend_bridge\n"
+                "  /stop_process dashboard"
+            )
+            return
+
+        name = context.args[0].lower()
+
+        try:
+            import sys
+            sys.path.insert(0, str(ROOT / "minibot"))
+            from scripts.hope_process_manager import ProcessManager
+
+            manager = ProcessManager()
+            await self._reply(update, f"Stopping {name}...")
+
+            success, msg = manager.stop_process(name)
+
+            if success:
+                await self._reply(update, f"[OK] {name} stopped")
+            else:
+                await self._reply(update, f"[FAIL] {name}: {msg}")
+
+        except Exception as e:
+            self.log.error("cmd_stop_process error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
+    async def cmd_restart_process(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Restart a HOPE process: /restart_process <name>"""
+        if not context.args:
+            await self._reply(
+                update,
+                "Usage: /restart_process <name>\n\n"
+                "Examples:\n"
+                "  /restart_process friend_bridge\n"
+                "  /restart_process eye_of_god"
+            )
+            return
+
+        name = context.args[0].lower()
+
+        try:
+            import sys
+            sys.path.insert(0, str(ROOT / "minibot"))
+            from scripts.hope_process_manager import ProcessManager
+
+            manager = ProcessManager()
+            await self._reply(update, f"Restarting {name}...")
+
+            success, msg = manager.restart_process(name)
+
+            if success:
+                await self._reply(update, f"[OK] {name} restarted (PID {msg})")
+            else:
+                await self._reply(update, f"[FAIL] {name}: {msg}")
+
+        except Exception as e:
+            self.log.error("cmd_restart_process error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
+    async def cmd_allowlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show AllowList status (3-layer)."""
+        try:
+            import sys
+            sys.path.insert(0, str(ROOT / "minibot"))
+            from core.unified_allowlist import get_unified_allowlist
+
+            al = get_unified_allowlist()
+
+            lines = ["<b>ALLOWLIST (3-Layer)</b>", ""]
+
+            # Core
+            core = list(al.core_list.keys())
+            lines.append(f"<b>CORE ({len(core)}):</b>")
+            lines.append(f"  {', '.join(core[:10])}")
+            lines.append("")
+
+            # Dynamic
+            dynamic = list(al.dynamic_list.keys())
+            lines.append(f"<b>DYNAMIC ({len(dynamic)}):</b>")
+            lines.append(f"  {', '.join(dynamic[:10])}")
+            lines.append("")
+
+            # Hot
+            hot = list(al.hot_list.keys())
+            lines.append(f"<b>HOT ({len(hot)}):</b>")
+            if hot:
+                lines.append(f"  {', '.join(hot)}")
+            else:
+                lines.append("  <i>None</i>")
+            lines.append("")
+
+            total = al.get_symbols_set()
+            lines.append(f"<b>Total:</b> {len(total)} unique symbols")
+
+            await self._reply(update, "\n".join(lines), parse_mode="HTML")
+
+        except Exception as e:
+            self.log.error("cmd_allowlist error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
     async def _post_init(self, app: Application) -> None:
         cmds = [
             BotCommand("panel", "панель + кнопки"),
@@ -3283,6 +3548,11 @@ class HopeMiniBot:
             BotCommand("whoami", "твой ID"),
             BotCommand("version", "версия"),
             BotCommand("help", "помощь"),
+            # Process control (v2.6.0)
+            BotCommand("processes", "список процессов"),
+            BotCommand("start_process", "запустить процесс"),
+            BotCommand("stop_process", "остановить процесс"),
+            BotCommand("allowlist", "статус AllowList"),
         ]
         try:
             await app.bot.set_my_commands(cmds)
@@ -3341,6 +3611,17 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("help", self.cmd_help))
         app.add_handler(CommandHandler("mode", self.cmd_mode))
         app.add_handler(CommandHandler("ai", self.cmd_ai))
+        # Process control commands (v2.6.0)
+        app.add_handler(CommandHandler("processes", self.cmd_processes))
+        app.add_handler(CommandHandler("start_process", self.cmd_start_process))
+        app.add_handler(CommandHandler("stop_process", self.cmd_stop_process))
+        app.add_handler(CommandHandler("restart_process", self.cmd_restart_process))
+        app.add_handler(CommandHandler("allowlist", self.cmd_allowlist))
+        # Signal Aggregator commands (AI v2)
+        app.add_handler(CommandHandler("digest", self.cmd_digest))
+        app.add_handler(CommandHandler("hot", self.cmd_hot))
+        app.add_handler(CommandHandler("sigstats", self.cmd_sigstats))
+        app.add_handler(CommandHandler("mute", self.cmd_mute))
 
         app.add_handler(CallbackQueryHandler(self.on_callback))
         return app
