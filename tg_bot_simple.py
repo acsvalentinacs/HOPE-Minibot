@@ -1218,6 +1218,9 @@ class HopeMiniBot:
                 InlineKeyboardButton("✅ STOP OFF", callback_data="hope_stop_off"),
             ],
             [
+                InlineKeyboardButton("🚨 PANIC CLOSE", callback_data="hope_panic"),
+            ],
+            [
                 InlineKeyboardButton("💰 Balance", callback_data="hope_balance"),
                 InlineKeyboardButton("🔬 Diag", callback_data="hope_diag"),
             ],
@@ -1817,6 +1820,64 @@ class HopeMiniBot:
         except Exception as e:
             await self._reply(
                 update, f"❌ Не удалось выключить STOP.flag: {type(e).__name__}: {e}"
+            )
+
+    async def cmd_panic(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """PANIC CLOSE - Emergency close ALL positions (requires confirmation)."""
+        if not await self._guard_admin(update):
+            return
+        # Show confirmation dialog
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🚨 ДА, ЗАКРЫТЬ ВСЕ", callback_data="confirm_panic_close"),
+                InlineKeyboardButton("❌ Отмена", callback_data="cancel_action"),
+            ]
+        ])
+        await self._reply(
+            update,
+            "🚨 PANIC CLOSE\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ ВНИМАНИЕ!\n\n"
+            "Это действие:\n"
+            "• Закроет ВСЕ открытые позиции\n"
+            "• Создаст STOP.flag\n"
+            "• Остановит торговлю\n\n"
+            "Вы уверены?",
+            keyboard
+        )
+
+    async def _do_panic_close(self, update: Update) -> None:
+        """Execute PANIC CLOSE after confirmation."""
+        try:
+            await self._reply(update, "🚨 Выполняю PANIC CLOSE...")
+
+            # Import and execute panic close
+            from scripts.panic_close import execute_panic_close, format_panic_result
+
+            # Determine mode from env
+            testnet = os.environ.get("BINANCE_TESTNET", "true").lower() == "true"
+
+            result = await execute_panic_close(
+                testnet=testnet,
+                dry_run=False,  # Real execution
+                reason="TELEGRAM_PANIC_BUTTON",
+            )
+
+            # Format and send result
+            msg = format_panic_result(result, use_emoji=True)
+            await self._reply(update, msg)
+
+            # Audit log
+            uid = update.effective_user.id if update.effective_user else 0
+            _audit_log(uid, "panic_close", result.positions_closed == result.positions_found,
+                      f"closed {result.positions_closed}/{result.positions_found}")
+
+        except Exception as e:
+            _log_error("panic_close_failed", str(e))
+            await self._reply(
+                update, f"❌ PANIC CLOSE FAILED: {type(e).__name__}: {e}"
             )
 
     async def cmd_mode(
@@ -2807,6 +2868,9 @@ class HopeMiniBot:
         if data == "hope_stop_off":
             await self.cmd_stop_off(update, context)
             return
+        if data == "hope_panic":
+            await self.cmd_panic(update, context)
+            return
         if data == "hope_balance":
             await self.cmd_balance(update, context)
             return
@@ -2877,6 +2941,9 @@ class HopeMiniBot:
             return
         if data == "confirm_mode_live":
             await self._do_mode_change(update, "LIVE")
+            return
+        if data == "confirm_panic_close":
+            await self._do_panic_close(update)
             return
         if data == "cancel_action":
             await self._reply(update, "❌ Действие отменено.")
