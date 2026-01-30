@@ -48,9 +48,10 @@ $files = @(
     "core\event_ledger.py",
     "core\pretrade_pipeline.py",
     "core\autotrader_watchdog_integration.py",
-    "execution\binance_oco_executor_fixed.py",
+    "execution\binance_oco_executor.py",
     "scripts\pump_detector.py",
-    "scripts\position_watchdog.py"
+    "scripts\position_watchdog.py",
+    "scripts\pricefeed_bridge.py"
 )
 
 foreach ($f in $files) {
@@ -66,7 +67,8 @@ $pyFiles = @(
     "core\event_ledger.py",
     "core\pretrade_pipeline.py",
     "core\autotrader_watchdog_integration.py",
-    "execution\binance_oco_executor_fixed.py"
+    "execution\binance_oco_executor.py",
+    "scripts\pricefeed_bridge.py"
 )
 
 foreach ($f in $pyFiles) {
@@ -101,13 +103,13 @@ Check "Event Ledger invariants" {
 Write-Host "`n[4] BINANCE EXECUTOR" -ForegroundColor Yellow
 
 Check "Executor import" {
-    $code = "from execution.binance_oco_executor_fixed import BinanceOCOExecutor, ExecutionMode; print('OK')"
+    $code = "from execution.binance_oco_executor import BinanceOCOExecutor, ExecutionMode; print('OK')"
     $out = python -c $code 2>&1
     $out -match "OK"
 } -Critical
 
 Check "Executor DRY mode" {
-    $code = "from execution.binance_oco_executor_fixed import BinanceOCOExecutor, ExecutionMode; e=BinanceOCOExecutor(mode=ExecutionMode.DRY); print('OK')"
+    $code = "from execution.binance_oco_executor import BinanceOCOExecutor, ExecutorConfig, ExecutionMode; e=BinanceOCOExecutor(ExecutorConfig(mode=ExecutionMode.DRY)); print('OK')"
     $out = python -c $code 2>&1
     $out -match "OK"
 } -Critical
