@@ -3,8 +3,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 08:00:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-29 20:35:00 UTC
-# Purpose: XGBoost signal classifier with empirical filters
+# Modified at: 2026-01-29 23:15:00 UTC
+# Purpose: XGBoost signal classifier with WHITELIST OVERRIDE
+# Feature: whitelist_symbols can OVERRIDE MODE:SKIP
 # === END SIGNATURE ===
 """
 Signal Classifier — XGBoost model for predicting signal outcomes.
@@ -50,35 +51,43 @@ except ImportError:
 
 
 # === Empirical Filters (based on training data analysis) ===
-# Updated: 2026-01-29 22:35 UTC
+# Updated: 2026-01-29 23:10 UTC
 # Source: 47 samples from MoonBot signals
+# CRITICAL: whitelist_symbols OVERRIDE MODE:SKIP!
 
 EMPIRICAL_FILTERS = {
-    # Symbols with 0% win rate - always skip
+    # === WHITELIST (100% win rate - ALWAYS BUY, override MODE:SKIP) ===
+    "whitelist_symbols": {
+        "DUSKUSDT": {"win_rate": 1.0, "avg_mfe": 3.87, "samples": 4},
+        "XVSUSDT": {"win_rate": 1.0, "avg_mfe": 3.38, "samples": 1},
+        "KITEUSDT": {"win_rate": 1.0, "avg_mfe": 2.81, "samples": 3},
+    },
+
+    # === BLACKLIST (0% win rate - ALWAYS SKIP) ===
     "blacklist_symbols": ["SYNUSDT", "DODOUSDT", "AXSUSDT", "ARPAUSDT"],
 
     # Strategy + Symbol combinations to skip (0% win rate)
     "blacklist_combos": [
-        ("Delta", "SYNUSDT"),      # 0/4 wins, -32% total
-        ("Delta", "DODOUSDT"),     # 0/2 wins, -25% total
-        ("TopMarket", "AXSUSDT"),  # 0/2 wins, -18% total
-        ("TopMarket", "SYNUSDT"),  # 0/2 wins, -14% total
+        ("Delta", "SYNUSDT"),      # 0/4 wins
+        ("Delta", "DODOUSDT"),     # 0/2 wins
+        ("TopMarket", "AXSUSDT"),  # 0/2 wins
+        ("TopMarket", "SYNUSDT"),  # 0/2 wins
     ],
 
     # Strategy + Symbol combinations to boost (high win rate)
     "whitelist_combos": [
-        ("Drop", "SENTUSDT"),      # 3/3 wins, +45% total
-        ("Pump", "SENTUSDT"),      # 1/2 wins, +14% total
+        ("Drop", "SENTUSDT"),      # 53.8% win, +8.43% MFE
+        ("Pump", "SENTUSDT"),      # positive outcome
     ],
 
-    # Strategy adjustments
+    # Strategy adjustments (based on real data)
     "strategy_penalties": {
-        "Delta": -0.15,            # 18% win rate, penalize
-        "TopMarket": -0.10,        # 27% win rate, penalize
+        "Delta": -0.15,            # 27% win rate
+        "TopMarket": -0.10,        # 27% win rate
     },
     "strategy_bonuses": {
-        "Drop": +0.05,             # 38% win rate, positive avg PnL
-        "Pump": +0.03,             # 40% win rate
+        "Pump": +0.10,             # 40% win rate - best
+        "Drop": +0.08,             # 37.5% win rate
     },
 }
 
@@ -97,37 +106,60 @@ def normalize_strategy(strategy: str) -> str:
     return "Unknown"
 
 
-def apply_empirical_filters(signal: Dict[str, Any], base_proba: float) -> Tuple[float, str, bool]:
+def apply_empirical_filters(
+    signal: Dict[str, Any],
+    base_proba: float,
+    mode_action: str = None,  # "SKIP", "BUY", "SUPER_SCALP", etc.
+) -> Tuple[float, str, bool, bool]:
     """
     Apply empirical filters to adjust prediction.
+
+    CRITICAL: whitelist_symbols can OVERRIDE MODE:SKIP!
 
     Args:
         signal: Signal dictionary
         base_proba: Base probability from model
+        mode_action: Current mode from ModeRouter (optional)
 
     Returns:
-        (adjusted_proba, filter_reason, should_skip)
+        (adjusted_proba, filter_reason, should_skip, is_whitelist_override)
     """
     symbol = signal.get("symbol", "")
     strategy = normalize_strategy(signal.get("strategy", ""))
 
-    # Check blacklist symbols
-    if symbol in EMPIRICAL_FILTERS["blacklist_symbols"]:
-        return 0.0, f"blacklist_symbol:{symbol}", True
+    # === PRIORITY 1: WHITELIST SYMBOLS (override MODE:SKIP!) ===
+    whitelist = EMPIRICAL_FILTERS.get("whitelist_symbols", {})
+    if symbol in whitelist:
+        stats = whitelist[symbol]
+        win_rate = stats.get("win_rate", 1.0)
+        avg_mfe = stats.get("avg_mfe", 0)
+        # High confidence for whitelist
+        proba = max(0.70, win_rate * 0.8)
+        reason = f"WHITELIST:{symbol}(win={win_rate*100:.0f}%,mfe={avg_mfe:+.1f}%)"
+        logger.info(f"✅ WHITELIST OVERRIDE: {symbol} -> BUY (was MODE:{mode_action})")
+        return proba, reason, False, True  # is_whitelist_override=True
 
-    # Check blacklist combos
+    # === PRIORITY 2: BLACKLIST SYMBOLS ===
+    if symbol in EMPIRICAL_FILTERS["blacklist_symbols"]:
+        logger.warning(f"🚫 BLACKLIST: {symbol} -> SKIP")
+        return 0.0, f"BLACKLIST:{symbol}", True, False
+
+    # === PRIORITY 3: BLACKLIST COMBOS ===
     for combo in EMPIRICAL_FILTERS["blacklist_combos"]:
         if strategy == combo[0] and symbol == combo[1]:
-            return 0.0, f"blacklist_combo:{strategy}+{symbol}", True
+            logger.warning(f"💀 DEATH_COMBO: {strategy}+{symbol} -> SKIP")
+            return 0.0, f"DEATH_COMBO:{strategy}+{symbol}", True, False
 
-    # Check whitelist combos - boost probability
+    # === PRIORITY 4: WHITELIST COMBOS ===
     adjusted_proba = base_proba
     for combo in EMPIRICAL_FILTERS["whitelist_combos"]:
         if strategy == combo[0] and symbol == combo[1]:
-            adjusted_proba = min(1.0, base_proba + 0.20)
-            return adjusted_proba, f"whitelist_combo:{strategy}+{symbol}", False
+            adjusted_proba = min(1.0, base_proba + 0.25)
+            reason = f"KILLER_COMBO:{strategy}+{symbol}"
+            logger.info(f"🎯 {reason} -> BOOST to {adjusted_proba:.2f}")
+            return adjusted_proba, reason, False, True  # is_whitelist_override=True
 
-    # Apply strategy adjustments
+    # === PRIORITY 5: STRATEGY ADJUSTMENTS ===
     if strategy in EMPIRICAL_FILTERS["strategy_penalties"]:
         penalty = EMPIRICAL_FILTERS["strategy_penalties"][strategy]
         adjusted_proba = max(0.0, base_proba + penalty)
@@ -135,7 +167,14 @@ def apply_empirical_filters(signal: Dict[str, Any], base_proba: float) -> Tuple[
         bonus = EMPIRICAL_FILTERS["strategy_bonuses"][strategy]
         adjusted_proba = min(1.0, base_proba + bonus)
 
-    return adjusted_proba, None, False
+    return adjusted_proba, None, False, False
+
+
+# === Legacy wrapper for backward compatibility ===
+def apply_empirical_filters_legacy(signal: Dict[str, Any], base_proba: float) -> Tuple[float, str, bool]:
+    """Legacy 3-tuple version for backward compatibility."""
+    proba, reason, skip, _ = apply_empirical_filters(signal, base_proba, None)
+    return proba, reason, skip
 
 
 # === Feature Engineering ===

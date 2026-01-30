@@ -2,9 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
-# Modified by: Claude (opus-4)
-# Modified at: 2026-01-29T04:10:00Z
-# v2.5.0: Added AI-Gateway integration with /ai command and status panel
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-30T02:25:00Z
+# v2.5.2: Added /supervisor command for AI watchdog control
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -229,11 +229,19 @@ async def _heartbeat_job_callback(context) -> None:
         logging.getLogger("tg_bot").error("Heartbeat error: %s", e)
 
 HUNTERS_SIGNALS_CANDIDATES = [
+    # HOPE AI Trading System signals (primary)
+    STATE_DIR / "ai" / "decisions.jsonl",  # AI pipeline decisions
+    STATE_DIR / "ai" / "signals" / "moonbot_signals.jsonl",  # MoonBot signals
+    # Legacy HUNTERS paths (fallback)
     STATE_DIR / "hunters_signals_scored.jsonl",
     STATE_DIR / "hunters_signals.jsonl",
     STATE_DIR / "hunters_signals_scored_v4.jsonl",
 ]
 HUNTERS_TRADES_CANDIDATES = [
+    # HOPE AI Trading System trades (primary)
+    STATE_DIR / "ai" / "production" / "trades.jsonl",  # Production trades
+    STATE_DIR / "ai" / "autotrader" / "trades.jsonl",  # AutoTrader trades
+    # Legacy paths (fallback)
     STATE_DIR / "hunters_trades.jsonl",
     STATE_DIR / "hunters_trades_scored.jsonl",
     STATE_DIR / "hunters_trades_v1.jsonl",
@@ -2052,6 +2060,142 @@ class HopeMiniBot:
 
         await self._reply(update, text, InlineKeyboardMarkup(kb))
 
+    async def cmd_supervisor(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show AI Supervisor status and controls."""
+        if not await self._guard_admin(update):
+            return
+
+        # Get supervisor status
+        try:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "hope_supervisor.py"), "--status"],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                import json
+                # Skip warning lines, find JSON
+                lines = result.stdout.strip().split("\n")
+                json_str = "\n".join(l for l in lines if l.strip().startswith("{") or l.strip().startswith("}") or l.strip().startswith('"'))
+                if not json_str:
+                    # Find JSON block
+                    for i, l in enumerate(lines):
+                        if l.strip() == "{":
+                            json_str = "\n".join(lines[i:])
+                            break
+
+                status = json.loads(json_str) if json_str else {}
+
+                sup = status.get("supervisor", {})
+                eng = status.get("engine", {})
+                stats = status.get("stats", {})
+
+                sup_running = "🟢 RUNNING" if sup.get("running") else "🔴 STOPPED"
+                eng_status = eng.get("status", "UNKNOWN")
+                eng_icon = "🟢" if eng.get("is_alive") else "🔴"
+
+                text = (
+                    "🤖 **AI Supervisor Status**\n\n"
+                    f"**Supervisor:** {sup_running}\n"
+                    f"**Engine:** {eng_icon} {eng_status}\n"
+                    f"**Mode:** {sup.get('mode', '?')}\n"
+                )
+
+                if eng.get("heartbeat_age"):
+                    text += f"**Heartbeat:** {int(eng['heartbeat_age'])}s ago\n"
+                if eng.get("last_cycle"):
+                    text += f"**Cycle:** {eng['last_cycle']}\n"
+                if eng.get("last_session"):
+                    text += f"**Session:** {eng['last_session']}\n"
+
+                text += (
+                    f"\n**Total Restarts:** {stats.get('total_restarts', 0)}\n"
+                    f"**Failures:** {stats.get('consecutive_failures', 0)}\n"
+                )
+            else:
+                text = f"❌ Supervisor status error:\n```{result.stderr[:200]}```"
+
+        except Exception as e:
+            text = f"❌ Failed to get supervisor status: {e}"
+
+        # Control buttons
+        kb = [
+            [
+                InlineKeyboardButton("▶ Start Supervisor", callback_data="sup_start"),
+                InlineKeyboardButton("⏹ Stop", callback_data="sup_stop"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Restart Engine", callback_data="sup_restart_engine"),
+                InlineKeyboardButton("🔃 Refresh", callback_data="sup_refresh"),
+            ],
+        ]
+
+        await self._reply(update, text, InlineKeyboardMarkup(kb))
+
+    async def _handle_supervisor_action(self, update: Update, action: str) -> None:
+        """Handle supervisor control actions."""
+        import subprocess
+
+        if action == "start":
+            msg = "▶ Starting AI Supervisor..."
+            cmd = [
+                _ps_exe(), "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(ROOT / "tools" / "start_supervisor.ps1"),
+                "-Action", "start", "-Mode", "TESTNET"
+            ]
+        elif action == "stop":
+            msg = "⏹ Stopping Supervisor..."
+            cmd = [
+                _ps_exe(), "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(ROOT / "tools" / "start_supervisor.ps1"),
+                "-Action", "stop"
+            ]
+        elif action == "restart_engine":
+            msg = "🔄 Restarting Engine via Supervisor..."
+            # Stop engine, supervisor will restart it
+            stop_flag = ROOT / "state" / "STOP.flag"
+            stop_flag.write_text(f"RESTART requested at {time.strftime('%Y-%m-%dT%H:%M:%S')}")
+            await self._reply(update, msg)
+            await asyncio.sleep(2)
+            if stop_flag.exists():
+                stop_flag.unlink()
+            await self.cmd_supervisor(update, None)
+            return
+        else:
+            await self._reply(update, f"❌ Unknown action: {action}")
+            return
+
+        await self._reply(update, msg)
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(ROOT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+
+            if proc.returncode == 0:
+                await self._reply(update, f"✅ {action.upper()} completed")
+            else:
+                await self._reply(update, f"⚠️ {action.upper()} finished with code {proc.returncode}")
+
+            # Refresh status
+            await asyncio.sleep(2)
+            await self.cmd_supervisor(update, None)
+
+        except asyncio.TimeoutError:
+            await self._reply(update, "⏱ Timeout - command still running in background")
+        except Exception as e:
+            await self._reply(update, f"❌ Error: {e}")
+
     async def _run_action_and_report(self, update: Update, spec: ActionSpec) -> None:
         if not spec.script.exists():
             await self._reply(update, f"❌ Не найден скрипт: {spec.script}")
@@ -2752,6 +2896,20 @@ class HopeMiniBot:
             await self._handle_stack_action(update, "FIXDUP")
             return
 
+        # Supervisor control callbacks
+        if data == "sup_refresh":
+            await self.cmd_supervisor(update, context)
+            return
+        if data == "sup_start":
+            await self._handle_supervisor_action(update, "start")
+            return
+        if data == "sup_stop":
+            await self._handle_supervisor_action(update, "stop")
+            return
+        if data == "sup_restart_engine":
+            await self._handle_supervisor_action(update, "restart_engine")
+            return
+
         await self._reply(update, "⚠️ Unknown button")
 
     async def _handle_stack_action(self, update: Update, action: str) -> None:
@@ -2768,17 +2926,23 @@ class HopeMiniBot:
         mode = _mode_from_health(h)
 
         # Build command based on action
+        # Launcher v2 uses: -Action <action> -Mode <mode>
         if action == "START":
-            args = ["-Mode", mode]
+            args = ["-Action", "start", "-Mode", mode]
             msg = f"▶ Starting HOPE stack (mode={mode})..."
         elif action == "STOP":
-            # TODO: implement STOP in launcher v2 (kill all roles gracefully)
-            await self._reply(update, "⚠️ STOP not yet implemented in launcher v2")
-            return
+            args = ["-Action", "stop"]
+            msg = "⏹ Stopping HOPE stack..."
+        elif action == "RESTART":
+            args = ["-Action", "restart", "-Mode", mode]
+            msg = f"🔄 Restarting HOPE stack (mode={mode})..."
         elif action == "FIXDUP":
-            # FIXDUP is implicit in launcher v2 (always runs FixDup before StartMissing)
-            args = ["-Mode", mode]
-            msg = "🧹 Fixing duplicates + starting missing..."
+            # FIXDUP = restart to clean duplicates
+            args = ["-Action", "restart", "-Mode", mode]
+            msg = "🧹 Fixing duplicates + restarting..."
+        elif action == "STATUS":
+            args = ["-Action", "status"]
+            msg = "📊 Checking stack status..."
         else:
             await self._reply(update, f"❌ Unknown action: {action}")
             return
@@ -2910,6 +3074,7 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("night", self.cmd_night))
         app.add_handler(CommandHandler("restart", self.cmd_restart))
         app.add_handler(CommandHandler("stack", self.cmd_stack))
+        app.add_handler(CommandHandler("supervisor", self.cmd_supervisor))
         app.add_handler(CommandHandler("chat", self.cmd_chat))
         app.add_handler(CommandHandler("signals", self.cmd_signals))
         app.add_handler(CommandHandler("trades", self.cmd_trades))

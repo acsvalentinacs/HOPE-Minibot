@@ -2,19 +2,23 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 20:50:00 UTC
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-29 21:25:00 UTC
 # Purpose: Unified Scalping Pipeline - MoonBot → Precursor → Router → AutoTrader
 # === END SIGNATURE ===
 """
 HOPE AI - Scalping Pipeline Launcher
 
 Запускает полный pipeline для скальпинга:
-1. MoonBot Live Integration (сигналы → решения)
-2. Decision Bridge (решения → AutoTrader)
-3. Self-Improver (outcome tracking → обучение)
+1. Binance WebSocket Feed (real-time prices + buys_per_sec)
+2. MoonBot Live Integration (сигналы → решения)
+3. Decision Bridge (решения → AutoTrader)
+4. Stats Reporter (периодический отчет)
 
 Usage:
     python scripts/start_scalping_pipeline.py
     python scripts/start_scalping_pipeline.py --dry-run
+    python scripts/start_scalping_pipeline.py --no-ws  # без WebSocket
 """
 
 import asyncio
@@ -26,7 +30,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Thread
-from typing import Optional
+from typing import Any, Dict, Optional
+
+# Add project root to path for imports
+PROJECT_ROOT = Path(__file__).parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Setup logging
 logging.basicConfig(
@@ -53,15 +62,21 @@ class ScalpingPipeline:
     Unified scalping pipeline controller.
 
     Components:
+    - Binance WebSocket: Real-time prices + buys_per_sec
     - MoonBot Integration: Processes signals through Precursor + ModeRouter
     - Decision Bridge: Forwards BUY decisions to AutoTrader
-    - Signal Feeder: Feeds MoonBot signals (optional, for testing)
+    - Stats Reporter: Periodic status updates
     """
 
-    def __init__(self, dry_run: bool = False):
+    def __init__(self, dry_run: bool = False, enable_websocket: bool = True):
         self.dry_run = dry_run
+        self.enable_websocket = enable_websocket
         self._running = False
         self._tasks = []
+
+        # Components
+        self.ws_feed = None
+        self.integration = None
 
         # Stats
         self.stats = {
@@ -69,10 +84,12 @@ class ScalpingPipeline:
             "signals_fed": 0,
             "decisions_made": 0,
             "buys_forwarded": 0,
+            "super_scalps_detected": 0,
+            "ws_messages": 0,
             "errors": 0,
         }
 
-        logger.info(f"ScalpingPipeline initialized (dry_run={dry_run})")
+        logger.info(f"ScalpingPipeline initialized (dry_run={dry_run}, ws={enable_websocket})")
 
     async def start(self):
         """Start all pipeline components."""
@@ -100,12 +117,19 @@ class ScalpingPipeline:
                 enable_event_bus=True,
             )
 
-            # Start tasks
+            # Build task list
             self._tasks = [
                 asyncio.create_task(self._run_integration()),
                 asyncio.create_task(self._run_decision_bridge()),
                 asyncio.create_task(self._run_stats_reporter()),
             ]
+
+            # Start WebSocket feed if enabled
+            if self.enable_websocket:
+                self._tasks.append(asyncio.create_task(self._run_websocket_feed()))
+                logger.info("WebSocket feed: ENABLED")
+            else:
+                logger.info("WebSocket feed: DISABLED (use --ws to enable)")
 
             logger.info("Pipeline started. Press Ctrl+C to stop.")
             logger.info(f"Watching: {MOONBOT_SIGNALS}")
@@ -126,6 +150,10 @@ class ScalpingPipeline:
     async def stop(self):
         """Stop all components."""
         self._running = False
+
+        # Stop WebSocket feed
+        if self.ws_feed is not None:
+            await self.ws_feed.stop()
 
         for task in self._tasks:
             if not task.done():
@@ -153,6 +181,92 @@ class ScalpingPipeline:
         """Run MoonBot integration."""
         logger.info("[Integration] Starting...")
         await self.integration.start()
+
+    async def _run_websocket_feed(self):
+        """Run Binance WebSocket for real-time prices and buys_per_sec."""
+        logger.info("[WebSocket] Starting...")
+
+        try:
+            from ai_gateway.feeds.binance_realtime import BinanceRealtimeFeed, RealtimeData
+
+            def on_realtime_data(data: RealtimeData):
+                """Callback for real-time data updates."""
+                self.stats["ws_messages"] += 1
+
+                # Detect SUPER_SCALP conditions (buys_per_sec >= 100)
+                if data.is_super_scalp_ready():
+                    self.stats["super_scalps_detected"] += 1
+                    logger.warning(
+                        f"🚀 SUPER_SCALP DETECTED: {data.symbol} | "
+                        f"Buys/sec: {data.buys_per_sec:.1f} | "
+                        f"Price: ${data.price:.4f}"
+                    )
+
+                    # Inject signal to MoonBot integration if running
+                    if self.integration and hasattr(self.integration, 'inject_super_scalp'):
+                        self.integration.inject_super_scalp(data.symbol, data)
+
+            # Create feed
+            self.ws_feed = BinanceRealtimeFeed(on_data=on_realtime_data)
+
+            # Subscribe to symbols from existing decisions
+            symbols_to_track = await self._get_tracked_symbols()
+            if symbols_to_track:
+                await self.ws_feed.subscribe(symbols_to_track)
+                logger.info(f"[WebSocket] Subscribed to {len(symbols_to_track)} symbols")
+            else:
+                # Default symbols for monitoring
+                default_symbols = ["BTCUSDT", "ETHUSDT", "XVSUSDT", "SYNUSDT", "ARPAUSDT"]
+                await self.ws_feed.subscribe(default_symbols)
+                logger.info(f"[WebSocket] Subscribed to default symbols")
+
+            # Run feed
+            await self.ws_feed.run()
+
+        except ImportError as e:
+            logger.error(f"[WebSocket] Import error: {e}")
+            logger.info("[WebSocket] Install websockets: pip install websockets")
+        except Exception as e:
+            logger.error(f"[WebSocket] Error: {e}")
+            self.stats["errors"] += 1
+
+    async def _get_tracked_symbols(self) -> list:
+        """Get symbols from recent decisions for WebSocket tracking."""
+        symbols = set()
+
+        # From decisions file
+        if DECISIONS_FILE.exists():
+            try:
+                with open(DECISIONS_FILE, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                d = json.loads(line)
+                                sym = d.get("symbol", "")
+                                if sym:
+                                    symbols.add(sym.upper())
+                            except json.JSONDecodeError:
+                                pass
+            except Exception:
+                pass
+
+        # From signals file
+        if MOONBOT_SIGNALS.exists():
+            try:
+                with open(MOONBOT_SIGNALS, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                s = json.loads(line)
+                                sym = s.get("symbol", "")
+                                if sym:
+                                    symbols.add(sym.upper())
+                            except json.JSONDecodeError:
+                                pass
+            except Exception:
+                pass
+
+        return list(symbols)[:50]  # Limit to 50 symbols
 
     async def _run_decision_bridge(self):
         """Run decision bridge (forwards BUY to AutoTrader)."""
@@ -244,12 +358,22 @@ class ScalpingPipeline:
         while self._running:
             await asyncio.sleep(60)  # Every minute
 
-            stats = self.integration.get_stats() if hasattr(self, 'integration') else {}
+            integration_stats = self.integration.get_stats() if self.integration else {}
+            ws_stats = self.ws_feed.get_stats() if self.ws_feed else {}
+
             logger.info(
-                f"[Stats] Signals: {stats.get('signals_processed', 0)} | "
-                f"Precursors: {stats.get('precursors_detected', 0)} | "
-                f"BUYs: {self.stats['buys_forwarded']}"
+                f"[Stats] Signals: {integration_stats.get('signals_processed', 0)} | "
+                f"Precursors: {integration_stats.get('precursors_detected', 0)} | "
+                f"BUYs: {self.stats['buys_forwarded']} | "
+                f"SuperScalps: {self.stats['super_scalps_detected']}"
             )
+
+            if ws_stats:
+                logger.info(
+                    f"[WebSocket] Connected: {ws_stats.get('is_connected')} | "
+                    f"Symbols: {ws_stats.get('symbols_count', 0)} | "
+                    f"Messages: {self.stats['ws_messages']}"
+                )
 
 
 async def feed_existing_signals():
@@ -289,12 +413,16 @@ async def main():
     parser = argparse.ArgumentParser(description="HOPE AI Scalping Pipeline")
     parser.add_argument("--dry-run", action="store_true", help="Don't forward to AutoTrader")
     parser.add_argument("--feed", action="store_true", help="Feed existing signals first")
+    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket feed")
     args = parser.parse_args()
 
     if args.feed:
         await feed_existing_signals()
 
-    pipeline = ScalpingPipeline(dry_run=args.dry_run)
+    pipeline = ScalpingPipeline(
+        dry_run=args.dry_run,
+        enable_websocket=not args.no_ws
+    )
 
     # Handle shutdown
     loop = asyncio.get_event_loop()

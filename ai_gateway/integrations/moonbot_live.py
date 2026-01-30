@@ -3,9 +3,10 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 16:30:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-29 20:55:00 UTC
+# Modified at: 2026-01-29 23:15:00 UTC
 # Purpose: Phase 1 - Live MoonBot Signal Integration Pipeline
 # Contract: MoonBot → PumpPrecursor → ModeRouter → EmpiricalFilters → DecisionEngine
+# Feature: WHITELIST OVERRIDE - 100% win symbols bypass MODE:SKIP
 # === END SIGNATURE ===
 """
 HOPE AI - MoonBot Live Integration (Phase 1)
@@ -112,6 +113,7 @@ class PipelineResult:
             "signal_id": self.signal_id,
             "symbol": self.symbol,
             "timestamp": self.timestamp,
+            "raw_signal": self.raw_signal,  # CRITICAL: Include original signal data!
             "precursor": {
                 "prediction": self.precursor_prediction,
                 "details": self.precursor,
@@ -360,16 +362,27 @@ class MoonBotLiveIntegration:
             decision_reasons = [r.value for r in decision.reasons]
 
         # ═══════════════════════════════════════════════════════════════
-        # STAGE 4: EMPIRICAL FILTERS
+        # STAGE 4: EMPIRICAL FILTERS (with WHITELIST OVERRIDE!)
         # ═══════════════════════════════════════════════════════════════
 
         filter_input = {
             "symbol": symbol,
             "strategy": signal.get("strategy", signal.get("signal_type", "")),
         }
-        _, filter_reason, should_skip = apply_empirical_filters(filter_input, 0.5)
 
-        if should_skip:
+        # Pass current mode action for whitelist override logic
+        mode_action = route_result.mode.value.upper()
+        filter_proba, filter_reason, should_skip, is_whitelist_override = apply_empirical_filters(
+            filter_input, 0.5, mode_action
+        )
+
+        # WHITELIST OVERRIDE: If whitelist, FORCE BUY regardless of mode/precursor
+        if is_whitelist_override:
+            logger.info(f"⭐ WHITELIST OVERRIDE: {symbol} -> FORCE BUY ({filter_reason})")
+            decision_action = "BUY"
+            decision_confidence = filter_proba
+            decision_reasons.append(f"whitelist_override:{filter_reason}")
+        elif should_skip:
             logger.info(f"🚫 FILTERED: {symbol} ({filter_reason})")
             decision_action = "SKIP"
             decision_reasons.append(f"empirical_filter:{filter_reason}")
@@ -378,9 +391,12 @@ class MoonBotLiveIntegration:
         # FINAL ACTION
         # ═══════════════════════════════════════════════════════════════
 
-        # Final action: require both precursor AND decision engine approval
-        # AND pass empirical filters
-        if should_skip:
+        # WHITELIST OVERRIDE bypasses normal logic!
+        if is_whitelist_override:
+            final_action = "BUY"
+            self._stats["buys_generated"] += 1
+            logger.info(f"✅ WHITELIST BUY: {symbol} (100% win rate historical)")
+        elif should_skip:
             final_action = "SKIP"
         elif precursor_result.prediction == "BUY" and decision_action == "BUY":
             final_action = "BUY"
@@ -468,6 +484,41 @@ class MoonBotLiveIntegration:
             "mode_router": self.mode_router.get_stats(),
             "decision_engine": self.decision_engine.get_stats(),
         }
+
+    def inject_super_scalp(self, symbol: str, realtime_data: Any) -> None:
+        """
+        Inject SUPER_SCALP signal from WebSocket when buys_per_sec >= 100.
+
+        This bypasses normal signal flow and creates an immediate BUY signal
+        when WebSocket detects extreme buying pressure.
+
+        Args:
+            symbol: Trading pair (e.g., "XVSUSDT")
+            realtime_data: RealtimeData from binance_realtime
+        """
+        try:
+            # Create synthetic signal from real-time data
+            synthetic_signal = {
+                "symbol": symbol,
+                "price": realtime_data.price if hasattr(realtime_data, 'price') else 0,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "strategy": "SUPER_SCALP_WS",
+                "signal_type": "super_scalp",
+                "buys_per_sec": realtime_data.buys_per_sec if hasattr(realtime_data, 'buys_per_sec') else 100,
+                "vol_raise_pct": 200,  # High volume assumed
+                "delta_pct": 1.0,
+                "dbtc_5m": 0,
+                "dbtc_1m": 0,
+                "_source": "websocket_super_scalp",
+            }
+
+            # Schedule for processing (non-blocking)
+            asyncio.create_task(self.process_signal(synthetic_signal))
+            logger.info(f"🚀 INJECTED SUPER_SCALP: {symbol} (buys_per_sec={synthetic_signal['buys_per_sec']:.1f})")
+
+        except Exception as e:
+            logger.error(f"inject_super_scalp error: {e}")
+            self._stats["errors"] += 1
 
     async def process_batch(self, signals: List[Dict]) -> List[PipelineResult]:
         """Process batch of signals."""

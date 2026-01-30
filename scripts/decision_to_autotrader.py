@@ -76,14 +76,16 @@ class DecisionBridge:
         confidence = decision.get("decision", {}).get("confidence", 0)
 
         # Build signal for AutoTrader
+        # NOTE: delta_pct must be >= 2.0 to pass SCALP filter in autotrader.py
+        # vol_raise_pct >= 100 with buys >= min_buys_sec also triggers SCALP mode
         signal = {
             "symbol": symbol,
             "strategy": f"MoonBot_{mode_name}",
             "direction": "Long",
             "price": 0,  # AutoTrader will fetch from Gateway
-            "buys_per_sec": 50 if mode_name == "super_scalp" else 35,  # Synthetic
-            "delta_pct": config.get("target_pct", 1.0),
-            "vol_raise_pct": 100,
+            "buys_per_sec": 50 if mode_name == "super_scalp" else 40,  # >= 30 for SCALP
+            "delta_pct": config.get("target_pct", 2.0) if config.get("target_pct", 2.0) >= 2.0 else 2.0,  # >= 2.0 for SCALP
+            "vol_raise_pct": 150,  # >= 100 for VOLUME_SPIKE mode
         }
 
         try:

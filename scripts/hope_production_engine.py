@@ -2,8 +2,18 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30 03:30:00 UTC
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-30T02:10:00Z
 # Purpose: HOPE Production Trading Engine - Full cycle without stubs
 # Contract: Real Binance execution, fail-closed, self-learning
+# Features:
+#   - SignalConsumer reads from MoonBot decisions.jsonl
+#   - Single-instance lock (PID file)
+#   - Rate limiter (MAX_ORDERS_PER_HOUR)
+#   - Circuit breaker (MAX_DAILY_LOSS_PCT)
+#   - Panic-close on price unavailable
+#   - Heartbeat file for watchdog monitoring
+#   - STOP.flag for graceful shutdown
 # === END SIGNATURE ===
 """
 HOPE PRODUCTION ENGINE - Полный торговый цикл без заглушек
@@ -113,6 +123,27 @@ TRADES_FILE = STATE_DIR / "trades.jsonl"
 POSITIONS_FILE = STATE_DIR / "positions.json"
 STATS_FILE = STATE_DIR / "stats.json"
 DIRECTIVES_FILE = STATE_DIR / "directives.json"
+VALID_SYMBOLS_CACHE = STATE_DIR / "valid_symbols.json"
+
+# MoonBot decisions (input from AI pipeline)
+DECISIONS_FILE = Path("state/ai/decisions.jsonl")
+CONSUMED_FILE = STATE_DIR / "consumed_signals.txt"  # Track processed signal IDs
+
+# MoonBot raw signals (direct source)
+MOONBOT_SIGNALS_DIR = Path("data/moonbot_signals")
+
+# === PRODUCTION SAFETY FEATURES ===
+LOCK_DIR = Path("state/locks")
+ENGINE_LOCK_FILE = LOCK_DIR / "production_engine.lock"
+HEARTBEAT_FILE = STATE_DIR / "heartbeat.json"
+STOP_FLAG_FILE = Path("state/STOP.flag")
+
+# Rate limits (fail-closed defaults)
+MAX_ORDERS_PER_HOUR = 20  # Max orders per rolling hour
+MAX_POSITION_VALUE_PCT = 5.0  # Max 5% of equity per position
+MAX_DAILY_LOSS_PCT = 3.0  # Circuit breaker at -3% daily P&L
+HEARTBEAT_TIMEOUT_SEC = 120  # Alert if no heartbeat for 2 min
+PRICE_STALE_SEC = 30  # Price older than 30s is stale
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -188,6 +219,561 @@ class OracleDecision:
         }
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
         return "sha256:" + hashlib.sha256(canonical).hexdigest()[:16]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYMBOL VALIDATOR (Caches valid symbols from Binance)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SymbolValidator:
+    """
+    Validates symbols against Binance exchange info.
+
+    Caches valid symbols to avoid repeated API calls.
+    FAIL-CLOSED: If cannot fetch symbols, reject all.
+    """
+
+    def __init__(self, testnet: bool = True):
+        self.testnet = testnet
+        self._valid_symbols: Set[str] = set()
+        self._cache_loaded = False
+        self._last_refresh = 0.0
+        self._refresh_interval = 3600  # 1 hour
+
+    def _get_base_url(self) -> str:
+        if self.testnet:
+            return "https://testnet.binance.vision/api"
+        return "https://api.binance.com/api"
+
+    def _load_cache(self) -> bool:
+        """Load symbols from cache file."""
+        if not VALID_SYMBOLS_CACHE.exists():
+            return False
+
+        try:
+            data = json.loads(VALID_SYMBOLS_CACHE.read_text(encoding="utf-8"))
+            cached_time = data.get("timestamp", 0)
+
+            # Check if cache is fresh (< 1 hour old)
+            if time.time() - cached_time < self._refresh_interval:
+                self._valid_symbols = set(data.get("symbols", []))
+                self._last_refresh = cached_time
+                self._cache_loaded = True
+                logger.info(f"Loaded {len(self._valid_symbols)} valid symbols from cache")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to load symbol cache: {e}")
+
+        return False
+
+    def _save_cache(self):
+        """Save symbols to cache file."""
+        VALID_SYMBOLS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+
+        data = {
+            "timestamp": time.time(),
+            "testnet": self.testnet,
+            "symbols": list(self._valid_symbols)
+        }
+
+        tmp = VALID_SYMBOLS_CACHE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, VALID_SYMBOLS_CACHE)
+
+    def refresh(self) -> bool:
+        """Fetch valid symbols from Binance API."""
+        import urllib.request
+
+        url = f"{self._get_base_url()}/v3/exchangeInfo"
+
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            symbols = set()
+            for sym in data.get("symbols", []):
+                if sym.get("status") == "TRADING" and sym.get("quoteAsset") == "USDT":
+                    symbols.add(sym["symbol"])
+
+            self._valid_symbols = symbols
+            self._last_refresh = time.time()
+            self._cache_loaded = True
+
+            self._save_cache()
+            logger.info(f"Refreshed symbol list: {len(symbols)} valid USDT pairs")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to refresh symbol list: {e}")
+            return False
+
+    def ensure_loaded(self) -> bool:
+        """Ensure symbols are loaded (from cache or API)."""
+        if self._cache_loaded:
+            # Check if refresh needed
+            if time.time() - self._last_refresh > self._refresh_interval:
+                self.refresh()
+            return True
+
+        # Try cache first
+        if self._load_cache():
+            return True
+
+        # Fetch from API
+        return self.refresh()
+
+    def is_valid(self, symbol: str) -> bool:
+        """Check if symbol is valid for trading."""
+        if not self.ensure_loaded():
+            logger.warning(f"Symbol validation FAIL-CLOSED: cannot verify {symbol}")
+            return False  # FAIL-CLOSED
+
+        return symbol in self._valid_symbols
+
+    def filter_valid(self, symbols: List[str]) -> Tuple[List[str], List[str]]:
+        """
+        Filter symbols into valid and invalid.
+
+        Returns (valid_symbols, invalid_symbols)
+        """
+        self.ensure_loaded()
+
+        valid = []
+        invalid = []
+
+        for sym in symbols:
+            if sym in self._valid_symbols:
+                valid.append(sym)
+            else:
+                invalid.append(sym)
+
+        return valid, invalid
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SIGNAL CONSUMER (Reads from MoonBot decisions.jsonl)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SignalConsumer:
+    """
+    Consumes BUY decisions from MoonBot AI pipeline.
+
+    Monitors: state/ai/decisions.jsonl
+    Outputs: Signal objects for processing
+    """
+
+    def __init__(self):
+        self._last_position = 0
+        self._consumed_ids: Set[str] = set()
+        self._load_consumed()
+
+        # Start from end of file
+        if DECISIONS_FILE.exists():
+            self._last_position = DECISIONS_FILE.stat().st_size
+            logger.info(f"SignalConsumer: starting from position {self._last_position}")
+
+    def _load_consumed(self):
+        """Load previously consumed signal IDs."""
+        if CONSUMED_FILE.exists():
+            try:
+                lines = CONSUMED_FILE.read_text(encoding="utf-8").strip().split("\n")
+                self._consumed_ids = set(l.strip() for l in lines if l.strip())
+                logger.info(f"Loaded {len(self._consumed_ids)} consumed signal IDs")
+            except Exception as e:
+                logger.warning(f"Failed to load consumed IDs: {e}")
+
+    def _save_consumed(self, signal_id: str):
+        """Mark signal as consumed."""
+        self._consumed_ids.add(signal_id)
+        CONSUMED_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CONSUMED_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{signal_id}\n")
+
+    def get_new_signals(self) -> List[Signal]:
+        """
+        Poll for new BUY decisions from the AI pipeline.
+
+        Returns list of Signal objects ready for execution.
+        """
+        if not DECISIONS_FILE.exists():
+            return []
+
+        current_size = DECISIONS_FILE.stat().st_size
+        if current_size <= self._last_position:
+            return []
+
+        signals = []
+
+        try:
+            with open(DECISIONS_FILE, "r", encoding="utf-8") as f:
+                f.seek(self._last_position)
+                new_content = f.read()
+                self._last_position = f.tell()
+
+            for line in new_content.strip().split("\n"):
+                if not line.strip():
+                    continue
+
+                try:
+                    decision = json.loads(line)
+                    signal = self._parse_decision(decision)
+                    if signal:
+                        signals.append(signal)
+                except json.JSONDecodeError:
+                    continue
+                except Exception as e:
+                    logger.warning(f"Failed to parse decision: {e}")
+
+        except Exception as e:
+            logger.error(f"Error reading decisions: {e}")
+
+        return signals
+
+    def _parse_decision(self, decision: Dict) -> Optional[Signal]:
+        """
+        Convert MoonBot decision to Signal.
+
+        Only returns BUY signals that haven't been consumed.
+        Robust extraction with fallback for missing raw_signal.
+        """
+        signal_id = decision.get("signal_id", "")
+        final_action = decision.get("final_action", "SKIP")
+
+        # Skip non-BUY
+        if final_action != "BUY":
+            return None
+
+        # Skip already consumed
+        if signal_id in self._consumed_ids:
+            return None
+
+        # Extract symbol and data
+        symbol = decision.get("symbol", "")
+        if not symbol:
+            return None
+
+        raw = decision.get("raw_signal", {})
+        mode = decision.get("mode", {})
+        mode_config = mode.get("config", {})
+        dec = decision.get("decision", {})
+        precursor = decision.get("precursor", {}).get("details", {})
+
+        # Extract signal metrics with fallback
+        buys_per_sec = raw.get("buys_per_sec", 0)
+        delta_pct = raw.get("delta_pct", 0)
+        vol_raise_pct = raw.get("vol_raise_pct", 0)
+
+        # Fallback: if raw_signal missing, estimate from mode/precursor
+        if buys_per_sec == 0 and mode.get("name") == "super_scalp":
+            buys_per_sec = 100  # Super scalp implies high buys
+        elif buys_per_sec == 0 and mode.get("name") == "scalp":
+            buys_per_sec = 30  # Scalp implies moderate buys
+
+        if delta_pct == 0 and precursor.get("is_precursor"):
+            delta_pct = 3.0  # Precursor detected implies significant delta
+
+        # Create signal with mode config for targets
+        signal = Signal(
+            signal_id=signal_id,
+            symbol=symbol,
+            direction=raw.get("direction", "Long"),
+            buys_per_sec=buys_per_sec,
+            delta_pct=delta_pct,
+            vol_raise_pct=vol_raise_pct,
+            strategy=raw.get("strategy", mode.get("name", "unknown")),
+            confidence=dec.get("confidence", precursor.get("confidence", 0.5)),
+            timestamp=decision.get("timestamp", ""),
+            source="moonbot_ai",
+        )
+
+        # Mark as consumed
+        self._save_consumed(signal_id)
+        logger.info(f"📥 NEW BUY SIGNAL: {symbol} buys={buys_per_sec} delta={delta_pct} conf={signal.confidence:.2f}")
+
+        return signal
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MOONBOT DIRECT SIGNAL READER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MoonBotSignalReader:
+    """
+    Direct MoonBot signal reader.
+
+    Reads signals from data/moonbot_signals/*.jsonl
+    Applies basic validation and filters.
+    """
+
+    def __init__(self, validator: Optional['SymbolValidator'] = None):
+        self._last_positions: Dict[str, int] = {}  # file -> last read position
+        self._consumed_ids: Set[str] = set()
+        self.validator = validator
+        self._load_consumed()
+
+    def _load_consumed(self):
+        """Load consumed signal IDs from file."""
+        consumed_file = STATE_DIR / "moonbot_consumed.txt"
+        if consumed_file.exists():
+            try:
+                lines = consumed_file.read_text(encoding="utf-8").strip().split("\n")
+                self._consumed_ids = set(l.strip() for l in lines if l.strip())
+            except Exception:
+                pass
+
+    def _save_consumed(self, signal_id: str):
+        """Mark signal as consumed."""
+        self._consumed_ids.add(signal_id)
+        consumed_file = STATE_DIR / "moonbot_consumed.txt"
+        consumed_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(consumed_file, "a", encoding="utf-8") as f:
+            f.write(f"{signal_id}\n")
+
+    def get_new_signals(self, max_age_sec: int = 600) -> List[Signal]:
+        """
+        Get new signals from MoonBot signal files.
+
+        Args:
+            max_age_sec: Maximum signal age in seconds (default 10 min)
+
+        Returns:
+            List of valid Signal objects
+        """
+        if not MOONBOT_SIGNALS_DIR.exists():
+            return []
+
+        now = datetime.now(timezone.utc)
+        signals = []
+
+        # Get today's signal file
+        today_str = now.strftime("%Y%m%d")
+        signal_file = MOONBOT_SIGNALS_DIR / f"signals_{today_str}.jsonl"
+
+        if not signal_file.exists():
+            return []
+
+        # Read new lines from file
+        last_pos = self._last_positions.get(str(signal_file), 0)
+        current_size = signal_file.stat().st_size
+
+        if current_size <= last_pos:
+            return []
+
+        try:
+            with open(signal_file, "r", encoding="utf-8") as f:
+                f.seek(last_pos)
+                new_lines = f.read()
+                self._last_positions[str(signal_file)] = f.tell()
+
+            for line in new_lines.strip().split("\n"):
+                if not line.strip():
+                    continue
+
+                try:
+                    data = json.loads(line)
+                    signal = self._parse_signal(data, now, max_age_sec)
+                    if signal:
+                        signals.append(signal)
+                except json.JSONDecodeError:
+                    continue
+
+        except Exception as e:
+            logger.warning(f"Error reading MoonBot signals: {e}")
+
+        return signals
+
+    def _parse_signal(self, data: Dict, now: datetime, max_age_sec: int) -> Optional[Signal]:
+        """Parse and validate a MoonBot signal."""
+        signal_id = data.get("signal_id", "")
+
+        # Skip already consumed
+        if signal_id in self._consumed_ids:
+            return None
+
+        # Check timestamp age
+        ts_str = data.get("timestamp", "")
+        if ts_str:
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                age = (now - ts).total_seconds()
+                if age > max_age_sec:
+                    return None  # Too old
+            except Exception:
+                pass
+
+        symbol = data.get("symbol", "")
+        if not symbol:
+            return None
+
+        # Validate symbol if validator available
+        if self.validator and not self.validator.is_valid(symbol):
+            logger.debug(f"Skipping invalid symbol from MoonBot: {symbol}")
+            return None
+
+        # Create signal
+        signal = Signal(
+            signal_id=signal_id,
+            symbol=symbol,
+            direction=data.get("direction", "Long"),
+            buys_per_sec=data.get("buys_per_sec", 0),
+            delta_pct=data.get("delta_pct", 0),
+            vol_raise_pct=data.get("vol_raise_pct", 0),
+            strategy=data.get("strategy", "MoonBot"),
+            confidence=0.7,  # Default confidence for raw MoonBot signals
+            timestamp=ts_str,
+            source="moonbot_direct"
+        )
+
+        # Mark as consumed
+        self._save_consumed(signal_id)
+        logger.info(f"📥 MOONBOT SIGNAL: {symbol} buys={signal.buys_per_sec:.1f} delta={signal.delta_pct:.1f}%")
+
+        return signal
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRODUCTION SAFETY (Single instance, rate limiter, heartbeat)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def acquire_single_instance_lock(force: bool = False) -> bool:
+    """
+    Acquire single-instance lock via PID file.
+
+    Args:
+        force: If True, skip check for running instance (but still create lock)
+
+    Returns True if lock acquired, False if another instance running.
+    """
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+
+    if ENGINE_LOCK_FILE.exists() and not force:
+        try:
+            old_pid = int(ENGINE_LOCK_FILE.read_text().strip())
+            # Check if process still running (Windows-safe)
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x1000, False, old_pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if handle:
+                kernel32.CloseHandle(handle)
+                logger.error(f"Another instance running (PID {old_pid})")
+                return False
+        except Exception:
+            pass  # PID file corrupt or process dead, ok to take lock
+
+    # Write our PID (always create lock, even in force mode)
+    ENGINE_LOCK_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    logger.info(f"Acquired engine lock (PID {os.getpid()})")
+    return True
+
+
+def release_single_instance_lock():
+    """Release single-instance lock."""
+    try:
+        if ENGINE_LOCK_FILE.exists():
+            ENGINE_LOCK_FILE.unlink()
+            logger.info("Released engine lock")
+    except Exception as e:
+        logger.warning(f"Failed to release lock: {e}")
+
+
+def write_heartbeat(cycle: int, positions: int, session: str):
+    """Write heartbeat file for watchdog monitoring."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    heartbeat = {
+        "pid": os.getpid(),
+        "cycle": cycle,
+        "positions": positions,
+        "session": session,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp_unix": time.time(),
+    }
+    HEARTBEAT_FILE.write_text(json.dumps(heartbeat), encoding="utf-8")
+
+
+def check_stop_flag() -> bool:
+    """Check if STOP flag is set (graceful shutdown)."""
+    return STOP_FLAG_FILE.exists()
+
+
+class OrderRateLimiter:
+    """
+    Rolling window rate limiter for orders.
+
+    Prevents runaway trading by limiting orders per hour.
+    """
+
+    def __init__(self, max_per_hour: int = MAX_ORDERS_PER_HOUR):
+        self.max_per_hour = max_per_hour
+        self._order_times: List[float] = []
+
+    def can_order(self) -> bool:
+        """Check if we can place another order."""
+        now = time.time()
+        one_hour_ago = now - 3600
+
+        # Clean old entries
+        self._order_times = [t for t in self._order_times if t > one_hour_ago]
+
+        return len(self._order_times) < self.max_per_hour
+
+    def record_order(self):
+        """Record an order placement."""
+        self._order_times.append(time.time())
+
+    def orders_remaining(self) -> int:
+        """Get remaining orders in current window."""
+        now = time.time()
+        one_hour_ago = now - 3600
+        self._order_times = [t for t in self._order_times if t > one_hour_ago]
+        return max(0, self.max_per_hour - len(self._order_times))
+
+
+class CircuitBreaker:
+    """
+    Daily P&L circuit breaker.
+
+    Stops trading if daily loss exceeds threshold.
+    """
+
+    def __init__(self, max_loss_pct: float = MAX_DAILY_LOSS_PCT):
+        self.max_loss_pct = max_loss_pct
+        self.daily_pnl_usd = 0.0
+        self.starting_equity = 0.0
+        self._tripped = False
+        self._last_reset_date = datetime.now(timezone.utc).date()
+
+    def set_starting_equity(self, equity: float):
+        """Set starting equity for daily P&L calculation."""
+        self.starting_equity = equity
+
+    def record_pnl(self, pnl_usd: float):
+        """Record P&L from a closed trade."""
+        self._check_day_reset()
+        self.daily_pnl_usd += pnl_usd
+
+        # Check if circuit should trip
+        if self.starting_equity > 0:
+            loss_pct = abs(min(0, self.daily_pnl_usd)) / self.starting_equity * 100
+            if loss_pct >= self.max_loss_pct:
+                self._tripped = True
+                logger.error(f"🚨 CIRCUIT BREAKER TRIPPED: Daily loss {loss_pct:.2f}% >= {self.max_loss_pct}%")
+
+    def is_tripped(self) -> bool:
+        """Check if circuit breaker is tripped."""
+        self._check_day_reset()
+        return self._tripped
+
+    def _check_day_reset(self):
+        """Reset daily counters at midnight UTC."""
+        today = datetime.now(timezone.utc).date()
+        if today != self._last_reset_date:
+            logger.info(f"Daily reset: Previous P&L=${self.daily_pnl_usd:.2f}")
+            self.daily_pnl_usd = 0.0
+            self._tripped = False
+            self._last_reset_date = today
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -285,11 +871,13 @@ class BinanceExecutor:
             raise RuntimeError("Binance client not initialized")
 
         try:
+            # Format quantity to avoid scientific notation
+            qty_str = f"{quantity:.8f}".rstrip('0').rstrip('.')
             order = self.client.order_market_sell(
                 symbol=symbol,
-                quantity=quantity
+                quantity=qty_str
             )
-            logger.info(f"SELL executed: {symbol} qty={quantity} -> order_id={order['orderId']}")
+            logger.info(f"SELL executed: {symbol} qty={qty_str} -> order_id={order['orderId']}")
             return {
                 "success": True,
                 "order_id": str(order["orderId"]),
@@ -671,10 +1259,12 @@ class PositionManager:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TradeLogger:
-    """Atomic trade logging with sha256."""
+    """Atomic trade logging with sha256 + Telegram notifications."""
 
     def __init__(self):
         TRADES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self._tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self._tg_chat = os.getenv("TELEGRAM_ADMIN_ID")
 
     def log(self, event: str, data: Dict):
         """Log trade event atomically."""
@@ -699,6 +1289,47 @@ class TradeLogger:
             f.write(line)
             f.flush()
             os.fsync(f.fileno())
+
+        # Send Telegram notification (non-blocking)
+        self._notify_telegram(event, data)
+
+    def _notify_telegram(self, event: str, data: Dict):
+        """Send trade notification to Telegram."""
+        if not self._tg_token or not self._tg_chat:
+            return
+
+        try:
+            import urllib.request
+            import urllib.parse
+
+            # Format message
+            if event == "OPEN":
+                msg = f"🟢 *OPEN* {data.get('symbol')}\n"
+                msg += f"Entry: ${data.get('entry_price', 0):.4f}\n"
+                msg += f"Qty: {data.get('quantity', 0):.6f}"
+            elif event == "CLOSE":
+                pnl = data.get('pnl_pct', 0)
+                emoji = "✅" if pnl > 0 else "🔴"
+                msg = f"{emoji} *CLOSE* {data.get('symbol')}\n"
+                msg += f"PnL: {pnl:+.2f}%\n"
+                msg += f"Reason: {data.get('reason', '?')}"
+            else:
+                return  # Only notify OPEN/CLOSE
+
+            url = f"https://api.telegram.org/bot{self._tg_token}/sendMessage"
+            payload = {
+                "chat_id": self._tg_chat,
+                "text": msg,
+                "parse_mode": "Markdown",
+            }
+            req = urllib.request.Request(
+                url,
+                data=urllib.parse.urlencode(payload).encode(),
+                method="POST"
+            )
+            urllib.request.urlopen(req, timeout=5)
+        except Exception as e:
+            logger.debug(f"Telegram notify failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -825,6 +1456,7 @@ class HopeProductionEngine:
         self.mode = mode
         self.position_size = position_size
         self.running = False
+        self.cycle_count = 0  # For heartbeat/logging
 
         # Initialize components
         self.executor = BinanceExecutor(mode)
@@ -832,12 +1464,27 @@ class HopeProductionEngine:
         self.position_manager = PositionManager(self.executor)
         self.trade_logger = TradeLogger()
         self.learner = SelfLearner()
+        self.signal_consumer = SignalConsumer()  # Read from MoonBot pipeline
+
+        # === SYMBOL VALIDATION ===
+        self.symbol_validator = SymbolValidator(testnet=(mode == TradingMode.TESTNET))
+        self.symbol_validator.ensure_loaded()
+
+        # === MOONBOT DIRECT READER ===
+        self.moonbot_reader = MoonBotSignalReader(validator=self.symbol_validator)
+
+        # === PRODUCTION SAFETY ===
+        self.rate_limiter = OrderRateLimiter(MAX_ORDERS_PER_HOUR)
+        self.circuit_breaker = CircuitBreaker(MAX_DAILY_LOSS_PCT)
 
         # Stats
         self.cycle_stats = {
             "signals_received": 0,
             "signals_traded": 0,
             "signals_skipped": 0,
+            "invalid_symbols": 0,
+            "rate_limited": 0,
+            "circuit_breaker_blocks": 0,
         }
 
         logger.info(f"HopeProductionEngine initialized in {mode.value} mode")
@@ -847,8 +1494,32 @@ class HopeProductionEngine:
         Process a trading signal through the full cycle.
 
         Signal → Oracle Decision → Execution → Logging
+
+        Safety checks (fail-closed):
+        1. Symbol validation (must exist on exchange)
+        2. Circuit breaker (daily loss limit)
+        3. Rate limiter (orders per hour)
+        4. Price availability
         """
         self.cycle_stats["signals_received"] += 1
+
+        # === SAFETY CHECK 0: Symbol validation ===
+        if not self.symbol_validator.is_valid(signal.symbol):
+            self.cycle_stats["invalid_symbols"] += 1
+            logger.warning(f"⚠️ INVALID SYMBOL: {signal.symbol} not on exchange")
+            return {"action": "SKIP", "reasons": ["INVALID_SYMBOL"]}
+
+        # === SAFETY CHECK 1: Circuit breaker ===
+        if self.circuit_breaker.is_tripped():
+            self.cycle_stats["circuit_breaker_blocks"] += 1
+            logger.warning(f"🚨 CIRCUIT BREAKER: Blocking {signal.symbol}")
+            return {"action": "BLOCKED", "reason": "circuit_breaker_tripped"}
+
+        # === SAFETY CHECK 2: Rate limiter ===
+        if not self.rate_limiter.can_order():
+            self.cycle_stats["rate_limited"] += 1
+            logger.warning(f"⏳ RATE LIMITED: {signal.symbol} (remaining: {self.rate_limiter.orders_remaining()})")
+            return {"action": "RATE_LIMITED", "reason": "max_orders_per_hour"}
 
         # Get current price (FAIL-CLOSED)
         price = self.executor.get_price(signal.symbol)
@@ -878,6 +1549,7 @@ class HopeProductionEngine:
 
         if position:
             self.cycle_stats["signals_traded"] += 1
+            self.rate_limiter.record_order()  # Track order for rate limiting
             self.trade_logger.log("OPEN", {
                 "position_id": position.position_id,
                 "symbol": position.symbol,
@@ -895,15 +1567,33 @@ class HopeProductionEngine:
             return {"action": "FAILED", "reason": "execution_failed"}
 
     async def monitor_positions(self):
-        """Check positions for exit conditions."""
+        """
+        Check positions for exit conditions.
+
+        Includes PANIC-CLOSE: If price unavailable for open position,
+        close immediately at market to prevent unknown exposure.
+        """
         to_close = self.position_manager.check_positions()
+
+        # === PANIC-CLOSE: Check for positions with missing prices ===
+        for pos in list(self.position_manager.positions.values()):
+            if pos.status != "OPEN":
+                continue
+            price = self.executor.get_price(pos.symbol)
+            if price is None:
+                logger.error(f"🚨 PANIC-CLOSE: {pos.symbol} - price unavailable!")
+                to_close.append((pos, "PANIC_NO_PRICE"))
 
         for position, reason in to_close:
             result = self.position_manager.close_position(position, reason)
 
             if result.get("success"):
                 pnl_pct = result.get("pnl_pct", 0)
+                pnl_usd = result.get("pnl_usd", 0)
                 is_win = pnl_pct > 0
+
+                # === Record P&L for circuit breaker ===
+                self.circuit_breaker.record_pnl(pnl_usd)
 
                 # Log close
                 self.trade_logger.log("CLOSE", {
@@ -911,6 +1601,7 @@ class HopeProductionEngine:
                     "symbol": position.symbol,
                     "reason": reason,
                     "pnl_pct": pnl_pct,
+                    "pnl_usd": pnl_usd,
                     "exit_price": result.get("exit_price"),
                 })
 
@@ -919,8 +1610,53 @@ class HopeProductionEngine:
                 self.learner.record_outcome(position.symbol, is_win, pnl_pct, session)
 
     async def run_cycle(self):
-        """Run single monitoring cycle."""
+        """
+        Run single trading cycle.
+
+        1. Check STOP flag (graceful shutdown)
+        2. Write heartbeat (watchdog monitoring)
+        3. Poll for new signals from MoonBot pipeline
+        4. Process each BUY signal through Oracle + Execution
+        5. Monitor existing positions for exit conditions
+        """
+        self.cycle_count += 1
+
+        # === Check STOP flag ===
+        if check_stop_flag():
+            logger.info("🛑 STOP flag detected - shutting down gracefully")
+            self.running = False
+            return
+
+        # === Write heartbeat for watchdog ===
+        session = self.oracle.get_current_session()
+        write_heartbeat(
+            cycle=self.cycle_count,
+            positions=len(self.position_manager.positions),
+            session=session.value
+        )
+
+        # Step 1: Poll for new signals (both from AI decisions and direct MoonBot)
+        new_signals = self.signal_consumer.get_new_signals()
+        moonbot_signals = self.moonbot_reader.get_new_signals(max_age_sec=600)
+
+        all_signals = new_signals + moonbot_signals
+
+        for signal in all_signals:
+            try:
+                result = await self.process_signal(signal)
+                if result.get("action") == "BUY":
+                    logger.info(f"✅ TRADED: {signal.symbol} @ {result.get('entry_price')}")
+            except Exception as e:
+                logger.error(f"Failed to process signal {signal.symbol}: {e}")
+
+        # Step 2: Monitor positions for exit
         await self.monitor_positions()
+
+        # Periodic status log (every 60 cycles ≈ 1 min)
+        if self.cycle_count % 60 == 0:
+            logger.info(f"Cycle {self.cycle_count} | Session: {session.value} | "
+                       f"Positions: {len(self.position_manager.positions)} | "
+                       f"Traded: {self.cycle_stats['signals_traded']}")
 
     def get_status(self) -> Dict:
         """Get engine status."""
@@ -946,14 +1682,18 @@ async def main():
     parser.add_argument("--confirm", action="store_true", help="Confirm LIVE mode")
     parser.add_argument("--position-size", type=float, default=10.0, help="Default position size USD")
     parser.add_argument("--status", action="store_true", help="Show status and exit")
+    parser.add_argument("--force", action="store_true", help="Force start (ignore existing lock)")
     args = parser.parse_args()
 
     # Load env
     try:
         from dotenv import load_dotenv
-        load_dotenv(Path("C:/secrets/hope.env"))
+        env_path = Path("C:/secrets/hope.env")
+        if env_path.exists():
+            load_dotenv(env_path)
+            logger.info(f"Loaded env from {env_path}")
     except ImportError:
-        pass
+        logger.warning("python-dotenv not installed, using system env only")
 
     # Safety check for LIVE
     if args.mode == "LIVE":
@@ -969,27 +1709,55 @@ async def main():
 
     mode = TradingMode[args.mode]
 
-    # Create engine
-    engine = HopeProductionEngine(mode, args.position_size)
-
-    if args.status:
-        status = engine.get_status()
-        print(json.dumps(status, indent=2))
-        return
-
-    # Run
-    engine.running = True
-    logger.info(f"Engine starting in {mode.value} mode")
-    logger.info(f"Session: {engine.oracle.get_current_session().value}")
-    logger.info(f"Position size: ${args.position_size}")
+    # === SINGLE INSTANCE CHECK ===
+    if not args.status:
+        if not acquire_single_instance_lock(force=args.force):
+            logger.error("Another instance is already running. Use --force to override.")
+            sys.exit(42)  # Special exit code for duplicate instance
 
     try:
+        # Preflight checks
+        logger.info("Running preflight checks...")
+
+        # Check Gateway is running
+        gateway_lock = Path("state/locks/gateway.lock")
+        if gateway_lock.exists():
+            logger.info("Gateway already running")
+        else:
+            logger.warning("Gateway not running - starting in offline mode")
+
+        logger.info("Preflight PASSED")
+
+        # Create engine
+        engine = HopeProductionEngine(mode, args.position_size)
+
+        if args.status:
+            status = engine.get_status()
+            print(json.dumps(status, indent=2))
+            return
+
+        # Run
+        engine.running = True
+        logger.info(f"Production Engine started in {mode.value} mode")
+        logger.info(f"Session: {engine.oracle.get_current_session().value}")
+        logger.info(f"Position size: ${args.position_size}")
+        logger.info(f"Rate limit: {MAX_ORDERS_PER_HOUR} orders/hour")
+        logger.info(f"Circuit breaker: {MAX_DAILY_LOSS_PCT}% daily loss")
+
         while engine.running:
             await engine.run_cycle()
             await asyncio.sleep(1.0)
+
     except KeyboardInterrupt:
-        logger.info("Shutdown requested")
-        engine.running = False
+        logger.info("Shutdown requested (Ctrl+C)")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # === CLEANUP ===
+        release_single_instance_lock()
+        logger.info("Engine stopped")
 
 
 if __name__ == "__main__":
