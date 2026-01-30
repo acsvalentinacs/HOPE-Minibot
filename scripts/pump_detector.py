@@ -96,7 +96,16 @@ except ImportError as e:
     pass
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# HOPE v4.0 TRADING ENGINE INTEGRATION
+# LOGGING (must be before pretrade_pipeline import which uses log)
+# ═══════════════════════════════════════════════════════════════════════════════
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s'
+)
+log = logging.getLogger("PUMP-DET")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOPE v4.0 UNIFIED TRADING PIPELINE
 # ===============================================================================
 TRADING_ENGINE_READY = False
 try:
@@ -105,16 +114,37 @@ try:
 except ImportError as e:
     pass  # Trading Engine not available - will use legacy path
 
-# HOPE v4.0 LIVE TRADING SAFETY (Circuit Breaker, Rate Limiter, Health)
-LIVE_SAFETY_READY = False
+# HOPE v4.0 UNIFIED PRETRADE PIPELINE (replaces live_trading_patch)
+# Includes: Signal Schema, TTL, Liquidity, Price Feed, Gate, Circuit Breaker, Rate Limiter
+PRETRADE_PIPELINE_READY = False
 try:
-    from core.live_trading_patch import (
-        patch_for_live, get_circuit_breaker, get_rate_limiter,
-        get_health_monitor, get_live_barrier
+    from core.pretrade_pipeline import (
+        pretrade_check, PretradeResult, GateDecision, PipelineConfig,
+        CircuitBreaker, RateLimiter, HealthMonitor, LiveBarrier, ExecutionMode
     )
-    LIVE_SAFETY_READY = True
+    PRETRADE_PIPELINE_READY = True
+    _pipeline_config = PipelineConfig()
+    _health_monitor = HealthMonitor()
+    _live_barrier = LiveBarrier(_pipeline_config)
+    log.info(f"[HOPE v4.0] Unified Pipeline: READY | Mode: {_live_barrier.effective_mode.value}")
+    log.info(f"[HOPE v4.0] Limits: {_pipeline_config.max_consecutive_losses} losses, {_pipeline_config.max_daily_loss_pct}% daily, ${_pipeline_config.min_quote_volume_24h/1e6:.0f}M min liq")
 except ImportError as e:
-    pass  # Live safety not available
+    log.warning(f"[HOPE v4.0] Pretrade pipeline not available: {e}")
+
+# LEGACY: Keep for backwards compatibility
+LIVE_SAFETY_READY = PRETRADE_PIPELINE_READY
+
+def get_circuit_breaker():
+    return CircuitBreaker(_pipeline_config) if PRETRADE_PIPELINE_READY else None
+
+def get_rate_limiter():
+    return RateLimiter(_pipeline_config) if PRETRADE_PIPELINE_READY else None
+
+def get_health_monitor():
+    return _health_monitor if PRETRADE_PIPELINE_READY else None
+
+def get_live_barrier():
+    return _live_barrier if PRETRADE_PIPELINE_READY else None
 # ===============================================================================
 
 # === AI v2: TradingView Dynamic AllowList ===
@@ -124,13 +154,6 @@ try:
     TV_ALLOWLIST_ENABLED = True
 except ImportError as e:
     pass
-
-# Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s'
-)
-log = logging.getLogger("PUMP-DET")
 
 # Log AI v2 status
 if ADAPTIVE_TARGET_ENABLED:
@@ -474,28 +497,36 @@ class PumpDetector:
         # ═══════════════════════════════════════════════════════════════════
 
         # ═══════════════════════════════════════════════════════════════════════
-        # HOPE v4.0 FULL TRADING CYCLE
-        # Signal → Safety Check → Gate → TP/SL → Binance OCO → Exit → Log → Learn
+        # HOPE v4.0 UNIFIED PRETRADE PIPELINE + TRADING ENGINE
+        # Signal → Pretrade Check → Trading Engine → Binance → Log → Learn
         # ═══════════════════════════════════════════════════════════════════════
         if TRADING_ENGINE_READY:
-            # SAFETY CHECKS (fail-closed)
-            if LIVE_SAFETY_READY:
-                cb = get_circuit_breaker()
-                rl = get_rate_limiter()
-                hm = get_health_monitor()
+            # UNIFIED PRETRADE CHECK (includes ALL guards in one call)
+            if PRETRADE_PIPELINE_READY:
+                # Prepare signal with all required fields for pretrade_check
+                pretrade_signal = {
+                    "symbol": signal.get("symbol", ""),
+                    "delta_pct": signal.get("delta_pct", 0),
+                    "type": signal.get("signal_type", ""),
+                    "confidence": signal.get("confidence", 0.7),
+                    "price": signal.get("price", 0),
+                    "daily_volume_m": signal.get("daily_volume_m", 0),
+                    "timestamp": signal.get("timestamp", ""),
+                }
+
+                # Run unified pretrade check (Schema, TTL, Liquidity, Price, Gate, CB, RL)
+                pretrade_result = pretrade_check(pretrade_signal, _pipeline_config)
+
+                if not pretrade_result.ok:
+                    # Signal failed one or more guards - skip
+                    log.info(f"[PRETRADE] {signal.get('symbol')} BLOCKED: {pretrade_result.reason}")
+                    _health_monitor.record_skip(pretrade_result.reason)
+                    return
 
                 # Record signal for health monitoring
-                hm.record_signal()
+                _health_monitor.record_signal()
 
-                # Circuit Breaker check
-                if cb.is_open():
-                    log.warning(f"[CB] Circuit breaker OPEN - trade blocked: {signal.get('symbol')}")
-                    return
-
-                # Rate Limiter check
-                if not rl.acquire():
-                    log.warning(f"[RL] Rate limit exceeded - trade delayed: {signal.get('symbol')}")
-                    return
+                log.debug(f"[PRETRADE] {signal.get('symbol')} PASS: {pretrade_result.reason}")
 
             try:
                 # Prepare signal for trading engine
@@ -512,17 +543,18 @@ class PumpDetector:
                 if result:
                     log.info(f"[TRADE] {result.get('symbol')} {result.get('status')} PnL=${result.get('pnl_usdt', 0):.2f}")
 
-                    # Record trade result for Circuit Breaker
-                    if LIVE_SAFETY_READY:
+                    # Record trade result for Circuit Breaker (UNIFIED)
+                    if PRETRADE_PIPELINE_READY:
                         pnl_pct = result.get('pnl_pct', 0)
+                        cb = CircuitBreaker(_pipeline_config)
                         cb.record_trade(pnl_pct)
-                        hm.record_trade()
+                        _health_monitor.record_trade()
                 else:
                     log.debug(f"[FILTER] Signal passed to engine but not traded")
             except Exception as e:
                 log.error(f"[ERROR] Trading engine error: {e}")
-                if LIVE_SAFETY_READY:
-                    hm.record_error()
+                if PRETRADE_PIPELINE_READY:
+                    _health_monitor.record_error()
         # ═══════════════════════════════════════════════════════════════════════
 
         log.info(
@@ -800,11 +832,10 @@ async def main():
     args = parser.parse_args()
 
     # HOPE v4.0 LIVE SAFETY INITIALIZATION
-    if LIVE_SAFETY_READY:
-        barrier = patch_for_live()
-        log.info(f"Live Safety initialized: {barrier}")
+    if LIVE_SAFETY_READY and PRETRADE_PIPELINE_READY:
+        log.info(f"[HOPE v4.0] Live Safety: READY | Mode: {_live_barrier.effective_mode.value}")
     else:
-        log.warning("Live Safety NOT available - trading disabled")
+        log.warning("[HOPE v4.0] Live Safety NOT available - trading disabled")
 
     # Get symbols
     if args.symbols:
