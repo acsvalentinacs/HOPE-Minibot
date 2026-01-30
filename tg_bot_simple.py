@@ -1234,6 +1234,9 @@ class HopeMiniBot:
             ],
             [
                 InlineKeyboardButton("🤖 AI", callback_data="hope_ai"),
+                InlineKeyboardButton("📋 AllowList", callback_data="hope_allowlist"),
+            ],
+            [
                 InlineKeyboardButton("ℹ️ Help", callback_data="hope_help"),
             ],
         ]
@@ -1670,6 +1673,171 @@ class HopeMiniBot:
             await self.cmd_ai(update, context)
         else:
             await self._reply(update, f"❌ Не удалось {action} модуль {module}")
+
+    # === ALLOWLIST COMMANDS v3.0.0 ===
+
+    def _allowlist_keyboard(self) -> InlineKeyboardMarkup:
+        """AllowList control panel keyboard."""
+        buttons = [
+            [
+                InlineKeyboardButton("🔄 Обновить список", callback_data="allowlist_update"),
+            ],
+            [
+                InlineKeyboardButton("📋 Показать список", callback_data="allowlist_show"),
+            ],
+            [
+                InlineKeyboardButton("🧠 Обучить Eye", callback_data="allowlist_train"),
+                InlineKeyboardButton("📊 Статистика", callback_data="allowlist_stats"),
+            ],
+            [
+                InlineKeyboardButton("🔃 Refresh", callback_data="allowlist_refresh"),
+                InlineKeyboardButton("⬅️ Назад", callback_data="hope_refresh"),
+            ],
+        ]
+        return InlineKeyboardMarkup(buttons)
+
+    async def cmd_allowlist(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """AllowList management panel."""
+        if not await self._guard_admin(update):
+            return
+
+        # Get current AllowList status
+        try:
+            from core.allowlist_manager import get_allowlist_manager
+            manager = get_allowlist_manager()
+            status = manager.status()
+            count = status.get("symbols_count", 0)
+            top5 = status.get("top_5", [])
+            updated = status.get("updated_at", "?")[:19]
+            next_upd = status.get("next_update_at", "?")[:19]
+        except Exception as e:
+            count = 0
+            top5 = []
+            updated = "N/A"
+            next_upd = "N/A"
+
+        lines = [
+            "📋 ALLOWLIST MANAGER",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"Монет в списке: {count}",
+            f"Обновлено: {updated}",
+            f"След. обновление: {next_upd}",
+            "",
+            "TOP-5:",
+        ]
+        for i, sym in enumerate(top5[:5], 1):
+            lines.append(f"  {i}. {sym}")
+
+        await self._reply(update, "\n".join(lines), reply_markup=self._allowlist_keyboard())
+
+    async def cmd_allowlist_update(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Force update AllowList."""
+        if not await self._guard_admin(update):
+            return
+
+        await self._reply(update, "🔄 Обновляю AllowList...")
+
+        try:
+            from core.allowlist_manager import get_allowlist_manager
+            manager = get_allowlist_manager()
+            symbols = await manager.update(force=True)
+            await self._reply(
+                update,
+                f"✅ AllowList обновлён!\n\nМонет: {len(symbols)}\nTOP-5: {', '.join(symbols[:5])}",
+                reply_markup=self._allowlist_keyboard()
+            )
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
+    async def cmd_allowlist_show(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show full AllowList."""
+        if not await self._guard_admin(update):
+            return
+
+        try:
+            from core.allowlist_manager import get_allowlist_manager
+            manager = get_allowlist_manager()
+            symbols = manager.get_symbols()
+
+            lines = [f"📋 ALLOWLIST ({len(symbols)} монет)", "━━━━━━━━━━━━━━━━━━━━━━"]
+            for i, sym in enumerate(symbols, 1):
+                score = manager.get_score(sym)
+                lines.append(f"{i:2}. {sym:<12} ({score:.3f})")
+
+            await self._reply(update, "\n".join(lines), reply_markup=self._allowlist_keyboard())
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
+    async def cmd_allowlist_train(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Train Eye of God on historical data."""
+        if not await self._guard_admin(update):
+            return
+
+        await self._reply(update, "🧠 Запускаю обучение Eye of God...")
+
+        try:
+            from scripts.eye_trainer import EyeOfGodTrainer
+            trainer = EyeOfGodTrainer()
+            result = trainer.train()
+
+            status = result.get("learning_result", {}).get("status", "unknown")
+            trades = result.get("stats", {}).get("total", 0)
+            win_rate = result.get("stats", {}).get("win_rate", 0) * 100
+
+            await self._reply(
+                update,
+                f"🧠 Обучение завершено!\n\nСтатус: {status}\nСделок: {trades}\nWin Rate: {win_rate:.1f}%",
+                reply_markup=self._allowlist_keyboard()
+            )
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
+    async def cmd_allowlist_stats(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show Eye of God training stats."""
+        if not await self._guard_admin(update):
+            return
+
+        try:
+            from scripts.eye_trainer import EyeOfGodTrainer
+            trainer = EyeOfGodTrainer()
+            stats = trainer.collector.get_stats()
+
+            total = stats.get("total", 0)
+            wins = stats.get("wins", 0)
+            win_rate = stats.get("win_rate", 0) * 100
+            total_pnl = stats.get("total_pnl", 0)
+            avg_pnl = stats.get("avg_pnl", 0)
+
+            lines = [
+                "📊 EYE OF GOD STATS",
+                "━━━━━━━━━━━━━━━━━━━━━━",
+                f"Сделок: {total}",
+                f"Побед: {wins} ({win_rate:.1f}%)",
+                f"Total PnL: {total_pnl:+.2f}%",
+                f"Avg PnL: {avg_pnl:+.2f}%",
+            ]
+
+            # By mode
+            by_mode = stats.get("by_mode", {})
+            if by_mode:
+                lines.append("\nПо режимам:")
+                for mode, data in by_mode.items():
+                    wr = data["wins"] / data["total"] * 100 if data["total"] > 0 else 0
+                    lines.append(f"  {mode}: {data['total']} ({wr:.0f}% WR)")
+
+            await self._reply(update, "\n".join(lines), reply_markup=self._allowlist_keyboard())
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}\n\nВозможно нет данных для статистики.")
 
     # === NEW COMMANDS v2.3.0 (GPT TZ) ===
 
@@ -2894,6 +3062,26 @@ class HopeMiniBot:
             return
         if data == "hope_ai":
             await self.cmd_ai(update, context)
+            return
+        if data == "hope_allowlist":
+            await self.cmd_allowlist(update, context)
+            return
+
+        # AllowList callbacks
+        if data == "allowlist_refresh":
+            await self.cmd_allowlist(update, context)
+            return
+        if data == "allowlist_update":
+            await self.cmd_allowlist_update(update, context)
+            return
+        if data == "allowlist_show":
+            await self.cmd_allowlist_show(update, context)
+            return
+        if data == "allowlist_train":
+            await self.cmd_allowlist_train(update, context)
+            return
+        if data == "allowlist_stats":
+            await self.cmd_allowlist_stats(update, context)
             return
 
         # AI-Gateway callbacks (v2.5.0)
