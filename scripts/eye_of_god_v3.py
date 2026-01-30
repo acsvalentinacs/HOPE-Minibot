@@ -274,14 +274,29 @@ class AlphaCommittee:
 
     @property
     def whitelist(self) -> Set[str]:
-        """Get whitelist - dynamic or static."""
+        """Get whitelist - dynamic + hot list + static fallback."""
+        result = set()
+
+        # Layer 1: Dynamic AllowList (top 20 by volume)
         if self.use_dynamic_allowlist:
             try:
                 from core.allowlist_manager import get_allowlist_manager
-                return get_allowlist_manager().get_symbols_set()
+                result.update(get_allowlist_manager().get_symbols_set())
             except Exception:
                 pass
-        return self._static_whitelist
+
+        # Layer 2: Hot AllowList (auto-added pumps)
+        try:
+            from core.hot_allowlist import get_hot_allowlist
+            result.update(get_hot_allowlist().get_hot_symbols())
+        except Exception:
+            pass
+
+        # Fallback to static if empty
+        if not result:
+            return self._static_whitelist
+
+        return result
     
     def _score_precursor(self, signal) -> Tuple[float, List[str]]:
         """Score precursor patterns"""

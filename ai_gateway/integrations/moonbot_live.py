@@ -303,6 +303,24 @@ class MoonBotLiveIntegration:
             logger.info(f"🔥 PRECURSOR DETECTED: {symbol} [{precursor_result.signals_detected}]")
 
         # ═══════════════════════════════════════════════════════════════
+        # STAGE 1.5: HOT ALLOWLIST AUTO-ADD (no user prompt!)
+        # ═══════════════════════════════════════════════════════════════
+        try:
+            from core.hot_allowlist import process_signal_for_hot_list
+            hot_signal = {
+                "symbol": symbol,
+                "buys_per_sec": signal.get("buys_per_sec", 0),
+                "delta_pct": signal.get("delta_pct", 0),
+                "vol_raise_pct": signal.get("vol_raise_pct", 0),
+                "daily_volume": signal.get("daily_volume", 0),
+            }
+            hot_result = process_signal_for_hot_list(hot_signal)
+            if hot_result:
+                logger.info(f"🔥 AUTO-ADDED TO HOT_LIST: {symbol} (score={hot_result.pump_score:.2f})")
+        except Exception as e:
+            logger.debug(f"Hot AllowList check failed: {e}")
+
+        # ═══════════════════════════════════════════════════════════════
         # STAGE 2: MODE ROUTING
         # ═══════════════════════════════════════════════════════════════
 
