@@ -3,6 +3,8 @@
 # sha256:position_watchdog_v1_prod
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30T04:30:00Z
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-31T08:58:00Z
 # Purpose: Position Watchdog - независимый контур закрытия позиций
 # Contract: Позиции ДОЛЖНЫ закрываться по timeout независимо от сигналов
 # === END SIGNATURE ===
@@ -152,7 +154,23 @@ class WatchedPosition:
     
     @classmethod
     def from_dict(cls, d: Dict) -> 'WatchedPosition':
-        return cls(**d)
+        """Load from dict with field mapping for autotrader format"""
+        # Map autotrader field names to watchdog field names
+        mapped = {
+            "position_id": d.get("position_id", ""),
+            "symbol": d.get("symbol", ""),
+            "entry_price": d.get("entry_price", d.get("entry", 0.0)),
+            "quantity": d.get("quantity", d.get("qty", 0.0)),
+            "entry_time": d.get("entry_time", d.get("opened_at", "")),
+            "timeout_sec": d.get("timeout_sec", 1800),  # Default 30 min
+            "target_price": d.get("target_price", d.get("target", 0.0)),
+            "stop_price": d.get("stop_price", d.get("stop", 0.0)),
+        }
+        # Copy optional tracking fields if present
+        for key in ["current_price", "last_price_update", "mfe", "mae", "status", "close_attempts"]:
+            if key in d:
+                mapped[key] = d[key]
+        return cls(**mapped)
     
     def update_price(self, price: float):
         """Update current price and track MFE/MAE"""
@@ -370,17 +388,30 @@ class PositionWatchdog:
         self.api_secret = os.environ.get("BINANCE_API_SECRET", "")
     
     def _load_positions(self):
-        """Load positions from file"""
-        if POSITIONS_FILE.exists():
+        """Load positions from watchdog file AND autotrader file"""
+        # Sources: own watchdog file + autotrader positions
+        autotrader_file = Path("state/ai/autotrader/positions.json")
+        sources = [POSITIONS_FILE, autotrader_file]
+
+        loaded_ids = set()
+        for src in sources:
+            if not src.exists():
+                continue
             try:
-                data = json.loads(POSITIONS_FILE.read_text())
+                data = json.loads(src.read_text(encoding="utf-8"))
                 for pos_data in data.get("positions", []):
                     pos = WatchedPosition.from_dict(pos_data)
-                    if pos.status == "OPEN":
-                        self.positions[pos.position_id] = pos
-                log.info(f"Loaded {len(self.positions)} positions")
+                    if pos.position_id and pos.position_id not in loaded_ids:
+                        # Consider OPEN if status not set (autotrader format)
+                        if pos.status in ("OPEN", ""):
+                            pos.status = "OPEN"
+                            self.positions[pos.position_id] = pos
+                            loaded_ids.add(pos.position_id)
+                log.info(f"Loaded from {src.name}: {len(data.get('positions', []))} entries")
             except Exception as e:
-                log.error(f"Failed to load positions: {e}")
+                log.error(f"Failed to load positions from {src}: {e}")
+
+        log.info(f"Total active positions: {len(self.positions)}")
     
     def _save_positions(self):
         """Save positions atomically"""

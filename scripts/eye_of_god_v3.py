@@ -3,8 +3,10 @@
 # sha256:eye_of_god_v3_hardened
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30T05:00:00Z
-# Purpose: Eye of God V3 - Hardened with Two-Chamber Architecture
-# Contract: Alpha Committee (want) + Risk Committee (allow) = Decision
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-01-31T09:30:00Z
+# Purpose: Eye of God V3 - Hardened with Two-Chamber Architecture + Adaptive Targets
+# Contract: Alpha Committee (want) + Risk Committee (allow) + AdaptiveTargets = Decision
 # === END SIGNATURE ===
 """
 ═══════════════════════════════════════════════════════════════════════════════
@@ -100,6 +102,14 @@ except ImportError:
     validate_signal = None
     check_liquidity = None
 
+# Import Adaptive Targets for $100 capital strategy
+try:
+    from core.adaptive_targets import AdaptiveTargetEngine, AdaptiveTargets
+    ADAPTIVE_TARGETS_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_TARGETS_AVAILABLE = False
+    log.warning("AdaptiveTargetEngine not available")
+
 log = logging.getLogger("EYE-V3")
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -110,14 +120,14 @@ STATE_DIR = Path("state/ai/eye_v3")
 DECISIONS_LOG = STATE_DIR / "decisions.jsonl"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Fail-closed thresholds
+# Fail-closed thresholds (UPDATED FOR $100 CAPITAL)
 MAX_SIGNAL_AGE_SEC = 60           # Reject signals older than 60s
 MAX_PRICE_AGE_SEC = 30            # Price stale after 30s
-MIN_DAILY_VOLUME_M = 5.0          # $5M minimum daily volume
-MIN_CONFIDENCE_TO_TRADE = 0.55    # Minimum confidence
-MAX_OPEN_POSITIONS = 3            # Maximum concurrent positions
-MAX_DAILY_LOSS_USD = 50.0         # Daily loss limit
-MAX_EXPOSURE_PER_SYMBOL = 30.0    # Max USD per symbol
+MIN_DAILY_VOLUME_M = 10.0         # $10M minimum daily volume (higher = safer)
+MIN_CONFIDENCE_TO_TRADE = 0.65    # Minimum confidence (raised for $100 capital)
+MAX_OPEN_POSITIONS = 2            # Maximum concurrent positions (conservative)
+MAX_DAILY_LOSS_USD = 15.0         # Daily loss limit ($15 = 15% of capital)
+MAX_EXPOSURE_PER_SYMBOL = 25.0    # Max USD per symbol ($25 max position)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -614,11 +624,20 @@ class EyeOfGodV3:
     to produce fail-closed decisions.
     """
     
-    def __init__(self, base_position_size: float = 10.0):
+    def __init__(self, base_position_size: float = 20.0):  # $20 for $100 capital
         self.alpha = AlphaCommittee()
         self.risk = RiskCommittee()
         self.base_position_size = base_position_size
-        
+
+        # Initialize Adaptive Target Engine for $100 capital
+        self.adaptive_engine = None
+        if ADAPTIVE_TARGETS_AVAILABLE:
+            try:
+                self.adaptive_engine = AdaptiveTargetEngine('config/scalping_100.json')
+                log.info("AdaptiveTargetEngine loaded for $100 capital strategy")
+            except Exception as e:
+                log.warning(f"Failed to load AdaptiveTargetEngine: {e}")
+
         # Stats
         self.stats = {
             "decisions": 0,
@@ -705,12 +724,40 @@ class EyeOfGodV3:
             # APPROVED: Both committees agree
             action = "BUY"
             self.stats["buys"] += 1
-            
-            # Calculate position size with risk adjustments
-            size = self.base_position_size * alpha_decision.position_size_mult
-            size *= risk_decision.liquidity_factor
-            size *= risk_decision.market_regime_factor
-            
+
+            # Use Adaptive Target Engine if available
+            target_pct = alpha_decision.target_pct
+            stop_pct = alpha_decision.stop_pct
+            if self.adaptive_engine:
+                try:
+                    adaptive_signal = {
+                        'symbol': symbol,
+                        'confidence': alpha_decision.confidence,
+                        'buys_per_sec': getattr(signal, 'buys_per_sec', 0),
+                        'delta_pct': getattr(signal, 'delta_pct', 0),
+                        'vol_raise_pct': getattr(signal, 'vol_raise_pct', 0),
+                    }
+                    adaptive = self.adaptive_engine.calculate(adaptive_signal, {})
+                    size = adaptive.position_size
+                    target_pct = adaptive.tp_pct
+                    stop_pct = -adaptive.sl_pct  # Negative for stop loss
+                    all_reasons.append(f"ADAPTIVE:TP={target_pct:.1f}%,SL={stop_pct:.1f}%,RR={adaptive.rr_ratio:.1f}")
+                    log.info(f"[ADAPTIVE] {symbol} TP={target_pct:.2f}% SL={stop_pct:.2f}% Size=${size:.2f}")
+                except Exception as e:
+                    log.warning(f"Adaptive calculation failed: {e}, using base")
+                    size = self.base_position_size * alpha_decision.position_size_mult
+                    size *= risk_decision.liquidity_factor
+                    size *= risk_decision.market_regime_factor
+            else:
+                # Fallback to base calculation
+                size = self.base_position_size * alpha_decision.position_size_mult
+                size *= risk_decision.liquidity_factor
+                size *= risk_decision.market_regime_factor
+
+            # Update targets from adaptive
+            alpha_decision.target_pct = target_pct
+            alpha_decision.stop_pct = stop_pct
+
             all_reasons.append("RISK_APPROVED")
             all_reasons.extend(risk_decision.checks_passed)
             
