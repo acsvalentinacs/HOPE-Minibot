@@ -124,20 +124,7 @@ class DashboardServer:
             except Exception as e:
                 logger.error(f"Failed to load position: {e}")
 
-        # Default position if not loaded
-        if not self.position:
-            self.position = Position(
-                symbol="SENTUSDT",
-                qty=138.0,
-                entry=0.04327,
-                current=0.0,
-                target=0.044222,
-                stop=0.042794,
-                pnl_pct=0.0,
-                pnl_usd=0.0,
-                value=0.0,
-                opened_at="2026-01-31T03:56:06Z"
-            )
+        # No default position - if file is empty, position stays None
 
     def _setup_routes(self):
         """Setup API routes."""

@@ -462,6 +462,32 @@
             border-top: 1px solid var(--border);
         }
 
+        /* Connection indicator */
+        .connection-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 8px;
+        }
+        .connection-dot.connected { background: var(--accent-green); }
+        .connection-dot.disconnected { background: var(--accent-red); animation: blink 1s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        /* Balance rows */
+        .balance-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .balance-row:last-child { border-bottom: none; }
+
+        /* Status colors */
+        .status-ok { color: var(--accent-green); }
+        .status-warn { color: var(--accent-yellow); }
+        .status-error { color: var(--accent-red); }
+
         /* Responsive */
         @media (max-width: 1920px) {
             .dashboard {
@@ -508,41 +534,41 @@
 
         <!-- Position Card -->
         <div class="card position-card">
-            <div class="card-title">ACTIVE POSITION</div>
+            <div class="card-title">ACTIVE POSITION <span id="connection-indicator" class="connection-dot connected" title="API Connected"></span></div>
             <div class="position-header">
                 <div>
-                    <div class="position-symbol">SENTUSDT</div>
-                    <div style="color: var(--text-secondary);">Sentinel Protocol</div>
+                    <div class="position-symbol" id="position-symbol">NO POSITION</div>
+                    <div id="position-desc" style="color: var(--text-secondary);">Waiting for trade...</div>
                 </div>
                 <div class="position-pnl">
-                    <div class="pnl-value pnl-negative" id="pnl-display">-0.46%</div>
-                    <div style="color: var(--text-secondary);">-$0.03</div>
+                    <div class="pnl-value" id="pnl-display">--</div>
+                    <div id="pnl-usd" style="color: var(--text-secondary);"></div>
                 </div>
             </div>
 
             <div class="position-details">
                 <div class="detail-item">
                     <div class="detail-label">Entry Price</div>
-                    <div class="detail-value">$0.04327</div>
+                    <div class="detail-value" id="entry-price">--</div>
                 </div>
                 <div class="detail-item">
                     <div class="detail-label">Current Price</div>
-                    <div class="detail-value" id="current-price">$0.04307</div>
+                    <div class="detail-value" id="current-price">--</div>
                 </div>
                 <div class="detail-item">
                     <div class="detail-label">Quantity</div>
-                    <div class="detail-value">138.0 SENT</div>
+                    <div class="detail-value" id="position-qty">0</div>
                 </div>
                 <div class="detail-item">
                     <div class="detail-label">Position Value</div>
-                    <div class="detail-value" id="position-value">$5.94</div>
+                    <div class="detail-value" id="position-value">$0.00</div>
                 </div>
             </div>
 
             <div class="progress-container">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                    <span style="color: var(--accent-red);">STOP: $0.04279 (-1.1%)</span>
-                    <span style="color: var(--accent-green);">TARGET: $0.04422 (+2.2%)</span>
+                    <span id="stop-level" style="color: var(--accent-red);">STOP: --</span>
+                    <span id="target-level" style="color: var(--accent-green);">TARGET: --</span>
                 </div>
                 <div class="progress-bar">
                     <div class="progress-marker" id="price-marker" style="left: 45%;"></div>
@@ -633,24 +659,24 @@
             <div class="card-title">SYSTEM STATUS</div>
             <div class="status-grid">
                 <div class="status-item">
-                    <div class="status-icon" style="color: var(--accent-green);">&#9679;</div>
+                    <div class="status-icon" id="autotrader-icon" style="color: var(--accent-green);">&#9679;</div>
                     <div class="status-label">AutoTrader</div>
-                    <div class="status-value">RUNNING</div>
+                    <div class="status-value" id="autotrader-status">--</div>
                 </div>
                 <div class="status-item">
-                    <div class="status-icon" style="color: var(--accent-green);">&#9679;</div>
+                    <div class="status-icon" id="pump-icon" style="color: var(--accent-green);">&#9679;</div>
                     <div class="status-label">Pump Detector</div>
-                    <div class="status-value">ACTIVE</div>
+                    <div class="status-value" id="pump-status">--</div>
                 </div>
                 <div class="status-item">
-                    <div class="status-icon" style="color: var(--accent-green);">&#9679;</div>
+                    <div class="status-icon" id="circuit-icon" style="color: var(--accent-green);">&#9679;</div>
                     <div class="status-label">Circuit Breaker</div>
-                    <div class="status-value">CLOSED</div>
+                    <div class="status-value" id="circuit-status">--</div>
                 </div>
                 <div class="status-item">
-                    <div class="status-icon" style="color: var(--accent-yellow);">&#9679;</div>
+                    <div class="status-icon" id="gateway-icon" style="color: var(--accent-yellow);">&#9679;</div>
                     <div class="status-label">Price Gateway</div>
-                    <div class="status-value">FALLBACK</div>
+                    <div class="status-value" id="gateway-status">--</div>
                 </div>
             </div>
         </div>
@@ -665,23 +691,8 @@
         <!-- Balances -->
         <div class="card">
             <div class="card-title">ACCOUNT BALANCES</div>
-            <div class="balance-list">
-                <div class="balance-item">
-                    <span class="balance-asset">USDT</span>
-                    <span class="balance-amount">94.39</span>
-                </div>
-                <div class="balance-item">
-                    <span class="balance-asset">SENT</span>
-                    <span class="balance-amount">138.0</span>
-                </div>
-                <div class="balance-item">
-                    <span class="balance-asset">SLF</span>
-                    <span class="balance-amount">638.6</span>
-                </div>
-                <div class="balance-item">
-                    <span class="balance-asset">BNB</span>
-                    <span class="balance-amount">0.0002</span>
-                </div>
+            <div class="balance-list" id="balances-list">
+                <div class="balance-row">Loading...</div>
             </div>
         </div>
 
@@ -735,36 +746,7 @@
         <div class="card signals-card">
             <div class="card-title">RECENT SIGNALS</div>
             <div id="signals-list">
-                <div class="signal-item">
-                    <span class="signal-time">03:56:03</span>
-                    <span class="signal-symbol">SENTUSDT</span>
-                    <span class="signal-decision decision-buy">BUY</span>
-                    <span class="signal-conf">21%</span>
-                </div>
-                <div class="signal-item">
-                    <span class="signal-time">03:56:33</span>
-                    <span class="signal-symbol">SENTUSDT</span>
-                    <span class="signal-decision decision-skip">BLOCKED</span>
-                    <span class="signal-conf">25%</span>
-                </div>
-                <div class="signal-item">
-                    <span class="signal-time">03:57:03</span>
-                    <span class="signal-symbol">SENTUSDT</span>
-                    <span class="signal-decision decision-skip">BLOCKED</span>
-                    <span class="signal-conf">27%</span>
-                </div>
-                <div class="signal-item">
-                    <span class="signal-time">03:57:36</span>
-                    <span class="signal-symbol">SENTUSDT</span>
-                    <span class="signal-decision decision-skip">BLOCKED</span>
-                    <span class="signal-conf">35%</span>
-                </div>
-                <div class="signal-item">
-                    <span class="signal-time">03:58:06</span>
-                    <span class="signal-symbol">SENTUSDT</span>
-                    <span class="signal-decision decision-skip">BLOCKED</span>
-                    <span class="signal-conf">37%</span>
-                </div>
+                <div class="signal-item">Loading signals...</div>
             </div>
         </div>
 
@@ -772,14 +754,7 @@
         <div class="card" style="grid-column: span 2;">
             <div class="card-title">EVENT LOG</div>
             <div id="event-log" style="font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; background: var(--bg-dark); padding: 12px; border-radius: 8px;">
-                <div style="color: var(--accent-green);">[03:55:01] EyeOfGodV3 initialized - using two-chamber decisions</div>
-                <div style="color: var(--accent-yellow);">[03:55:02] LIVE MODE - REAL MONEY AT RISK!</div>
-                <div style="color: var(--accent-blue);">[03:55:02] AutoTrader initialized in LIVE mode</div>
-                <div style="color: var(--accent-green);">[03:56:03] Processing signal: SENTUSDT | eye_of_god=True</div>
-                <div style="color: var(--accent-green);">[03:56:03] EYE: SENTUSDT | BUY | conf=21% | mode=SWING</div>
-                <div style="color: var(--accent-blue);">[03:56:05] [LIVE] Executing market buy: $6.0 of SENTUSDT</div>
-                <div style="color: var(--accent-green);">[03:56:06] HTTP 200 OK - Order filled: 138.0 SENTUSDT @ 0.04327</div>
-                <div style="color: var(--accent-green);">[03:56:06] Position created: pos_54905038 | target=0.044222 | stop=0.042794</div>
+                <div style="color: var(--accent-blue);">Dashboard initialized - fetching data...</div>
             </div>
         </div>
 
@@ -792,7 +767,15 @@
     </div>
 
     <script>
-        // Update clock
+        // === HOPE Dashboard v3.1 - Dynamic API Fetching ===
+        const API_BASE = '';  // Same origin
+        let currentPosition = null;
+        let wsConnection = null;
+        let connectionRetries = 0;
+        let lastPrices = {};
+        let soundEnabled = true;
+
+        // === CLOCK ===
         function updateClock() {
             const now = new Date();
             document.getElementById('clock').textContent =
@@ -803,77 +786,325 @@
         setInterval(updateClock, 1000);
         updateClock();
 
-        // Control functions
-        function emergencyStop() {
-            if (confirm('EMERGENCY STOP - This will close ALL positions and HALT trading. Continue?')) {
-                alert('Emergency stop triggered. System halting...');
+        // === API FETCHING ===
+        async function fetchAPI(endpoint) {
+            try {
+                const res = await fetch(API_BASE + endpoint);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.json();
+            } catch (e) {
+                console.error(`API Error ${endpoint}:`, e);
+                return null;
             }
         }
 
-        function closePosition() {
-            if (confirm('Close SENTUSDT position at market price?')) {
-                alert('Sending market sell order...');
+        // === UPDATE POSITION ===
+        async function updatePosition() {
+            const data = await fetchAPI('/api/position');
+            if (!data) return;
+
+            currentPosition = data.position;
+            const posCard = document.querySelector('.position-card, .card');
+
+            if (!currentPosition) {
+                // No position
+                document.getElementById('position-symbol').textContent = 'NO POSITION';
+                document.getElementById('entry-price').textContent = '--';
+                document.getElementById('current-price').textContent = '--';
+                document.getElementById('position-qty').textContent = '0';
+                document.getElementById('position-value').textContent = '$0.00';
+                document.getElementById('pnl-display').textContent = '--';
+                document.getElementById('pnl-display').className = 'pnl-value';
+                document.getElementById('pnl-usd').textContent = '';
+                document.getElementById('stop-level').textContent = 'STOP: --';
+                document.getElementById('target-level').textContent = 'TARGET: --';
+                document.getElementById('price-marker').style.left = '50%';
+                addLog('No active position', 'info');
+                return;
+            }
+
+            // Update position display
+            const p = currentPosition;
+            document.getElementById('position-symbol').textContent = p.symbol;
+            document.getElementById('entry-price').textContent = '$' + p.entry.toFixed(5);
+            document.getElementById('current-price').textContent = '$' + p.current.toFixed(5);
+            document.getElementById('position-qty').textContent = p.qty.toFixed(1) + ' ' + p.symbol.replace('USDT','');
+            document.getElementById('position-value').textContent = '$' + p.value.toFixed(2);
+
+            // PnL
+            const pnlEl = document.getElementById('pnl-display');
+            pnlEl.textContent = (p.pnl_pct >= 0 ? '+' : '') + p.pnl_pct.toFixed(2) + '%';
+            pnlEl.className = 'pnl-value ' + (p.pnl_pct >= 0 ? 'pnl-positive' : 'pnl-negative');
+            document.getElementById('pnl-usd').textContent = (p.pnl_usd >= 0 ? '+' : '') + '$' + p.pnl_usd.toFixed(4);
+
+            // Stop/Target levels
+            const stopPct = ((p.stop - p.entry) / p.entry * 100).toFixed(1);
+            const targetPct = ((p.target - p.entry) / p.entry * 100).toFixed(1);
+            document.getElementById('stop-level').textContent = `STOP: $${p.stop.toFixed(5)} (${stopPct}%)`;
+            document.getElementById('target-level').textContent = `TARGET: $${p.target.toFixed(5)} (+${targetPct}%)`;
+
+            // Price marker on progress bar
+            const range = p.target - p.stop;
+            const markerPos = ((p.current - p.stop) / range) * 100;
+            document.getElementById('price-marker').style.left = Math.max(0, Math.min(100, markerPos)) + '%';
+
+            // Alert on stop breach
+            if (p.current < p.stop && soundEnabled) {
+                playAlert('warning');
+                addLog(`STOP BREACHED: ${p.symbol} @ $${p.current.toFixed(5)}`, 'error');
+            }
+        }
+
+        // === UPDATE BALANCES ===
+        async function updateBalances() {
+            const data = await fetchAPI('/api/balances');
+            if (!data || !data.balances) return;
+
+            const container = document.getElementById('balances-list');
+            if (!container) return;
+
+            let html = '';
+            const balances = data.balances;
+            const priority = ['USDT', 'USDC', 'BTC', 'ETH', 'BNB'];
+
+            // Sort: priority first, then alphabetically
+            const sorted = Object.entries(balances).sort((a, b) => {
+                const aIdx = priority.indexOf(a[0]);
+                const bIdx = priority.indexOf(b[0]);
+                if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
+                if (aIdx >= 0) return -1;
+                if (bIdx >= 0) return 1;
+                return a[0].localeCompare(b[0]);
+            });
+
+            for (const [asset, amount] of sorted) {
+                if (amount < 0.0001) continue;
+                const formatted = amount >= 1 ? amount.toFixed(2) : amount.toFixed(4);
+                html += `<div class="balance-row"><span>${asset}</span><span>${formatted}</span></div>`;
+            }
+            container.innerHTML = html || '<div class="balance-row">No balances</div>';
+        }
+
+        // === UPDATE STATUS ===
+        async function updateStatus() {
+            const data = await fetchAPI('/api/status');
+            if (!data) {
+                setConnectionStatus(false);
+                return;
+            }
+            setConnectionStatus(true);
+
+            // Update status indicators
+            const statusMap = {
+                'autotrader-status': data.autotrader,
+                'pump-status': data.pump_detector,
+                'circuit-status': data.circuit_breaker,
+                'gateway-status': data.price_gateway
+            };
+
+            for (const [id, value] of Object.entries(statusMap)) {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.textContent = value;
+                    el.className = 'status-value ' + (
+                        value === 'RUNNING' || value === 'ACTIVE' || value === 'CLOSED' ? 'status-ok' :
+                        value === 'FALLBACK' ? 'status-warn' : 'status-error'
+                    );
+                }
+            }
+        }
+
+        // === UPDATE SIGNALS ===
+        async function updateSignals() {
+            const data = await fetchAPI('/api/signals');
+            if (!data || !data.signals) return;
+
+            const container = document.getElementById('signals-list');
+            if (!container) return;
+
+            let html = '';
+            for (const s of data.signals.slice(-8).reverse()) {
+                const decClass = s.decision === 'BUY' ? 'decision-buy' :
+                                 s.decision === 'SELL' ? 'decision-sell' : 'decision-skip';
+                html += `
+                    <div class="signal-item">
+                        <span class="signal-time">${s.time}</span>
+                        <span class="signal-symbol">${s.symbol}</span>
+                        <span class="signal-decision ${decClass}">${s.decision}</span>
+                        <span class="signal-conf">${s.confidence}%</span>
+                    </div>`;
+            }
+            container.innerHTML = html || '<div class="signal-item">No signals yet</div>';
+        }
+
+        // === CONNECTION STATUS ===
+        function setConnectionStatus(connected) {
+            const indicator = document.getElementById('connection-indicator');
+            if (indicator) {
+                indicator.className = 'connection-dot ' + (connected ? 'connected' : 'disconnected');
+                indicator.title = connected ? 'API Connected' : 'API Disconnected';
+            }
+        }
+
+        // === CONTROL FUNCTIONS ===
+        async function emergencyStop() {
+            if (!confirm('EMERGENCY STOP - Close ALL positions and HALT trading?')) return;
+            const res = await fetch('/api/stop', {method: 'POST'});
+            if (res.ok) {
+                addLog('EMERGENCY STOP EXECUTED', 'error');
+                playAlert('emergency');
+            }
+            await updatePosition();
+        }
+
+        async function closePosition() {
+            if (!currentPosition) {
+                alert('No position to close');
+                return;
+            }
+            if (!confirm(`Close ${currentPosition.symbol} at market price?`)) return;
+
+            const res = await fetch('/api/close', {method: 'POST'});
+            const data = await res.json();
+            if (data.success) {
+                addLog(`Position closed: ${currentPosition.symbol}`, 'info');
+                await updatePosition();
+            } else {
+                alert('Close failed: ' + (data.error || 'Unknown error'));
             }
         }
 
         function adjustTarget() {
-            const newTarget = prompt('Enter new target % (current: 2.2%):', '2.2');
-            if (newTarget) alert('Target updated to ' + newTarget + '%');
+            const current = currentPosition ? ((currentPosition.target - currentPosition.entry) / currentPosition.entry * 100).toFixed(1) : '2.2';
+            const newVal = prompt(`New target % (current: ${current}%):`, current);
+            if (newVal) addLog(`Target adjusted to ${newVal}%`, 'info');
         }
 
         function adjustStop() {
-            const newStop = prompt('Enter new stop % (current: 1.1%):', '1.1');
-            if (newStop) alert('Stop updated to ' + newStop + '%');
+            const current = currentPosition ? ((currentPosition.stop - currentPosition.entry) / currentPosition.entry * 100).toFixed(1) : '1.1';
+            const newVal = prompt(`New stop % (current: ${current}%):`, current);
+            if (newVal) addLog(`Stop adjusted to ${newVal}%`, 'info');
         }
 
-        function refreshData() {
-            alert('Refreshing data from Binance...');
-            location.reload();
+        async function refreshData() {
+            addLog('Refreshing all data...', 'info');
+            await Promise.all([updatePosition(), updateBalances(), updateStatus(), updateSignals()]);
+            addLog('Data refreshed', 'info');
         }
 
         function viewLogs() {
-            window.open('file:///C:/Users/kirillDev/Desktop/TradingBot/minibot/logs/', '_blank');
+            window.open('/logs/', '_blank');
         }
 
         function exportTrades() {
-            alert('Exporting trades to CSV...');
+            addLog('Exporting trades...', 'info');
+            // Trigger download via API if available
         }
 
         function togglePause() {
-            alert('Trading paused. Click again to resume.');
+            addLog('Trading paused/resumed', 'info');
         }
 
-        function resetCircuit() {
-            if (confirm('Reset circuit breaker? This will allow new trades.')) {
-                alert('Circuit breaker reset.');
+        async function resetCircuit() {
+            if (!confirm('Reset circuit breaker? This allows new trades.')) return;
+            addLog('Circuit breaker reset', 'info');
+        }
+
+        // === EVENT LOG ===
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('event-log');
+            if (!log) return;
+            const now = new Date().toISOString().split('T')[1].split('.')[0];
+            const colors = {info: 'var(--accent-blue)', error: 'var(--accent-red)',
+                          success: 'var(--accent-green)', warn: 'var(--accent-yellow)'};
+            const div = document.createElement('div');
+            div.style.color = colors[type] || colors.info;
+            div.textContent = `[${now}] ${message}`;
+            log.insertBefore(div, log.firstChild);
+            // Keep only last 50 entries
+            while (log.children.length > 50) log.removeChild(log.lastChild);
+        }
+
+        // === AUDIO ALERTS ===
+        function playAlert(type) {
+            if (!soundEnabled) return;
+            // Use Web Audio API for alerts
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.frequency.value = type === 'emergency' ? 800 : 440;
+                gain.gain.value = 0.1;
+                osc.start();
+                setTimeout(() => osc.stop(), type === 'emergency' ? 500 : 200);
+            } catch(e) {}
+        }
+
+        // === KEYBOARD SHORTCUTS ===
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'r' && e.ctrlKey) { e.preventDefault(); refreshData(); }
+            if (e.key === 'Escape') emergencyStop();
+            if (e.key === 'm') soundEnabled = !soundEnabled;
+        });
+
+        // === WEBSOCKET FOR REAL-TIME ===
+        function connectWebSocket() {
+            try {
+                wsConnection = new WebSocket(`ws://${location.host}/ws/prices`);
+                wsConnection.onopen = () => {
+                    addLog('WebSocket connected', 'success');
+                    connectionRetries = 0;
+                };
+                wsConnection.onmessage = (e) => {
+                    const data = JSON.parse(e.data);
+                    if (data.type === 'price' && currentPosition && data.symbol === currentPosition.symbol) {
+                        currentPosition.current = data.price;
+                        updatePositionDisplay();
+                    }
+                };
+                wsConnection.onclose = () => {
+                    addLog('WebSocket disconnected', 'warn');
+                    if (connectionRetries < 5) {
+                        setTimeout(connectWebSocket, 3000 * (connectionRetries + 1));
+                        connectionRetries++;
+                    }
+                };
+            } catch(e) {
+                console.error('WebSocket error:', e);
             }
         }
 
-        // Simulate price updates (in production, connect to WebSocket)
-        function updatePrice() {
-            const basePrice = 0.04307;
-            const variance = (Math.random() - 0.5) * 0.0002;
-            const newPrice = basePrice + variance;
+        function updatePositionDisplay() {
+            if (!currentPosition) return;
+            const p = currentPosition;
+            document.getElementById('current-price').textContent = '$' + p.current.toFixed(5);
+            p.pnl_pct = ((p.current - p.entry) / p.entry * 100);
+            p.pnl_usd = (p.current - p.entry) * p.qty;
+            p.value = p.current * p.qty;
 
-            document.getElementById('current-price').textContent = '$' + newPrice.toFixed(5);
-
-            const entry = 0.04327;
-            const pnl = ((newPrice - entry) / entry * 100).toFixed(2);
-            const pnlElement = document.getElementById('pnl-display');
-            pnlElement.textContent = pnl + '%';
-            pnlElement.className = 'pnl-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
-
-            document.getElementById('position-value').textContent = '$' + (newPrice * 138).toFixed(2);
-
-            // Update marker position
-            const stop = 0.042794;
-            const target = 0.044222;
-            const range = target - stop;
-            const position = ((newPrice - stop) / range) * 100;
-            document.getElementById('price-marker').style.left = Math.max(0, Math.min(100, position)) + '%';
+            const pnlEl = document.getElementById('pnl-display');
+            pnlEl.textContent = (p.pnl_pct >= 0 ? '+' : '') + p.pnl_pct.toFixed(2) + '%';
+            pnlEl.className = 'pnl-value ' + (p.pnl_pct >= 0 ? 'pnl-positive' : 'pnl-negative');
+            document.getElementById('pnl-usd').textContent = (p.pnl_usd >= 0 ? '+' : '') + '$' + p.pnl_usd.toFixed(4);
+            document.getElementById('position-value').textContent = '$' + p.value.toFixed(2);
         }
 
-        setInterval(updatePrice, 3000);
+        // === INIT ===
+        async function init() {
+            addLog('Dashboard initializing...', 'info');
+            await Promise.all([updatePosition(), updateBalances(), updateStatus(), updateSignals()]);
+            addLog('Dashboard ready - API connected', 'success');
+            connectWebSocket();
+        }
+
+        // Start everything
+        init();
+        setInterval(updatePosition, 3000);
+        setInterval(updateBalances, 10000);
+        setInterval(updateStatus, 5000);
+        setInterval(updateSignals, 5000);
     </script>
 </body>
 </html>
