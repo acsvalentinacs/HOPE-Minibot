@@ -76,6 +76,11 @@ OPTIONAL_FIELDS = {
     "dMarkets": (float, 0.0),
     "signal_id": (str, ""),
     "raw_text": (str, ""),
+    # Momentum detection fields - CRITICAL for Eye of God V3
+    "signal_type": (str, ""),  # MOMENTUM_24H, TRENDING, etc.
+    "type": (str, ""),  # Alias for compatibility
+    "ai_override": (bool, False),  # Force trade despite low score
+    "confidence": (float, 0.5),  # AI confidence score
 }
 
 # Valid ranges for numeric fields
@@ -117,7 +122,7 @@ class ValidatedSignal:
     # Required
     symbol: str
     timestamp: str
-    
+
     # Optional with validated values
     strategy: str = "Unknown"
     direction: str = "Long"
@@ -134,7 +139,13 @@ class ValidatedSignal:
     dMarkets: float = 0.0
     signal_id: str = ""
     raw_text: str = ""
-    
+
+    # Momentum detection fields - CRITICAL for Eye of God V3
+    signal_type: str = ""  # MOMENTUM_24H, TRENDING, etc.
+    type: str = ""  # Alias for compatibility
+    ai_override: bool = False  # Force trade despite low score
+    confidence: float = 0.5  # AI confidence score
+
     # Validation metadata
     schema_version: str = "V1"
     validated_at: str = ""
@@ -375,6 +386,11 @@ def validate_signal(
             dMarkets=validated_data.get("dMarkets", 0.0),
             signal_id=validated_data.get("signal_id", ""),
             raw_text=validated_data.get("raw_text", ""),
+            # Momentum detection fields - CRITICAL for Eye of God V3
+            signal_type=validated_data.get("signal_type", ""),
+            type=validated_data.get("type", ""),
+            ai_override=validated_data.get("ai_override", False),
+            confidence=validated_data.get("confidence", 0.5),
             age_sec=validated_data.get("age_sec", 0.0),
             validation_warnings=warnings,
         )

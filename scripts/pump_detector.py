@@ -890,6 +890,11 @@ class PumpDetector:
                     "delta_pct": signal["delta_pct"],
                     "vol_raise_pct": signal["vol_raise_pct"],
                     "daily_volume_m": signal.get("daily_volume_m", 100),
+                    # Momentum detection fields - CRITICAL for Eye of God V3
+                    "signal_type": signal.get("signal_type", ""),
+                    "type": signal.get("signal_type", ""),  # Alias for compatibility
+                    "ai_override": signal.get("ai_override", False),
+                    "confidence": signal.get("confidence", 0.5),
                 },
                 timeout=5.0
             )

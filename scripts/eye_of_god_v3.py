@@ -404,9 +404,20 @@ class AlphaCommittee:
         mode, mode_config = self._determine_mode(signal)
 
         # Check for momentum signal type (24h trending signals bypass low confidence)
-        signal_type = getattr(signal, 'type', '') or getattr(signal, 'signal_type', '')
+        # Handle both dict and object signals
+        if isinstance(signal, dict):
+            signal_type = signal.get('type', '') or signal.get('signal_type', '')
+            has_ai_override = signal.get('ai_override', False)
+        else:
+            # Try both 'type' and 'signal_type' attributes
+            signal_type = getattr(signal, 'type', None) or getattr(signal, 'signal_type', None) or ''
+            has_ai_override = getattr(signal, 'ai_override', False)
+
         is_momentum = signal_type in ("MOMENTUM_24H", "TRENDING")
-        has_ai_override = getattr(signal, 'ai_override', False)
+
+        # Debug log for momentum detection
+        if signal_type:
+            log.debug(f"[ALPHA] {symbol} signal_type={signal_type} is_momentum={is_momentum} ai_override={has_ai_override}")
 
         # Determine action
         if mode == "SKIP" and not (is_momentum or has_ai_override):

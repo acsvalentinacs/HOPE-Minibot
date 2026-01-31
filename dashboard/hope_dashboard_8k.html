@@ -488,6 +488,44 @@
         .status-warn { color: var(--accent-yellow); }
         .status-error { color: var(--accent-red); }
 
+        /* Refresh buttons */
+        .btn-refresh {
+            background: var(--accent-blue);
+            border: none;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .btn-refresh:hover { background: #2563eb; }
+        .btn-refresh-small {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 10px;
+        }
+        .btn-refresh-small:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+        /* Charts */
+        .chart-container {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
         /* Responsive */
         @media (max-width: 1920px) {
             .dashboard {
@@ -696,25 +734,64 @@
             </div>
         </div>
 
-        <!-- Metrics -->
+        <!-- Metrics with Refresh -->
         <div class="card">
-            <div class="card-title">TRADING METRICS</div>
+            <div class="card-title">TRADING METRICS <button class="btn-refresh" onclick="updateMetrics()">↻</button></div>
             <div style="display: flex; flex-direction: column; gap: 16px;">
                 <div>
-                    <div class="detail-label">Win Rate (Target)</div>
-                    <div class="detail-value" style="color: var(--accent-blue);">>55%</div>
+                    <div class="detail-label">Win Rate</div>
+                    <div class="detail-value" id="metric-winrate" style="color: var(--accent-blue);">--</div>
                 </div>
                 <div>
-                    <div class="detail-label">Risk:Reward</div>
-                    <div class="detail-value">3:1</div>
-                </div>
-                <div>
-                    <div class="detail-label">Max Drawdown</div>
-                    <div class="detail-value" style="color: var(--accent-green);">&lt;5%</div>
+                    <div class="detail-label">Total PnL</div>
+                    <div class="detail-value" id="metric-pnl">--</div>
                 </div>
                 <div>
                     <div class="detail-label">Today's Trades</div>
-                    <div class="detail-value">1</div>
+                    <div class="detail-value" id="metric-trades">--</div>
+                </div>
+                <div>
+                    <div class="detail-label">Model Accuracy</div>
+                    <div class="detail-value" id="metric-accuracy" style="color: var(--accent-purple);">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Charts Section -->
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-title">AI PERFORMANCE CHARTS <button class="btn-refresh" onclick="updateCharts()">↻ Refresh All</button></div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <!-- Chart 1: PnL Over Time -->
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <span>1. PnL Over Time</span>
+                        <button class="btn-refresh-small" onclick="updatePnlChart()">↻</button>
+                    </div>
+                    <canvas id="chart-pnl" width="300" height="150"></canvas>
+                </div>
+                <!-- Chart 2: Win Rate Trend -->
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <span>2. Win Rate Trend</span>
+                        <button class="btn-refresh-small" onclick="updateWinrateChart()">↻</button>
+                    </div>
+                    <canvas id="chart-winrate" width="300" height="150"></canvas>
+                </div>
+                <!-- Chart 3: AI Confidence Distribution -->
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <span>3. AI Confidence Distribution</span>
+                        <button class="btn-refresh-small" onclick="updateConfidenceChart()">↻</button>
+                    </div>
+                    <canvas id="chart-confidence" width="300" height="150"></canvas>
+                </div>
+                <!-- Chart 4: Model Performance -->
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <span>4. Model Performance</span>
+                        <button class="btn-refresh-small" onclick="updateModelChart()">↻</button>
+                    </div>
+                    <canvas id="chart-model" width="300" height="150"></canvas>
                 </div>
             </div>
         </div>
@@ -1091,10 +1168,144 @@
             document.getElementById('position-value').textContent = '$' + p.value.toFixed(2);
         }
 
+        // === METRICS UPDATE ===
+        async function updateMetrics() {
+            const data = await fetchAPI('/api/metrics');
+            if (!data) return;
+
+            const winrate = document.getElementById('metric-winrate');
+            const pnl = document.getElementById('metric-pnl');
+            const trades = document.getElementById('metric-trades');
+            const accuracy = document.getElementById('metric-accuracy');
+
+            if (winrate) {
+                winrate.textContent = data.win_rate ? data.win_rate.toFixed(1) + '%' : '--';
+                winrate.style.color = data.win_rate >= 55 ? 'var(--accent-green)' : 'var(--accent-yellow)';
+            }
+            if (pnl) {
+                const pnlVal = data.total_pnl || 0;
+                pnl.textContent = (pnlVal >= 0 ? '+' : '') + '$' + pnlVal.toFixed(2);
+                pnl.style.color = pnlVal >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+            }
+            if (trades) trades.textContent = data.trades_today || 0;
+            if (accuracy) accuracy.textContent = data.model_accuracy ? data.model_accuracy.toFixed(1) + '%' : '--';
+
+            addLog('Metrics updated', 'info');
+        }
+
+        // === CHART DRAWING ===
+        function drawLineChart(canvasId, data, color) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !data || data.length === 0) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            const max = Math.max(...data, 0.001);
+            const min = Math.min(...data, 0);
+            const range = max - min || 1;
+            const stepX = w / (data.length - 1 || 1);
+
+            // Draw grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const y = h * i / 4;
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+            }
+            ctx.stroke();
+
+            // Draw line
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            data.forEach((val, i) => {
+                const x = i * stepX;
+                const y = h - ((val - min) / range) * h * 0.9 - h * 0.05;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Fill area
+            ctx.lineTo(w, h);
+            ctx.lineTo(0, h);
+            ctx.closePath();
+            ctx.fillStyle = color.replace(')', ', 0.2)').replace('rgb', 'rgba');
+            ctx.fill();
+        }
+
+        function drawBarChart(canvasId, data, labels, colors) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !data) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            const barWidth = w / data.length * 0.7;
+            const gap = w / data.length * 0.3;
+            const max = Math.max(...data, 1);
+
+            data.forEach((val, i) => {
+                const barH = (val / max) * h * 0.85;
+                const x = i * (barWidth + gap) + gap / 2;
+                const y = h - barH - 10;
+
+                ctx.fillStyle = colors[i] || 'var(--accent-blue)';
+                ctx.fillRect(x, y, barWidth, barH);
+
+                // Label
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(labels[i] || '', x + barWidth/2, h - 2);
+                ctx.fillText(val.toFixed(0) + '%', x + barWidth/2, y - 3);
+            });
+        }
+
+        async function updatePnlChart() {
+            const data = await fetchAPI('/api/chart/pnl');
+            if (data && data.values) {
+                drawLineChart('chart-pnl', data.values, 'rgb(16, 185, 129)');
+            }
+        }
+
+        async function updateWinrateChart() {
+            const data = await fetchAPI('/api/chart/winrate');
+            if (data && data.values) {
+                drawLineChart('chart-winrate', data.values, 'rgb(59, 130, 246)');
+            }
+        }
+
+        async function updateConfidenceChart() {
+            const data = await fetchAPI('/api/chart/confidence');
+            if (data && data.values) {
+                drawBarChart('chart-confidence', data.values, data.labels,
+                    ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6']);
+            }
+        }
+
+        async function updateModelChart() {
+            const data = await fetchAPI('/api/chart/model');
+            if (data && data.values) {
+                drawBarChart('chart-model', data.values, data.labels,
+                    ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6']);
+            }
+        }
+
+        async function updateCharts() {
+            addLog('Updating charts...', 'info');
+            await Promise.all([updatePnlChart(), updateWinrateChart(), updateConfidenceChart(), updateModelChart()]);
+            addLog('Charts updated', 'success');
+        }
+
         // === INIT ===
         async function init() {
             addLog('Dashboard initializing...', 'info');
             await Promise.all([updatePosition(), updateBalances(), updateStatus(), updateSignals()]);
+            updateMetrics();
+            updateCharts();
             addLog('Dashboard ready - API connected', 'success');
             connectWebSocket();
         }
@@ -1105,6 +1316,8 @@
         setInterval(updateBalances, 10000);
         setInterval(updateStatus, 5000);
         setInterval(updateSignals, 5000);
+        setInterval(updateMetrics, 30000);
+        setInterval(updateCharts, 60000);
     </script>
 </body>
 </html>
