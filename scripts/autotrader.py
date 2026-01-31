@@ -888,24 +888,27 @@ def main():
     parser = argparse.ArgumentParser(description="HOPE AI AutoTrader")
     parser.add_argument("--mode", type=str, default="DRY", choices=["DRY", "TESTNET", "LIVE"])
     parser.add_argument("--confirm", action="store_true", help="Confirm LIVE mode")
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip interactive confirmation (for scripts)")
     parser.add_argument("--gateway", type=str, default="http://127.0.0.1:8100")
     parser.add_argument("--position-size", type=float, default=10.0, help="Default position size USD")
     parser.add_argument("--api-port", type=int, default=8200, help="API port for signal injection")
     parser.add_argument("--no-api", action="store_true", help="Disable API")
-    
+
     args = parser.parse_args()
-    
+
     # Safety check for LIVE mode
     if args.mode == "LIVE" and not args.confirm:
-        print("⚠️ LIVE MODE requires --confirm flag")
+        print("[WARNING] LIVE MODE requires --confirm flag")
         print("This will trade with REAL MONEY!")
         sys.exit(1)
-    
-    if args.mode == "LIVE":
-        confirm = input("⚠️ LIVE MODE - Type 'I UNDERSTAND' to confirm: ")
+
+    if args.mode == "LIVE" and not args.yes:
+        confirm = input("[WARNING] LIVE MODE - Type 'I UNDERSTAND' to confirm: ")
         if confirm != "I UNDERSTAND":
             print("Cancelled.")
             sys.exit(1)
+    elif args.mode == "LIVE" and args.yes:
+        print("[WARNING] LIVE MODE enabled with --yes flag (no interactive confirmation)")
     
     # Create config
     config = AutoTraderConfig(
