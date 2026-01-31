@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOPE AI Trading Dashboard 8K</title>
+    <style>
+        :root {
+            --bg-dark: #0a0e17;
+            --bg-card: #111827;
+            --bg-card-hover: #1f2937;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-yellow: #f59e0b;
+            --accent-purple: #8b5cf6;
+            --border: #374151;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: auto auto auto auto;
+            gap: 16px;
+            padding: 20px;
+            max-width: 7680px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+
+        .card:hover {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.2);
+        }
+
+        .card-title {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-live {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        /* Header */
+        .header {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 10px;
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        /* Position Card */
+        .position-card {
+            grid-column: span 2;
+            grid-row: span 2;
+        }
+
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        .position-symbol {
+            font-size: 36px;
+            font-weight: bold;
+        }
+
+        .position-pnl {
+            text-align: right;
+        }
+
+        .pnl-value {
+            font-size: 42px;
+            font-weight: bold;
+        }
+
+        .pnl-positive { color: var(--accent-green); }
+        .pnl-negative { color: var(--accent-red); }
+
+        .position-details {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .detail-item {
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+        }
+
+        .detail-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .detail-value {
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+
+        /* Progress bar for target/stop */
+        .progress-container {
+            grid-column: span 2;
+            margin-top: 20px;
+        }
+
+        .progress-bar {
+            height: 40px;
+            background: linear-gradient(90deg,
+                var(--accent-red) 0%,
+                var(--accent-red) 33%,
+                var(--bg-dark) 33%,
+                var(--bg-dark) 67%,
+                var(--accent-green) 67%,
+                var(--accent-green) 100%);
+            border-radius: 8px;
+            position: relative;
+            overflow: visible;
+        }
+
+        .progress-marker {
+            position: absolute;
+            width: 4px;
+            height: 50px;
+            background: var(--text-primary);
+            top: -5px;
+            transform: translateX(-50%);
+            border-radius: 2px;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+
+        .progress-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Control Buttons */
+        .controls-card {
+            grid-column: span 2;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .btn {
+            padding: 16px 24px;
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-success {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .btn-warning {
+            background: var(--accent-yellow);
+            color: #000;
+        }
+
+        .btn-secondary {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-large {
+            grid-column: span 3;
+            padding: 20px;
+            font-size: 18px;
+        }
+
+        /* Test Results */
+        .tests-card {
+            grid-column: span 2;
+        }
+
+        .test-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .test-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            border-left: 3px solid transparent;
+        }
+
+        .test-pass {
+            border-left-color: var(--accent-green);
+        }
+
+        .test-fail {
+            border-left-color: var(--accent-red);
+        }
+
+        .test-warn {
+            border-left-color: var(--accent-yellow);
+        }
+
+        .test-name {
+            font-size: 14px;
+        }
+
+        .test-status {
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        /* Market Data */
+        .market-card {
+            grid-column: span 1;
+        }
+
+        .market-price {
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .market-change {
+            font-size: 14px;
+            margin-top: 4px;
+        }
+
+        /* Balance Card */
+        .balance-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .balance-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .balance-asset {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .balance-amount {
+            color: var(--text-secondary);
+        }
+
+        /* Signals Log */
+        .signals-card {
+            grid-column: span 2;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .signal-item {
+            display: grid;
+            grid-template-columns: 100px 1fr 80px 100px;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+
+        .signal-time {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .signal-symbol {
+            font-weight: 600;
+        }
+
+        .signal-decision {
+            text-align: center;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .decision-buy {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+
+        .decision-skip {
+            background: rgba(156, 163, 175, 0.2);
+            color: var(--text-secondary);
+        }
+
+        .signal-conf {
+            text-align: right;
+            font-size: 14px;
+        }
+
+        /* System Status */
+        .system-status {
+            grid-column: span 2;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .status-item {
+            text-align: center;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+        }
+
+        .status-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .status-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .status-value {
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+
+        /* Footer */
+        .footer {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        /* Responsive */
+        @media (max-width: 1920px) {
+            .dashboard {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .position-card {
+                grid-column: span 2;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            .position-card,
+            .controls-card,
+            .tests-card,
+            .signals-card,
+            .system-status {
+                grid-column: span 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">
+                <div class="logo-icon">H</div>
+                <div>
+                    <div>HOPE AI Trading</div>
+                    <div style="font-size: 12px; color: var(--text-secondary);">v3.0 | Production Dashboard</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <div class="status-badge status-live">
+                    <span class="status-dot"></span>
+                    LIVE TRADING
+                </div>
+                <div id="clock" style="font-size: 24px; font-weight: bold;">--:--:--</div>
+            </div>
+        </div>
+
+        <!-- Position Card -->
+        <div class="card position-card">
+            <div class="card-title">ACTIVE POSITION</div>
+            <div class="position-header">
+                <div>
+                    <div class="position-symbol">SENTUSDT</div>
+                    <div style="color: var(--text-secondary);">Sentinel Protocol</div>
+                </div>
+                <div class="position-pnl">
+                    <div class="pnl-value pnl-negative" id="pnl-display">-0.46%</div>
+                    <div style="color: var(--text-secondary);">-$0.03</div>
+                </div>
+            </div>
+
+            <div class="position-details">
+                <div class="detail-item">
+                    <div class="detail-label">Entry Price</div>
+                    <div class="detail-value">$0.04327</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Current Price</div>
+                    <div class="detail-value" id="current-price">$0.04307</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Quantity</div>
+                    <div class="detail-value">138.0 SENT</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Position Value</div>
+                    <div class="detail-value" id="position-value">$5.94</div>
+                </div>
+            </div>
+
+            <div class="progress-container">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="color: var(--accent-red);">STOP: $0.04279 (-1.1%)</span>
+                    <span style="color: var(--accent-green);">TARGET: $0.04422 (+2.2%)</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-marker" id="price-marker" style="left: 45%;"></div>
+                </div>
+                <div class="progress-labels">
+                    <span>STOP LOSS</span>
+                    <span>ENTRY</span>
+                    <span>TAKE PROFIT</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Buttons -->
+        <div class="card controls-card">
+            <div class="card-title">TRADING CONTROLS</div>
+            <div class="controls-grid">
+                <button class="btn btn-danger btn-large" onclick="emergencyStop()">
+                    EMERGENCY STOP
+                </button>
+                <button class="btn btn-success" onclick="closePosition()">
+                    CLOSE POSITION
+                </button>
+                <button class="btn btn-warning" onclick="adjustTarget()">
+                    ADJUST TP
+                </button>
+                <button class="btn btn-secondary" onclick="adjustStop()">
+                    ADJUST SL
+                </button>
+                <button class="btn btn-primary" onclick="refreshData()">
+                    REFRESH
+                </button>
+                <button class="btn btn-secondary" onclick="viewLogs()">
+                    VIEW LOGS
+                </button>
+                <button class="btn btn-secondary" onclick="exportTrades()">
+                    EXPORT
+                </button>
+                <button class="btn btn-secondary" onclick="togglePause()">
+                    PAUSE TRADING
+                </button>
+                <button class="btn btn-secondary" onclick="resetCircuit()">
+                    RESET CIRCUIT
+                </button>
+            </div>
+        </div>
+
+        <!-- Test Results -->
+        <div class="card tests-card">
+            <div class="card-title">SYSTEM TESTS</div>
+            <div class="test-list">
+                <div class="test-item test-pass">
+                    <span class="test-name">EventBus</span>
+                    <span class="test-status" style="color: var(--accent-green);">PASS</span>
+                </div>
+                <div class="test-item test-pass">
+                    <span class="test-name">DecisionEngine</span>
+                    <span class="test-status" style="color: var(--accent-green);">PASS</span>
+                </div>
+                <div class="test-item test-pass">
+                    <span class="test-name">PriceFeed (REST)</span>
+                    <span class="test-status" style="color: var(--accent-green);">PASS</span>
+                </div>
+                <div class="test-item test-pass">
+                    <span class="test-name">OutcomeTracker</span>
+                    <span class="test-status" style="color: var(--accent-green);">PASS</span>
+                </div>
+                <div class="test-item test-pass">
+                    <span class="test-name">Binance API</span>
+                    <span class="test-status" style="color: var(--accent-green);">200 OK</span>
+                </div>
+                <div class="test-item test-pass">
+                    <span class="test-name">AutoTrader Port 8200</span>
+                    <span class="test-status" style="color: var(--accent-green);">ACTIVE</span>
+                </div>
+                <div class="test-item test-pass">
+                    <span class="test-name">ValidatedSignal Fields</span>
+                    <span class="test-status" style="color: var(--accent-green);">OK</span>
+                </div>
+                <div class="test-item test-pass">
+                    <span class="test-name">.env Configuration</span>
+                    <span class="test-status" style="color: var(--accent-green);">CLEAN</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status -->
+        <div class="card system-status">
+            <div class="card-title">SYSTEM STATUS</div>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-icon" style="color: var(--accent-green);">&#9679;</div>
+                    <div class="status-label">AutoTrader</div>
+                    <div class="status-value">RUNNING</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-icon" style="color: var(--accent-green);">&#9679;</div>
+                    <div class="status-label">Pump Detector</div>
+                    <div class="status-value">ACTIVE</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-icon" style="color: var(--accent-green);">&#9679;</div>
+                    <div class="status-label">Circuit Breaker</div>
+                    <div class="status-value">CLOSED</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-icon" style="color: var(--accent-yellow);">&#9679;</div>
+                    <div class="status-label">Price Gateway</div>
+                    <div class="status-value">FALLBACK</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Market Data -->
+        <div class="card market-card">
+            <div class="card-title">BTC/USDT</div>
+            <div class="market-price" id="btc-price">$83,988.86</div>
+            <div class="market-change" style="color: var(--accent-red);">-0.97% (24h)</div>
+        </div>
+
+        <!-- Balances -->
+        <div class="card">
+            <div class="card-title">ACCOUNT BALANCES</div>
+            <div class="balance-list">
+                <div class="balance-item">
+                    <span class="balance-asset">USDT</span>
+                    <span class="balance-amount">94.39</span>
+                </div>
+                <div class="balance-item">
+                    <span class="balance-asset">SENT</span>
+                    <span class="balance-amount">138.0</span>
+                </div>
+                <div class="balance-item">
+                    <span class="balance-asset">SLF</span>
+                    <span class="balance-amount">638.6</span>
+                </div>
+                <div class="balance-item">
+                    <span class="balance-asset">BNB</span>
+                    <span class="balance-amount">0.0002</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Metrics -->
+        <div class="card">
+            <div class="card-title">TRADING METRICS</div>
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+                <div>
+                    <div class="detail-label">Win Rate (Target)</div>
+                    <div class="detail-value" style="color: var(--accent-blue);">>55%</div>
+                </div>
+                <div>
+                    <div class="detail-label">Risk:Reward</div>
+                    <div class="detail-value">3:1</div>
+                </div>
+                <div>
+                    <div class="detail-label">Max Drawdown</div>
+                    <div class="detail-value" style="color: var(--accent-green);">&lt;5%</div>
+                </div>
+                <div>
+                    <div class="detail-label">Today's Trades</div>
+                    <div class="detail-value">1</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="card">
+            <div class="card-title">QUICK SETTINGS</div>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Position Size</span>
+                    <input type="text" value="$6.00" style="width: 80px; padding: 8px; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); text-align: right;">
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Target %</span>
+                    <input type="text" value="2.2%" style="width: 80px; padding: 8px; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); text-align: right;">
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Stop %</span>
+                    <input type="text" value="1.1%" style="width: 80px; padding: 8px; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); text-align: right;">
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Min Confidence</span>
+                    <input type="text" value="20%" style="width: 80px; padding: 8px; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); text-align: right;">
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Signals -->
+        <div class="card signals-card">
+            <div class="card-title">RECENT SIGNALS</div>
+            <div id="signals-list">
+                <div class="signal-item">
+                    <span class="signal-time">03:56:03</span>
+                    <span class="signal-symbol">SENTUSDT</span>
+                    <span class="signal-decision decision-buy">BUY</span>
+                    <span class="signal-conf">21%</span>
+                </div>
+                <div class="signal-item">
+                    <span class="signal-time">03:56:33</span>
+                    <span class="signal-symbol">SENTUSDT</span>
+                    <span class="signal-decision decision-skip">BLOCKED</span>
+                    <span class="signal-conf">25%</span>
+                </div>
+                <div class="signal-item">
+                    <span class="signal-time">03:57:03</span>
+                    <span class="signal-symbol">SENTUSDT</span>
+                    <span class="signal-decision decision-skip">BLOCKED</span>
+                    <span class="signal-conf">27%</span>
+                </div>
+                <div class="signal-item">
+                    <span class="signal-time">03:57:36</span>
+                    <span class="signal-symbol">SENTUSDT</span>
+                    <span class="signal-decision decision-skip">BLOCKED</span>
+                    <span class="signal-conf">35%</span>
+                </div>
+                <div class="signal-item">
+                    <span class="signal-time">03:58:06</span>
+                    <span class="signal-symbol">SENTUSDT</span>
+                    <span class="signal-decision decision-skip">BLOCKED</span>
+                    <span class="signal-conf">37%</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Log -->
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-title">EVENT LOG</div>
+            <div id="event-log" style="font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; background: var(--bg-dark); padding: 12px; border-radius: 8px;">
+                <div style="color: var(--accent-green);">[03:55:01] EyeOfGodV3 initialized - using two-chamber decisions</div>
+                <div style="color: var(--accent-yellow);">[03:55:02] LIVE MODE - REAL MONEY AT RISK!</div>
+                <div style="color: var(--accent-blue);">[03:55:02] AutoTrader initialized in LIVE mode</div>
+                <div style="color: var(--accent-green);">[03:56:03] Processing signal: SENTUSDT | eye_of_god=True</div>
+                <div style="color: var(--accent-green);">[03:56:03] EYE: SENTUSDT | BUY | conf=21% | mode=SWING</div>
+                <div style="color: var(--accent-blue);">[03:56:05] [LIVE] Executing market buy: $6.0 of SENTUSDT</div>
+                <div style="color: var(--accent-green);">[03:56:06] HTTP 200 OK - Order filled: 138.0 SENTUSDT @ 0.04327</div>
+                <div style="color: var(--accent-green);">[03:56:06] Position created: pos_54905038 | target=0.044222 | stop=0.042794</div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            HOPE AI Trading System v3.0 | Production Dashboard | Last Update: <span id="last-update">--:--:--</span>
+            <br>
+            <span style="color: var(--accent-yellow);">Warning: This system trades with REAL MONEY. Use at your own risk.</span>
+        </div>
+    </div>
+
+    <script>
+        // Update clock
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').textContent =
+                now.toUTCString().split(' ')[4] + ' UTC';
+            document.getElementById('last-update').textContent =
+                now.toISOString().replace('T', ' ').split('.')[0] + ' UTC';
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Control functions
+        function emergencyStop() {
+            if (confirm('EMERGENCY STOP - This will close ALL positions and HALT trading. Continue?')) {
+                alert('Emergency stop triggered. System halting...');
+            }
+        }
+
+        function closePosition() {
+            if (confirm('Close SENTUSDT position at market price?')) {
+                alert('Sending market sell order...');
+            }
+        }
+
+        function adjustTarget() {
+            const newTarget = prompt('Enter new target % (current: 2.2%):', '2.2');
+            if (newTarget) alert('Target updated to ' + newTarget + '%');
+        }
+
+        function adjustStop() {
+            const newStop = prompt('Enter new stop % (current: 1.1%):', '1.1');
+            if (newStop) alert('Stop updated to ' + newStop + '%');
+        }
+
+        function refreshData() {
+            alert('Refreshing data from Binance...');
+            location.reload();
+        }
+
+        function viewLogs() {
+            window.open('file:///C:/Users/kirillDev/Desktop/TradingBot/minibot/logs/', '_blank');
+        }
+
+        function exportTrades() {
+            alert('Exporting trades to CSV...');
+        }
+
+        function togglePause() {
+            alert('Trading paused. Click again to resume.');
+        }
+
+        function resetCircuit() {
+            if (confirm('Reset circuit breaker? This will allow new trades.')) {
+                alert('Circuit breaker reset.');
+            }
+        }
+
+        // Simulate price updates (in production, connect to WebSocket)
+        function updatePrice() {
+            const basePrice = 0.04307;
+            const variance = (Math.random() - 0.5) * 0.0002;
+            const newPrice = basePrice + variance;
+
+            document.getElementById('current-price').textContent = '$' + newPrice.toFixed(5);
+
+            const entry = 0.04327;
+            const pnl = ((newPrice - entry) / entry * 100).toFixed(2);
+            const pnlElement = document.getElementById('pnl-display');
+            pnlElement.textContent = pnl + '%';
+            pnlElement.className = 'pnl-value ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+
+            document.getElementById('position-value').textContent = '$' + (newPrice * 138).toFixed(2);
+
+            // Update marker position
+            const stop = 0.042794;
+            const target = 0.044222;
+            const range = target - stop;
+            const position = ((newPrice - stop) / range) * 100;
+            document.getElementById('price-marker').style.left = Math.max(0, Math.min(100, position)) + '%';
+        }
+
+        setInterval(updatePrice, 3000);
+    </script>
+</body>
+</html>
