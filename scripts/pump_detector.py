@@ -545,28 +545,41 @@ class PumpDetector:
         self.signals_generated += 1
 
         # ═══════════════════════════════════════════════════════════════════
-        # HARD TELEGRAM FILTER - BEGIN
-        # Blocks: MICRO/TEST_ACTIVITY/SCALP and delta < 10% (strict, fail-closed)
-        # EXCEPTION: MOMENTUM_24H and TRENDING bypass delta check (use 24h momentum)
+        # SIGNAL FILTER v2 (ALIGNED WITH PRETRADE PIPELINE)
+        # ═══════════════════════════════════════════════════════════════════
+        # THRESHOLDS (from pretrade_pipeline.py):
+        #   - telegram_min_delta_pct = 10.0 (strong signals → Telegram)
+        #   - trade_min_delta_pct = 2.0 (tradeable signals)
+        #   - adaptive_target NOISE < 0.3% (don't trade noise)
+        #
+        # EXCEPTION: MOMENTUM_24H/TRENDING bypass delta check (use 24h trend)
         # ═══════════════════════════════════════════════════════════════════
         _delta = signal.get("delta_pct", 0)
         _type = signal.get("signal_type", "")
         _sym = signal.get("symbol", "")
 
-        # BLOCK: MICRO, TEST_ACTIVITY, SCALP - these are spam
-        if _type in ("MICRO", "TEST_ACTIVITY", "SCALP", "VOLUME_SPIKE"):
-            log.info(f"[HARD-KILL] {_sym} type={_type} - BLOCKED (spam type)")
-            return  # EXIT IMMEDIATELY - NO PROCESSING
+        # Trade threshold from pretrade_pipeline (was 10%, now correctly 2%)
+        TRADE_MIN_DELTA = 2.0  # Matches pretrade_pipeline.trade_min_delta_pct
+        NOISE_THRESHOLD = 0.3  # From adaptive_target_ai NOISE tier
 
-        # ALLOW: MOMENTUM_24H and TRENDING signals bypass delta check
-        # These are based on 24h momentum, not 1-minute delta
+        # BLOCK: Spam types - no value
+        if _type in ("MICRO", "TEST_ACTIVITY", "VOLUME_SPIKE"):
+            log.info(f"[FILTER] {_sym} type={_type} - BLOCKED (spam type)")
+            return
+
+        # ALLOW: 24h momentum signals bypass short-term delta check
         if _type in ("MOMENTUM_24H", "TRENDING"):
-            log.info(f"[24H-PASS] {_sym} type={_type} - ALLOWED (24h momentum signal)")
-        elif _delta < 10.0:
-            # BLOCK: delta < 10% for non-momentum signals
-            log.info(f"[HARD-KILL] {_sym} delta={_delta:.2f}% < 10% - BLOCKED")
-            return  # EXIT IMMEDIATELY - NO PROCESSING
-        # HARD TELEGRAM FILTER - END
+            log.info(f"[24H-PASS] {_sym} type={_type} change_24h={signal.get('change_24h', 0):.1f}% - ALLOWED")
+        # ALLOW: STRONG signals (delta >= 2%) - from pretrade_pipeline
+        elif _delta >= TRADE_MIN_DELTA:
+            log.info(f"[TRADE-OK] {_sym} delta={_delta:.2f}% >= {TRADE_MIN_DELTA}% - ALLOWED")
+        # BLOCK: NOISE (delta < 0.3%) - no edge
+        elif _delta < NOISE_THRESHOLD:
+            log.debug(f"[NOISE] {_sym} delta={_delta:.2f}% < {NOISE_THRESHOLD}% - skipped")
+            return
+        # SCALP zone (0.3% - 2%) - process but lower priority
+        else:
+            log.info(f"[SCALP] {_sym} delta={_delta:.2f}% - processing (low-tier)")
         # ═══════════════════════════════════════════════════════════════════
 
         # ═══════════════════════════════════════════════════════════════════════
