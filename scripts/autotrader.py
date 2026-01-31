@@ -3,10 +3,10 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-31 10:35:00 UTC
+# Modified at: 2026-01-31 05:20:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# Changes: FIX 1,2,3 - Fee adjustment + trailing + WATCHDOG INTEGRATION (CRITICAL)
-# sha256: autotrader_v1.2_watchdog
+# Changes: FIX 4 - COOLDOWN + STOP-LOSS ENFORCEMENT + NO RE-BUY SAME SYMBOL
+# sha256: autotrader_v1.3_cooldown
 # === END SIGNATURE ===
 """
 HOPE AI - AutoTrader v1.0
@@ -124,26 +124,30 @@ class AutoTraderConfig:
     """AutoTrader configuration"""
     mode: str = "TESTNET"
     gateway_url: str = "http://127.0.0.1:8100"
-    
+
     # Trading parameters
     default_position_usdt: float = 10.0    # Default position size
     max_position_usdt: float = 50.0        # Max position size
-    
+
     # Signal thresholds
     min_confidence: float = 0.70           # Minimum confidence to trade
     pump_override_buys_sec: float = 100    # Instant buy threshold
     scalp_buys_sec: float = 30             # SCALP threshold
     min_buys_sec: float = 10               # Minimum to consider
-    
+
     # Risk parameters
     default_target_pct: float = 1.0        # Default take profit
     default_stop_pct: float = -0.5         # Default stop loss
     default_timeout_sec: int = 60          # Default timeout
-    
+
     # Loop settings
     loop_interval_sec: float = 1.0         # Main loop interval
     position_check_interval: float = 0.5   # Position check interval
-    
+
+    # === COOLDOWN SETTINGS (NEW - FIX #4) ===
+    symbol_cooldown_sec: int = 300         # 5 min cooldown after closing position
+    max_same_symbol_per_hour: int = 2      # Max trades per symbol per hour
+
     # State
     state_dir: str = "state/ai/autotrader"
     log_file: str = "state/ai/autotrader/trades.jsonl"
@@ -490,12 +494,20 @@ class AutoTrader:
             "positions_closed": 0,
             "total_pnl": 0.0,
         }
-        
+
         # Active symbols to watch
         self.watch_symbols: Set[str] = set()
-        
+
         # Signal queue
         self.signal_queue: deque = deque(maxlen=100)
+
+        # === COOLDOWN TRACKING (NEW - FIX #4) ===
+        # Maps symbol -> timestamp when it was last closed
+        self.symbol_cooldown: Dict[str, datetime] = {}
+        # Maps symbol -> list of trade timestamps in last hour
+        self.symbol_trade_times: Dict[str, List[datetime]] = {}
+        # Currently open positions (symbol set)
+        self.open_positions: Set[str] = set()
         
         logger.info(f"AutoTrader initialized in {config.mode} mode")
     
@@ -503,6 +515,58 @@ class AutoTrader:
         """Add raw signal to processing queue"""
         self.signal_queue.append(raw_signal)
         self.stats["signals_received"] += 1
+
+    def _is_symbol_blocked(self, symbol: str) -> tuple[bool, str]:
+        """
+        Check if symbol is blocked from trading.
+
+        Returns: (is_blocked, reason)
+
+        Blocks if:
+        1. Symbol already has open position
+        2. Symbol is in cooldown after recent close
+        3. Symbol exceeded max trades per hour
+        """
+        now = datetime.now(timezone.utc)
+
+        # Block 1: Already has open position
+        if symbol in self.open_positions:
+            return True, "ALREADY_HAS_POSITION"
+
+        # Block 2: Cooldown after close
+        if symbol in self.symbol_cooldown:
+            cooldown_until = self.symbol_cooldown[symbol] + timedelta(seconds=self.config.symbol_cooldown_sec)
+            if now < cooldown_until:
+                remaining = (cooldown_until - now).total_seconds()
+                return True, f"COOLDOWN_{int(remaining)}s_remaining"
+
+        # Block 3: Max trades per hour
+        if symbol in self.symbol_trade_times:
+            # Clean old entries (older than 1 hour)
+            hour_ago = now - timedelta(hours=1)
+            self.symbol_trade_times[symbol] = [
+                t for t in self.symbol_trade_times[symbol] if t > hour_ago
+            ]
+            if len(self.symbol_trade_times[symbol]) >= self.config.max_same_symbol_per_hour:
+                return True, f"MAX_TRADES_PER_HOUR_{len(self.symbol_trade_times[symbol])}"
+
+        return False, ""
+
+    def _record_trade_open(self, symbol: str):
+        """Record that a trade was opened for symbol."""
+        now = datetime.now(timezone.utc)
+        self.open_positions.add(symbol)
+        if symbol not in self.symbol_trade_times:
+            self.symbol_trade_times[symbol] = []
+        self.symbol_trade_times[symbol].append(now)
+        logger.info(f"[COOLDOWN] Recorded open: {symbol}")
+
+    def _record_trade_close(self, symbol: str):
+        """Record that a trade was closed for symbol - starts cooldown."""
+        now = datetime.now(timezone.utc)
+        self.open_positions.discard(symbol)
+        self.symbol_cooldown[symbol] = now
+        logger.info(f"[COOLDOWN] Recorded close: {symbol} - cooldown {self.config.symbol_cooldown_sec}s")
     
     def _process_signals(self):
         """Process queued signals using Eye of God V3 or fallback SignalProcessor"""
@@ -580,6 +644,13 @@ class AutoTrader:
 
     def _execute_trade_from_eye(self, decision):
         """Execute trade based on Eye of God decision."""
+        # === COOLDOWN CHECK (FIX #4) ===
+        is_blocked, block_reason = self._is_symbol_blocked(decision.symbol)
+        if is_blocked:
+            logger.warning(f"🚫 BLOCKED: {decision.symbol} | {block_reason}")
+            self.stats["signals_skipped"] += 1
+            return
+
         logger.info(f"🔥 EYE DECISION: BUY {decision.symbol} | ${decision.position_size_usdt}")
 
         # Subscribe to price feed
@@ -612,6 +683,8 @@ class AutoTrader:
             if result.success:
                 self.stats["signals_traded"] += 1
                 self.stats["positions_opened"] += 1
+                # === RECORD TRADE OPEN (FIX #4) ===
+                self._record_trade_open(decision.symbol)
                 logger.info(f"  ✅ Order filled: {result.filled_quantity} @ {result.avg_price}")
 
                 # === WATCHDOG REGISTRATION (CRITICAL - FAIL-CLOSED) ===
@@ -633,6 +706,7 @@ class AutoTrader:
                     try:
                         if hasattr(self.executor, 'emergency_close'):
                             self.executor.emergency_close(decision.symbol)
+                            self._record_trade_close(decision.symbol)  # Record close
                             logger.warning(f"  ⚠️ Emergency close triggered for {decision.symbol}")
                     except Exception as close_err:
                         logger.critical(f"  🛑 EMERGENCY CLOSE ALSO FAILED: {close_err}")
@@ -641,10 +715,18 @@ class AutoTrader:
         else:
             # DRY mode
             logger.info(f"  [DRY] Would buy ${decision.position_size_usdt} of {decision.symbol}")
+            self._record_trade_open(decision.symbol)  # Track even in DRY mode
             self.stats["signals_traded"] += 1
     
     def _execute_trade(self, signal: ProcessedSignal):
         """Execute trade for signal (fallback when Eye of God not available)"""
+        # === COOLDOWN CHECK (FIX #4) ===
+        is_blocked, block_reason = self._is_symbol_blocked(signal.symbol)
+        if is_blocked:
+            logger.warning(f"🚫 BLOCKED: {signal.symbol} | {block_reason}")
+            self.stats["signals_skipped"] += 1
+            return
+
         logger.info(f"🔥 EXECUTING: {signal.symbol} | {signal.mode} | ${self.config.default_position_usdt}")
 
         # Calculate position size based on confidence
@@ -683,6 +765,8 @@ class AutoTrader:
             if result.success:
                 self.stats["signals_traded"] += 1
                 self.stats["positions_opened"] += 1
+                # === RECORD TRADE OPEN (FIX #4) ===
+                self._record_trade_open(signal.symbol)
                 logger.info(f"  ✅ Order filled: {result.filled_quantity} @ {result.avg_price}")
 
                 # === WATCHDOG REGISTRATION (CRITICAL - FAIL-CLOSED) ===
@@ -703,6 +787,7 @@ class AutoTrader:
                     try:
                         if hasattr(self.executor, 'emergency_close'):
                             self.executor.emergency_close(signal.symbol)
+                            self._record_trade_close(signal.symbol)  # Record close
                             logger.warning(f"  ⚠️ Emergency close triggered for {signal.symbol}")
                     except Exception as close_err:
                         logger.critical(f"  🛑 EMERGENCY CLOSE ALSO FAILED: {close_err}")
@@ -711,6 +796,7 @@ class AutoTrader:
         else:
             # DRY mode without executor
             logger.info(f"  [DRY] Would buy ${position_size} of {signal.symbol}")
+            self._record_trade_open(signal.symbol)  # Track even in DRY mode
             self.trade_logger.log_signal(signal, "DRY_TRADE")
             self.stats["signals_traded"] += 1
     
@@ -718,28 +804,33 @@ class AutoTrader:
         """Check all open positions for target/stop/timeout"""
         if not self.executor:
             return
-        
+
         # Update prices
         self.price_feed.update_from_gateway()
         prices = self.price_feed.get_all_prices()
-        
+
         # Check positions
         closed = self.executor.check_positions(prices)
-        
+
         for close_info in closed:
             position = close_info["position"]
             reason = close_info["reason"]
+            symbol = position.symbol if hasattr(position, 'symbol') else ""
             pnl = position.realized_pnl if hasattr(position, 'realized_pnl') else 0
-            
+
             self.trade_logger.log_position_close(position, reason, pnl)
             self.stats["positions_closed"] += 1
             self.stats["total_pnl"] += pnl
-            
+
+            # === RECORD TRADE CLOSE - START COOLDOWN (FIX #4) ===
+            if symbol:
+                self._record_trade_close(symbol)
+
             # Update circuit breaker
             pnl_usdt = pnl / 100 * position.notional_value if hasattr(position, 'notional_value') else 0
             self.circuit_breaker.record_trade(pnl_usdt)
-            
-            logger.info(f"Position closed: {position.symbol} | {reason} | PnL: {pnl:+.2f}%")
+
+            logger.info(f"Position closed: {symbol} | {reason} | PnL: {pnl:+.2f}%")
     
     def _subscribe_symbol(self, symbol: str):
         """Subscribe to price feed for symbol"""
@@ -855,6 +946,11 @@ def create_api(autotrader: AutoTrader):
         delta_pct: float = 0
         vol_raise_pct: float = 0
         daily_volume_m: float = 100  # Default daily volume in millions
+        # Momentum detection fields - CRITICAL for Eye of God V3
+        signal_type: str = ""  # MOMENTUM_24H, TRENDING, etc.
+        type: str = ""  # Alias for compatibility
+        ai_override: bool = False  # Force trade despite low score
+        confidence: float = 0.5  # AI confidence score
     
     @app.post("/signal")
     async def inject_signal(signal: SignalRequest):
