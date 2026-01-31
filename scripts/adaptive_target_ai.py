@@ -116,7 +116,8 @@ def get_safety_margin(symbol: str, delta_pct: float) -> float:
 
     # The bigger the pump, the more likely a reversal
     # Use diminishing returns to avoid being too conservative
-    reversal_risk = min(0.5, base_drawdown * math.log1p(delta_pct / 5))
+    # Use abs(delta_pct) to handle momentum signals with negative short-term delta
+    reversal_risk = min(0.5, base_drawdown * math.log1p(abs(delta_pct) / 5))
 
     # Safety margin: 1.0 = full target, 0.5 = half target
     safety = max(0.5, 1.0 - reversal_risk)
@@ -164,7 +165,9 @@ def calculate_adaptive_target(
 
     # Calculate pump multiplier using diminishing returns
     # sqrt gives diminishing returns - a 4x pump doesn't give 4x target
-    pump_factor = math.sqrt(delta_pct / tier.min_delta) if tier.min_delta > 0 else 1.0
+    # Use abs(delta_pct) to handle negative deltas (momentum signals can have negative short-term delta)
+    abs_delta = abs(delta_pct) if delta_pct != 0 else 0.01  # Avoid division by zero
+    pump_factor = math.sqrt(abs_delta / tier.min_delta) if tier.min_delta > 0 else 1.0
     pump_factor = min(pump_factor, 3.0)  # Cap at 3x
 
     # Buys pressure bonus (more buying = more confidence)
