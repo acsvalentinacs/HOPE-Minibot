@@ -3,10 +3,10 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:15:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-30 19:35:00 UTC
+# Modified at: 2026-01-31 08:50:00 UTC
 # Purpose: HOPE AI Real Order Executor - ACTUAL Binance trading, NO STUBS
-# Changes: FIX 4 - Added trailing stop support (activation_pct, delta_pct, auto-update)
-# sha256: order_executor_v1.1
+# Changes: FIX 5 - Position persistence: load positions from state, sync to shared file
+# sha256: order_executor_v1.2
 # === END SIGNATURE ===
 """
 HOPE AI - Real Order Executor v1.0
@@ -423,19 +423,56 @@ class OrderExecutor:
             raise ValueError("BINANCE_API_KEY not found in environment or secrets file")
     
     def _load_state(self):
-        """Load executor state"""
+        """Load executor state including positions"""
         if self.state_file.exists():
             try:
                 with open(self.state_file, 'r') as f:
                     state = json.load(f)
                 self.daily_trades = state.get("daily_trades", 0)
                 self.daily_pnl = state.get("daily_pnl", 0.0)
-                # Reset if new day
+
+                # Load positions from state
+                positions_data = state.get("positions", {})
+                for pos_id, pos_dict in positions_data.items():
+                    try:
+                        self.positions[pos_id] = Position(
+                            position_id=pos_dict.get("position_id", pos_id),
+                            symbol=pos_dict.get("symbol", ""),
+                            side=pos_dict.get("side", "LONG"),
+                            entry_price=pos_dict.get("entry_price", 0.0),
+                            quantity=pos_dict.get("quantity", 0.0),
+                            entry_time=pos_dict.get("entry_time", ""),
+                            target_price=pos_dict.get("target_price", 0.0),
+                            stop_price=pos_dict.get("stop_price", 0.0),
+                            timeout_seconds=pos_dict.get("timeout_seconds", 0),
+                            current_price=pos_dict.get("current_price", 0.0),
+                            unrealized_pnl=pos_dict.get("unrealized_pnl", 0.0),
+                            status=pos_dict.get("status", "OPEN"),
+                            close_price=pos_dict.get("close_price", 0.0),
+                            close_time=pos_dict.get("close_time", ""),
+                            realized_pnl=pos_dict.get("realized_pnl", 0.0),
+                            trailing_activation_pct=pos_dict.get("trailing_activation_pct", 0.0),
+                            trailing_delta_pct=pos_dict.get("trailing_delta_pct", 0.0),
+                            trailing_active=pos_dict.get("trailing_active", False),
+                            trailing_peak_price=pos_dict.get("trailing_peak_price", 0.0),
+                            trailing_stop_price=pos_dict.get("trailing_stop_price", 0.0),
+                        )
+                        logger.info(f"Loaded position: {pos_id} | {pos_dict.get('symbol')} | status={pos_dict.get('status')}")
+                    except Exception as e:
+                        logger.error(f"Failed to load position {pos_id}: {e}")
+
+                # Reset daily counters if new day
                 last_date = state.get("date", "")
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 if last_date != today:
                     self.daily_trades = 0
                     self.daily_pnl = 0.0
+
+                logger.info(f"State loaded: {len(self.positions)} positions, {self.daily_trades} daily trades")
+
+                # Sync loaded positions to shared file
+                if self.positions:
+                    self._sync_shared_positions()
             except Exception as e:
                 logger.warning(f"Failed to load state: {e}")
     
@@ -453,7 +490,34 @@ class OrderExecutor:
         with open(temp, 'w') as f:
             json.dump(state, f, indent=2)
         temp.replace(self.state_file)
-    
+
+    def _sync_shared_positions(self):
+        """Sync positions to shared file for dashboard/watchdog"""
+        shared_file = Path("state/ai/autotrader/positions.json")
+        shared_file.parent.mkdir(parents=True, exist_ok=True)
+
+        open_positions = [p for p in self.positions.values() if p.status == "OPEN"]
+        positions_list = []
+        for p in open_positions:
+            positions_list.append({
+                "symbol": p.symbol,
+                "qty": p.quantity,
+                "entry": p.entry_price,
+                "target": p.target_price,
+                "stop": p.stop_price,
+                "opened_at": p.entry_time,
+                "position_id": p.position_id,
+                "trailing_active": p.trailing_active,
+                "trailing_stop": p.trailing_stop_price,
+            })
+
+        data = {"positions": positions_list}
+        temp = shared_file.with_suffix('.tmp')
+        with open(temp, 'w') as f:
+            json.dump(data, f, indent=2)
+        temp.replace(shared_file)
+        logger.info(f"Synced {len(positions_list)} positions to shared file")
+
     def _check_safety_limits(self, symbol: str, amount_usdt: float) -> Tuple[bool, str]:
         """
         Check safety limits before placing order
@@ -751,6 +815,10 @@ class OrderExecutor:
         self.positions[position_id] = position
         trail_info = f" | trail={trailing_activation}%/{trailing_delta}%" if trailing_activation > 0 else ""
         logger.info(f"Position created: {position_id} | {order.symbol} | target={target_price:.6f} | stop={stop_price:.6f}{trail_info}")
+
+        # Save state and sync to shared positions file
+        self._save_state()
+        self._sync_shared_positions()
     
     def _close_position(self, position: Position, close_price: float, reason: str):
         """Close position and calculate PnL"""
@@ -777,9 +845,10 @@ class OrderExecutor:
         })
         
         logger.info(f"Position closed: {position.position_id} | {reason} | PnL: {position.realized_pnl:+.2f}% (${pnl_usdt:+.2f})")
-        
+
         self._save_state()
-    
+        self._sync_shared_positions()
+
     def check_positions(self, prices: Dict[str, float]) -> List[Dict]:
         """
         Check all open positions against targets/stops/timeouts

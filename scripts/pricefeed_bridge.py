@@ -54,6 +54,8 @@ TRACKED_SYMBOLS = [
     "FLOWUSDT", "SYNUSDT", "SOMIUSDT", "FTTUSDT", "FIDAUSDT", "BIFIUSDT",
     # AI Tier 2
     "0GUSDT", "DUSDT", "ZKCUSDT", "INITUSDT", "USTCUSDT", "NOMUSDT", "VANRYUSDT", "MANTAUSDT",
+    # Pump detector signals (dynamically added)
+    "SENTUSDT", "DUSKUSDT", "UXLINKUSDT", "AXLUSDT", "TRUMPUSDT",
     # Heavy (для логирования, не торгуем)
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
 ]
