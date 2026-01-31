@@ -402,17 +402,29 @@ class AlphaCommittee:
         
         # Determine mode
         mode, mode_config = self._determine_mode(signal)
-        
+
+        # Check for momentum signal type (24h trending signals bypass low confidence)
+        signal_type = getattr(signal, 'type', '') or getattr(signal, 'signal_type', '')
+        is_momentum = signal_type in ("MOMENTUM_24H", "TRENDING")
+        has_ai_override = getattr(signal, 'ai_override', False)
+
         # Determine action
-        if mode == "SKIP" or confidence < MIN_CONFIDENCE_TO_TRADE:
+        if mode == "SKIP" and not (is_momentum or has_ai_override):
             action = "SKIP"
-            if mode == "SKIP":
-                reasons.append("MODE_SKIP:LOW_BUYS")
-            else:
-                reasons.append(f"LOW_CONFIDENCE:{confidence*100:.0f}%<{MIN_CONFIDENCE_TO_TRADE*100:.0f}%")
+            reasons.append("MODE_SKIP:LOW_BUYS")
+        elif confidence < MIN_CONFIDENCE_TO_TRADE and not (is_momentum or has_ai_override):
+            action = "SKIP"
+            reasons.append(f"LOW_CONFIDENCE:{confidence*100:.0f}%<{MIN_CONFIDENCE_TO_TRADE*100:.0f}%")
         else:
             action = "BUY"
-            reasons.append(f"CONF:{confidence*100:.0f}%>={MIN_CONFIDENCE_TO_TRADE*100:.0f}%")
+            if is_momentum:
+                reasons.append(f"MOMENTUM_OVERRIDE:{signal_type}")
+                mode = "SWING"  # Use SWING mode for momentum signals
+                mode_config = self.MODE_CONFIG.get("SWING", mode_config)
+            elif has_ai_override:
+                reasons.append("AI_OVERRIDE")
+            else:
+                reasons.append(f"CONF:{confidence*100:.0f}%>={MIN_CONFIDENCE_TO_TRADE*100:.0f}%")
         
         # Position size multiplier based on confidence
         if confidence >= 0.75:

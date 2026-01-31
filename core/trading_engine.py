@@ -100,16 +100,26 @@ class HopeTradingEngine:
         # ═══════════════════════════════════════════════════════════════════
         
         decision, block_reason, details = self.gate.check(signal)
-        
+
+        # Check for momentum override (24h trending signals bypass low-delta gate)
+        is_momentum = signal_type in ("MOMENTUM_24H", "TRENDING")
+        has_ai_override = signal.get("ai_override", False)
+
         if decision == GateDecision.BLOCK:
+            # BLOCK is absolute - no override
             log.info(f"Signal BLOCKED: {block_reason.value if block_reason else 'unknown'}")
             self.logger.log_signal(signal, "blocked", str(block_reason.value if block_reason else ""))
             return None
-        
+
         if decision == GateDecision.PASS_LOG_ONLY:
-            log.info(f"Signal LOG_ONLY: {block_reason.value if block_reason else details}")
-            self.logger.log_signal(signal, "log_only", str(block_reason.value if block_reason else ""))
-            return None
+            # LOG_ONLY can be overridden by momentum signals
+            if is_momentum or has_ai_override:
+                log.info(f"[MOMENTUM-OVERRIDE] {symbol} | type={signal_type} | "
+                        f"ai_override={has_ai_override} - bypassing LOG_ONLY")
+            else:
+                log.info(f"Signal LOG_ONLY: {block_reason.value if block_reason else details}")
+                self.logger.log_signal(signal, "log_only", str(block_reason.value if block_reason else ""))
+                return None
         
         # ═══════════════════════════════════════════════════════════════════
         # STEP 2: Live Trade Policy Check
