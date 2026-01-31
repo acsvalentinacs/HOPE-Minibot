@@ -191,6 +191,13 @@ class SymbolState:
     delta_1m: float = 0
     delta_5m: float = 0
 
+    # 24h momentum (from Binance ticker)
+    change_24h: float = 0
+    volume_24h: float = 0
+    high_24h: float = 0
+    low_24h: float = 0
+    last_ticker_update: float = 0
+
     # Detection state
     last_signal_time: float = 0
     cooldown_sec: float = 30  # Min time between signals
@@ -288,6 +295,19 @@ class SymbolState:
         elif self.buy_volume_1m >= 100000 and buy_ratio >= 2.0 and delta_pct >= 0.5:
             signal_type = "VOLUME_SPIKE"
             confidence = 0.70
+
+        # MOMENTUM: 24h trending coins with active buying
+        # Triggers when coin is up significantly in 24h AND has current buy activity
+        elif self.change_24h >= 5.0 and self.buys_per_sec >= 5 and buy_dominance >= 40:
+            signal_type = "MOMENTUM_24H"
+            confidence = 0.75
+            log.info(f"[MOMENTUM] {self.symbol}: 24h={self.change_24h:+.1f}%, buys={self.buys_per_sec:.1f}/s")
+
+        # TRENDING: strong 24h move (>10%) even with moderate activity
+        elif self.change_24h >= 10.0 and self.buys_per_sec >= 2:
+            signal_type = "TRENDING"
+            confidence = 0.70
+            log.info(f"[TRENDING] {self.symbol}: 24h={self.change_24h:+.1f}%, price=${self.price:.6f}")
 
         # MICRO: disabled - too many false signals
         elif False and self.buys_per_sec >= 5 and delta_pct >= 0.05:
@@ -387,17 +407,31 @@ class PumpDetector:
         ai_status = "🤖 AI Predictor v2 ENABLED" if self.use_ai_filter else "⚠️ AI filtering OFF"
         log.info(f"Pump Detector started for {len(self.symbols)} symbols | {ai_status}")
 
+        # Fetch initial 24h tickers
+        await self.update_24h_tickers()
+
         if self.telegram:
             await self.telegram.send(
                 f"🔍 Pump Detector started\n"
                 f"Monitoring: {', '.join(self.symbols[:5])}...\n"
-                f"{ai_status}"
+                f"{ai_status}\n"
+                f"📈 24h momentum tracking: ENABLED"
             )
+
+        # Start background ticker update task
+        asyncio.create_task(self._ticker_update_loop())
 
         try:
             await self._websocket_loop()
         finally:
             await self.stop()
+
+    async def _ticker_update_loop(self):
+        """Background task to update 24h tickers every 5 minutes."""
+        while self.running:
+            await asyncio.sleep(300)  # 5 minutes
+            if self.running:
+                await self.update_24h_tickers()
 
     async def stop(self):
         """Stop detector."""
@@ -419,6 +453,40 @@ class PumpDetector:
             f"Forwarded: {self.signals_forwarded}, "
             f"AI approved: {self.signals_ai_approved}, AI rejected: {self.signals_ai_rejected}"
         )
+
+    async def update_24h_tickers(self):
+        """Fetch 24h ticker data for all symbols."""
+        if not self.client:
+            return
+
+        try:
+            resp = await self.client.get("https://api.binance.com/api/v3/ticker/24hr")
+            if resp.status_code == 200:
+                tickers = resp.json()
+                updated = 0
+                trending = []
+
+                for ticker in tickers:
+                    symbol = ticker.get("symbol", "")
+                    if symbol in self.states:
+                        state = self.states[symbol]
+                        state.change_24h = float(ticker.get("priceChangePercent", 0))
+                        state.volume_24h = float(ticker.get("quoteVolume", 0))
+                        state.high_24h = float(ticker.get("highPrice", 0))
+                        state.low_24h = float(ticker.get("lowPrice", 0))
+                        state.last_ticker_update = time.time()
+                        updated += 1
+
+                        # Log trending coins
+                        if state.change_24h >= 5.0:
+                            trending.append(f"{symbol}:{state.change_24h:+.1f}%")
+
+                log.info(f"[24H-TICKER] Updated {updated} symbols")
+                if trending:
+                    log.info(f"[24H-TRENDING] {', '.join(trending[:10])}")
+
+        except Exception as e:
+            log.warning(f"[24H-TICKER] Failed to fetch: {e}")
 
     async def _websocket_loop(self):
         """Main WebSocket loop."""
@@ -479,6 +547,7 @@ class PumpDetector:
         # ═══════════════════════════════════════════════════════════════════
         # HARD TELEGRAM FILTER - BEGIN
         # Blocks: MICRO/TEST_ACTIVITY/SCALP and delta < 10% (strict, fail-closed)
+        # EXCEPTION: MOMENTUM_24H and TRENDING bypass delta check (use 24h momentum)
         # ═══════════════════════════════════════════════════════════════════
         _delta = signal.get("delta_pct", 0)
         _type = signal.get("signal_type", "")
@@ -489,8 +558,12 @@ class PumpDetector:
             log.info(f"[HARD-KILL] {_sym} type={_type} - BLOCKED (spam type)")
             return  # EXIT IMMEDIATELY - NO PROCESSING
 
-        # BLOCK: delta < 10% - not worth trading
-        if _delta < 10.0:
+        # ALLOW: MOMENTUM_24H and TRENDING signals bypass delta check
+        # These are based on 24h momentum, not 1-minute delta
+        if _type in ("MOMENTUM_24H", "TRENDING"):
+            log.info(f"[24H-PASS] {_sym} type={_type} - ALLOWED (24h momentum signal)")
+        elif _delta < 10.0:
+            # BLOCK: delta < 10% for non-momentum signals
             log.info(f"[HARD-KILL] {_sym} delta={_delta:.2f}% < 10% - BLOCKED")
             return  # EXIT IMMEDIATELY - NO PROCESSING
         # HARD TELEGRAM FILTER - END
@@ -620,23 +693,40 @@ class PumpDetector:
                     log.info(format_decision_log(ai_decision, signal))
 
                 # Check if AI approves
+                signal_type = signal.get("signal_type", "")
+                is_momentum_signal = signal_type in ("MOMENTUM_24H", "TRENDING")
+
                 if ai_decision.action == "SKIP":
                     self.signals_ai_rejected += 1
-                    log.info(
-                        f"🔴 AI REJECT: {signal['symbol']} | "
-                        f"score={ai_decision.final_score:.2f} | "
-                        f"tier={ai_decision.allowlist_tier}"
-                    )
 
-                    # Save rejected signal (for analysis)
-                    if self.save_signals:
-                        signal["ai_rejected"] = True
+                    # SPECIAL: Allow TRENDING/MOMENTUM_24H signals to pass despite AI rejection
+                    # These are based on strong 24h momentum, not short-term technicals
+                    if is_momentum_signal:
+                        log.info(
+                            f"🟡 AI OVERRIDE: {signal['symbol']} | "
+                            f"score={ai_decision.final_score:.2f} BUT type={signal_type} - ALLOWED"
+                        )
+                        signal["ai_override"] = True
                         signal["ai_score"] = ai_decision.final_score
                         signal["ai_tier"] = ai_decision.allowlist_tier
-                        signal["ai_reasons"] = ai_decision.reasons[:3]
-                        await self._save_signal(signal)
+                        signal["ai_reasons"] = ["24h_momentum_override"] + ai_decision.reasons[:2]
+                        # Continue processing instead of returning
+                    else:
+                        log.info(
+                            f"🔴 AI REJECT: {signal['symbol']} | "
+                            f"score={ai_decision.final_score:.2f} | "
+                            f"tier={ai_decision.allowlist_tier}"
+                        )
 
-                    return  # Don't forward rejected signals
+                        # Save rejected signal (for analysis)
+                        if self.save_signals:
+                            signal["ai_rejected"] = True
+                            signal["ai_score"] = ai_decision.final_score
+                            signal["ai_tier"] = ai_decision.allowlist_tier
+                            signal["ai_reasons"] = ai_decision.reasons[:3]
+                            await self._save_signal(signal)
+
+                        return  # Don't forward rejected signals
 
                 # AI approved - enhance signal with AI data
                 self.signals_ai_approved += 1
@@ -655,7 +745,17 @@ class PumpDetector:
                             signal.get("vol_raise_pct", 0)
                         )
 
-                        if target_data["tier"] == "NOISE":
+                        # SPECIAL: 24h momentum signals bypass NOISE filter
+                        # Set conservative targets for trend-following
+                        if target_data["tier"] == "NOISE" and is_momentum_signal:
+                            log.info(f"[24H-TARGET] {signal['symbol']} - using momentum targets (bypass NOISE)")
+                            target_data = {
+                                "tier": "MOMENTUM",
+                                "target_pct": 1.5,  # Conservative 1.5% target
+                                "stop_pct": -1.0,   # Tight 1% stop
+                                "timeout_sec": 1800  # 30 min timeout
+                            }
+                        elif target_data["tier"] == "NOISE":
                             log.info(f"[NOISE] {signal['symbol']} delta={signal['delta_pct']:.2f}% - skip")
                             return
 

@@ -299,19 +299,24 @@ def check_signal_gate(signal: Dict[str, Any], config: PipelineConfig) -> Tuple[G
     symbol = signal.get("symbol", "")
     delta = float(signal.get("delta_pct", 0))
     sig_type = signal.get("type", "UNKNOWN")
-    
+
     # Block heavy coins
     if symbol in config.heavy_coins:
         return GateDecision.PASS_LOG_ONLY, "HEAVY_COIN"
-    
+
     # Block stablecoins
     if symbol in config.stablecoins:
         return GateDecision.BLOCK, "STABLECOIN"
-    
+
     # Block unwanted types
     if sig_type in config.blocked_types:
         return GateDecision.PASS_LOG_ONLY, "BLOCKED_TYPE"
-    
+
+    # SPECIAL: 24h momentum signals bypass delta check
+    # These are based on 24h trend, not short-term delta
+    if sig_type in ("MOMENTUM_24H", "TRENDING"):
+        return GateDecision.PASS_TRADE_ONLY, "24H_MOMENTUM"
+
     # Check delta thresholds
     if delta >= config.telegram_min_delta_pct:
         return GateDecision.PASS_TELEGRAM_AND_TRADE, "STRONG_SIGNAL"
