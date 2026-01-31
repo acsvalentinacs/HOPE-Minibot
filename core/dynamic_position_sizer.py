@@ -290,10 +290,10 @@ class DynamicPositionSizer:
             size = balance * 0.5
         
         reasoning = (
-            f"Balance=${balance:.2f} × {base_pct*100:.0f}% "
-            f"× Conf={confidence_mult:.2f} "
-            f"× Loss={loss_adjustment:.2f} "
-            f"× Compound={compound_mult:.2f}"
+            f"Balance=${balance:.2f} * {base_pct*100:.0f}% "
+            f"* Conf={confidence_mult:.2f} "
+            f"* Loss={loss_adjustment:.2f} "
+            f"* Compound={compound_mult:.2f}"
         )
         
         result = PositionSizeResult(
@@ -309,7 +309,7 @@ class DynamicPositionSizer:
         logger.info(
             f"[POSITION] Size=${result.size_usd} | "
             f"Balance=${result.balance_usd} | "
-            f"Conf×{result.confidence_mult}"
+            f"Conf*{result.confidence_mult}"
         )
         
         return result

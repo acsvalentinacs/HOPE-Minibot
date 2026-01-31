@@ -84,6 +84,7 @@ FLOW:
 """
 
 import json
+import sys
 import time
 import hashlib
 import logging
@@ -92,6 +93,11 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, Set
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+
+# Ensure project root is in path for imports
+PROJECT_ROOT = Path(__file__).parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import schema validation
 try:
@@ -102,6 +108,8 @@ except ImportError:
     validate_signal = None
     check_liquidity = None
 
+log = logging.getLogger("EYE-V3")
+
 # Import Adaptive Targets for $100 capital strategy
 try:
     from core.adaptive_targets import AdaptiveTargetEngine, AdaptiveTargets
@@ -109,8 +117,6 @@ try:
 except ImportError:
     ADAPTIVE_TARGETS_AVAILABLE = False
     log.warning("AdaptiveTargetEngine not available")
-
-log = logging.getLogger("EYE-V3")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
