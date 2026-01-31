@@ -2,7 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-31 04:20:00 UTC
-# Purpose: HOPE AI Dashboard Backend Server
+# Modified by: Claude (opus-4)
+# Modified at: 2026-01-31 10:15:00 UTC
+# Purpose: HOPE AI Dashboard Backend Server + Chart APIs
 # === END SIGNATURE ===
 """
 HOPE AI Dashboard Server
@@ -13,13 +15,18 @@ USAGE:
     python dashboard/dashboard_server.py
 
 ENDPOINTS:
-    GET  /api/status      - System status
-    GET  /api/position    - Active position
-    GET  /api/balances    - Account balances
-    GET  /api/signals     - Recent signals
-    POST /api/close       - Close position
-    POST /api/stop        - Emergency stop
-    WS   /ws/prices       - Real-time price feed
+    GET  /api/status           - System status
+    GET  /api/position         - Active position
+    GET  /api/balances         - Account balances
+    GET  /api/signals          - Recent signals
+    GET  /api/metrics          - Aggregated metrics (winrate, pnl, trades)
+    GET  /api/chart/pnl        - PnL over time data
+    GET  /api/chart/winrate    - Win rate trend data
+    GET  /api/chart/confidence - AI confidence distribution
+    GET  /api/chart/model      - Model performance metrics
+    POST /api/close            - Close position
+    POST /api/stop             - Emergency stop
+    WS   /ws/prices            - Real-time price feed
 """
 
 import os
@@ -138,6 +145,13 @@ class DashboardServer:
         self.app.router.add_post('/api/stop', self.emergency_stop)
         self.app.router.add_get('/ws/prices', self.websocket_handler)
 
+        # Chart API endpoints
+        self.app.router.add_get('/api/metrics', self.get_metrics)
+        self.app.router.add_get('/api/chart/pnl', self.get_chart_pnl)
+        self.app.router.add_get('/api/chart/winrate', self.get_chart_winrate)
+        self.app.router.add_get('/api/chart/confidence', self.get_chart_confidence)
+        self.app.router.add_get('/api/chart/model', self.get_chart_model)
+
         # Static files
         self.app.router.add_static('/static/', Path(__file__).parent)
 
@@ -243,6 +257,168 @@ class DashboardServer:
             {"name": ".env Configuration", "status": "CLEAN"},
         ]
         return web.json_response({"tests": tests})
+
+    # === CHART API ENDPOINTS (NEW) ===
+
+    async def get_metrics(self, request):
+        """Get aggregated metrics for dashboard."""
+        metrics = {
+            "winrate": 0.0,
+            "total_pnl": 0.0,
+            "trades_today": 0,
+            "model_accuracy": 0.0
+        }
+
+        # Load from outcomes history
+        outcomes_file = Path("state/ai/outcomes/history.jsonl")
+        if outcomes_file.exists():
+            try:
+                lines = outcomes_file.read_text().strip().split('\n')
+                trades = [json.loads(line) for line in lines if line.strip()]
+                if trades:
+                    wins = sum(1 for t in trades if t.get("pnl_pct", 0) > 0)
+                    metrics["winrate"] = round(wins / len(trades) * 100, 1)
+                    metrics["total_pnl"] = round(sum(t.get("pnl_pct", 0) for t in trades), 2)
+
+                    # Trades today
+                    today = datetime.now(timezone.utc).date().isoformat()
+                    metrics["trades_today"] = sum(
+                        1 for t in trades
+                        if t.get("timestamp", "").startswith(today)
+                    )
+            except Exception as e:
+                logger.error(f"Failed to load outcomes: {e}")
+
+        # Model accuracy from training state
+        model_state = Path("state/ai/model_metrics.json")
+        if model_state.exists():
+            try:
+                data = json.loads(model_state.read_text())
+                metrics["model_accuracy"] = data.get("accuracy", 0.0)
+            except:
+                pass
+
+        return web.json_response(metrics)
+
+    async def get_chart_pnl(self, request):
+        """Get PnL over time data for chart."""
+        data = []
+
+        outcomes_file = Path("state/ai/outcomes/history.jsonl")
+        if outcomes_file.exists():
+            try:
+                lines = outcomes_file.read_text().strip().split('\n')
+                trades = [json.loads(line) for line in lines if line.strip()]
+
+                cumulative = 0.0
+                for trade in trades[-50:]:  # Last 50 trades
+                    cumulative += trade.get("pnl_pct", 0)
+                    data.append({
+                        "timestamp": trade.get("timestamp", ""),
+                        "pnl": round(cumulative, 2)
+                    })
+            except Exception as e:
+                logger.error(f"Failed to load PnL data: {e}")
+
+        return web.json_response({"data": data})
+
+    async def get_chart_winrate(self, request):
+        """Get win rate trend data for chart."""
+        data = []
+
+        outcomes_file = Path("state/ai/outcomes/history.jsonl")
+        if outcomes_file.exists():
+            try:
+                lines = outcomes_file.read_text().strip().split('\n')
+                trades = [json.loads(line) for line in lines if line.strip()]
+
+                # Rolling 10-trade window
+                window_size = 10
+                for i in range(window_size, len(trades) + 1):
+                    window = trades[i - window_size:i]
+                    wins = sum(1 for t in window if t.get("pnl_pct", 0) > 0)
+                    winrate = wins / window_size * 100
+
+                    data.append({
+                        "trade_num": i,
+                        "winrate": round(winrate, 1)
+                    })
+            except Exception as e:
+                logger.error(f"Failed to load winrate data: {e}")
+
+        return web.json_response({"data": data[-30:]})  # Last 30 points
+
+    async def get_chart_confidence(self, request):
+        """Get AI confidence distribution for chart."""
+        # Confidence histogram: buckets 0-20, 20-40, 40-60, 60-80, 80-100
+        buckets = {
+            "0-20": 0,
+            "20-40": 0,
+            "40-60": 0,
+            "60-80": 0,
+            "80-100": 0
+        }
+
+        decisions_file = Path("state/ai/decisions.jsonl")
+        if decisions_file.exists():
+            try:
+                lines = decisions_file.read_text().strip().split('\n')
+                for line in lines[-200:]:  # Last 200 decisions
+                    if line.strip():
+                        decision = json.loads(line)
+                        conf = decision.get("confidence", 0)
+                        if conf < 20:
+                            buckets["0-20"] += 1
+                        elif conf < 40:
+                            buckets["20-40"] += 1
+                        elif conf < 60:
+                            buckets["40-60"] += 1
+                        elif conf < 80:
+                            buckets["60-80"] += 1
+                        else:
+                            buckets["80-100"] += 1
+            except Exception as e:
+                logger.error(f"Failed to load confidence data: {e}")
+
+        return web.json_response({"buckets": buckets})
+
+    async def get_chart_model(self, request):
+        """Get model performance metrics for chart."""
+        metrics = {
+            "accuracy": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+        }
+
+        model_state = Path("state/ai/model_metrics.json")
+        if model_state.exists():
+            try:
+                data = json.loads(model_state.read_text())
+                metrics["accuracy"] = data.get("accuracy", 0.0)
+                metrics["precision"] = data.get("precision", 0.0)
+                metrics["recall"] = data.get("recall", 0.0)
+                metrics["f1"] = data.get("f1", 0.0)
+            except Exception as e:
+                logger.error(f"Failed to load model metrics: {e}")
+
+        # Also get training history if available
+        history = []
+        training_log = Path("state/ai/training_history.jsonl")
+        if training_log.exists():
+            try:
+                lines = training_log.read_text().strip().split('\n')
+                for line in lines[-20:]:
+                    if line.strip():
+                        entry = json.loads(line)
+                        history.append({
+                            "timestamp": entry.get("timestamp", ""),
+                            "accuracy": entry.get("accuracy", 0.0)
+                        })
+            except:
+                pass
+
+        return web.json_response({"current": metrics, "history": history})
 
     async def close_position(self, request):
         """Close active position."""
