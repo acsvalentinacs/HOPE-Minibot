@@ -234,6 +234,9 @@ class ThreeLayerAllowList:
         if self._is_dynamic_stale():
             await self.update_dynamic_list()
 
+        # Load pre-compiled HOT_LIST from file
+        self._load_hot_list_file()
+
         # Cleanup expired HOT entries
         self._cleanup_hot_list()
 
@@ -243,6 +246,42 @@ class ThreeLayerAllowList:
             f"DYNAMIC={len(self.state.dynamic_list)}, "
             f"HOT={len(self.state.hot_entries)}"
         )
+
+    def _load_hot_list_file(self):
+        """Load pre-compiled HOT_LIST from state/hot_list.json."""
+        hot_list_file = Path(__file__).parent.parent / "state" / "hot_list.json"
+        if not hot_list_file.exists():
+            return
+
+        try:
+            data = json.loads(hot_list_file.read_text(encoding='utf-8'))
+            symbols = data.get('symbols', [])
+            details = data.get('details', {})
+
+            added = 0
+            for sym in symbols:
+                if sym in self.state.hot_entries:
+                    continue
+                if not sym.endswith('USDT'):
+                    continue
+
+                detail = details.get(sym, {})
+                score = detail.get('change_pct', 0) or detail.get('range_pct', 0)
+
+                self.state.hot_entries[sym] = HotEntry(
+                    symbol=sym,
+                    added_at=time.time(),
+                    pump_score=score / 10,  # Normalize to 0-10 scale
+                    source='hot_list_file'
+                )
+                added += 1
+
+            if added > 0:
+                log.info(f"HOT_LIST loaded {added} symbols from file")
+                self.state.save()
+
+        except Exception as e:
+            log.warning(f"Failed to load hot_list.json: {e}")
 
     async def close(self):
         """Cleanup resources."""
