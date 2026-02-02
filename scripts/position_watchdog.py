@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 # === AI SIGNATURE ===
-# sha256:position_watchdog_v1_prod
+# sha256:position_watchdog_v2_eventbus
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30T04:30:00Z
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-31T08:58:00Z
-# Purpose: Position Watchdog - независимый контур закрытия позиций
+# Modified at: 2026-02-02T18:30:00Z
+# Purpose: Position Watchdog - независимый контур закрытия позиций + Event Bus
 # Contract: Позиции ДОЛЖНЫ закрываться по timeout независимо от сигналов
+# Changes: Full Event Bus integration (PositionSnapshot, Close, StopLossFailure)
 # === END SIGNATURE ===
 """
 ═══════════════════════════════════════════════════════════════════════════════
@@ -81,6 +82,14 @@ try:
     import httpx
 except ImportError:
     httpx = None
+
+# Event Bus for event-driven architecture (P0 integration)
+try:
+    from core.events.integration import get_publisher
+    EVENT_BUS_AVAILABLE = True
+except ImportError:
+    EVENT_BUS_AVAILABLE = False
+    get_publisher = None
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -470,13 +479,35 @@ class PositionWatchdog:
         
         if "error" in result:
             log.error(f"[CLOSE ERROR] {position.symbol}: {result.get('msg')}")
-            
+
+            # === EVENT BUS: Emit StopLossFailureEvent if reason was STOP ===
+            if reason == ExitReason.STOP and EVENT_BUS_AVAILABLE and get_publisher:
+                try:
+                    publisher = get_publisher()
+                    corr_id = getattr(position, '_correlation_id', f"watch_{position.position_id}")
+                    # Calculate how long price has been below stop
+                    entry = datetime.fromisoformat(position.entry_time.replace('Z', '+00:00'))
+                    duration_below = int((datetime.now(timezone.utc) - entry).total_seconds())
+                    publisher.stoploss_failure(
+                        corr_id=corr_id,
+                        position_id=position.position_id,
+                        symbol=position.symbol,
+                        stop_price=position.stop_price,
+                        current_price=position.current_price,
+                        duration_below_sl_sec=duration_below,
+                        action_taken=f"RETRY_{position.close_attempts}",
+                        close_result=result,
+                    )
+                    log.warning(f"[EVENT] StopLossFailureEvent published for {position.position_id}")
+                except Exception as e:
+                    log.error(f"[EVENT] Failed to publish StopLossFailureEvent: {e}")
+
             if position.close_attempts >= MAX_RETRY_ATTEMPTS:
                 # Give up, mark as error but keep trying
                 self.stats["errors"] += 1
                 position.status = "OPEN"  # Will retry next cycle
                 return False
-            
+
             position.status = "OPEN"
             return False
         
@@ -520,21 +551,42 @@ class PositionWatchdog:
         
         # Log event
         self._log_close(event)
-        
+
+        # === EVENT BUS: Emit CloseEvent ===
+        if EVENT_BUS_AVAILABLE and get_publisher:
+            try:
+                publisher = get_publisher()
+                # Get correlation_id from position metadata if exists
+                corr_id = getattr(position, '_correlation_id', f"watch_{position.position_id}")
+                publisher.close(
+                    corr_id=corr_id,
+                    position_id=position.position_id,
+                    symbol=position.symbol,
+                    reason=reason.value,
+                    entry_price=position.entry_price,
+                    exit_price=exit_price,
+                    pnl_pct=round(pnl_pct, 4),
+                    pnl_usdt=round(pnl_usd, 4),
+                    duration_sec=duration,
+                )
+                log.debug(f"[EVENT] CloseEvent published for {position.position_id}")
+            except Exception as e:
+                log.error(f"[EVENT] Failed to publish CloseEvent: {e}")
+
         # Remove from registry
         position.status = "CLOSED"
         del self.positions[position.position_id]
         self._save_positions()
-        
+
         # Update stats
         self.stats["closes"] += 1
         if "PANIC" in reason.value:
             self.stats["panic_closes"] += 1
-        
+
         log.info(f"[CLOSED] {position.symbol} reason={reason.value} "
                 f"PnL={pnl_pct:+.2f}% (${pnl_usd:+.2f}) "
                 f"MFE={position.mfe:.2f}% MAE={position.mae:.2f}%")
-        
+
         return True
     
     async def _check_positions(self):
@@ -585,13 +637,41 @@ class PositionWatchdog:
             # Update price
             if pos.symbol in prices:
                 pos.update_price(prices[pos.symbol])
-            
+
+            # === EVENT BUS: Emit PositionSnapshotEvent ===
+            if EVENT_BUS_AVAILABLE and get_publisher and pos.current_price > 0:
+                try:
+                    publisher = get_publisher()
+                    corr_id = getattr(pos, '_correlation_id', f"watch_{pos.position_id}")
+                    pnl_pct = (pos.current_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
+                    pnl_usdt = (pos.current_price - pos.entry_price) * pos.quantity
+                    entry_dt = datetime.fromisoformat(pos.entry_time.replace('Z', '+00:00'))
+                    age_sec = int((datetime.now(timezone.utc) - entry_dt).total_seconds())
+                    publisher.position_snapshot(
+                        corr_id=corr_id,
+                        position_id=pos.position_id,
+                        symbol=pos.symbol,
+                        entry_price=pos.entry_price,
+                        current_price=pos.current_price,
+                        quantity=pos.quantity,
+                        pnl_pct=round(pnl_pct, 4),
+                        pnl_usdt=round(pnl_usdt, 4),
+                        mfe=pos.mfe,
+                        mae=pos.mae,
+                        age_sec=age_sec,
+                        stop_price=pos.stop_price,
+                        target_price=pos.target_price,
+                        status=pos.status,
+                    )
+                except Exception as e:
+                    log.debug(f"[EVENT] Failed to publish PositionSnapshot: {e}")
+
             # Check exit condition
             exit_reason = pos.check_exit()
-            
+
             if exit_reason:
                 await self._close_position(pos, exit_reason)
-        
+
         # Save updated positions
         self._save_positions()
     

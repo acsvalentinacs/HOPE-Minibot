@@ -3,10 +3,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-02-02 09:20:00 UTC
+# Modified at: 2026-02-02 17:30:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# Changes: Added _sync_with_binance() to prevent stale/fake positions
-# sha256: autotrader_v1.3_cooldown
+# Changes: Event Bus P0 integration (SignalReceived, Decision, OrderIntent, Fill events)
 # === END SIGNATURE ===
 """
 HOPE AI - AutoTrader v1.0
@@ -117,6 +116,15 @@ except ImportError:
     EYE_OF_GOD_AVAILABLE = False
     EyeOfGodV3 = None
     logging.warning("EyeOfGodV3 not available, using simple SignalProcessor")
+
+# Import Event Bus for event-driven architecture (P0 integration)
+try:
+    from core.events.integration import get_publisher
+    EVENT_BUS_AVAILABLE = True
+except ImportError:
+    EVENT_BUS_AVAILABLE = False
+    get_publisher = None
+    logging.warning("Event Bus not available")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -634,6 +642,22 @@ class AutoTrader:
     
     def add_signal(self, raw_signal: Dict):
         """Add raw signal to processing queue"""
+        symbol = raw_signal.get("symbol", "UNKNOWN")
+
+        # Emit SignalReceivedEvent
+        corr_id = None
+        if EVENT_BUS_AVAILABLE and get_publisher:
+            try:
+                publisher = get_publisher()
+                corr_id = publisher.signal_received(
+                    symbol=symbol,
+                    source_type=raw_signal.get("source", "moonbot"),
+                    raw_data=raw_signal,
+                )
+                raw_signal["_correlation_id"] = corr_id  # Attach for tracing
+            except Exception as e:
+                logger.warning(f"Event publish failed: {e}")
+
         self.signal_queue.append(raw_signal)
         self.stats["signals_received"] += 1
 
@@ -761,6 +785,33 @@ class AutoTrader:
             f"reasons={decision.reasons[:2]}"
         )
 
+        # Emit DecisionEvent
+        corr_id = raw_signal.get("_correlation_id")
+        if EVENT_BUS_AVAILABLE and get_publisher and corr_id:
+            try:
+                publisher = get_publisher()
+                # Split reasons into alpha/risk (Eye of God provides combined)
+                alpha_reasons = [r for r in decision.reasons if not r.startswith("RISK_")]
+                risk_reasons = [r for r in decision.reasons if r.startswith("RISK_")]
+                publisher.decision(
+                    corr_id=corr_id,
+                    symbol=decision.symbol,
+                    action=decision.action,
+                    confidence=decision.confidence,
+                    alpha_reasons=alpha_reasons[:3],
+                    risk_reasons=risk_reasons[:3],
+                    mode=decision.mode,
+                    position_size_usdt=decision.position_size_usdt,
+                    target_pct=decision.target_pct,
+                    stop_pct=decision.stop_pct,
+                    timeout_sec=decision.timeout_sec,
+                )
+            except Exception as e:
+                logger.warning(f"Decision event publish failed: {e}")
+
+        # Attach correlation_id to decision for downstream tracing
+        decision._correlation_id = corr_id
+
         return decision
 
     def _execute_trade_from_eye(self, decision):
@@ -789,6 +840,27 @@ class AutoTrader:
             f"fee-adj={fee_adjusted_target:+.2f}%/{fee_adjusted_stop:+.2f}%"
         )
 
+        # Get correlation_id for event tracing
+        corr_id = getattr(decision, '_correlation_id', None)
+
+        # Emit OrderIntentEvent
+        if EVENT_BUS_AVAILABLE and get_publisher and corr_id:
+            try:
+                publisher = get_publisher()
+                publisher.order_intent(
+                    corr_id=corr_id,
+                    symbol=decision.symbol,
+                    side="BUY",
+                    order_type="MARKET",
+                    quantity=0,  # Will be calculated by executor
+                    price=None,
+                    take_profit=fee_adjusted_target,
+                    stop_loss=abs(fee_adjusted_stop),
+                    position_size_usdt=decision.position_size_usdt,
+                )
+            except Exception as e:
+                logger.warning(f"OrderIntent event failed: {e}")
+
         # Execute order
         if self.executor:
             result = self.executor.market_buy(
@@ -807,6 +879,23 @@ class AutoTrader:
                 # === RECORD TRADE OPEN (FIX #4) ===
                 self._record_trade_open(decision.symbol)
                 logger.info(f"  ✅ Order filled: {result.filled_quantity} @ {result.avg_price}")
+
+                # Emit FillEvent
+                if EVENT_BUS_AVAILABLE and get_publisher and corr_id:
+                    try:
+                        publisher = get_publisher()
+                        order_id = getattr(result, 'order_id', str(int(time.time()*1000)))
+                        publisher.fill(
+                            corr_id=corr_id,
+                            order_id=str(order_id),
+                            symbol=decision.symbol,
+                            side="BUY",
+                            filled_qty=result.filled_quantity,
+                            avg_price=result.avg_price,
+                            commission=getattr(result, 'commission', 0),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Fill event failed: {e}")
 
                 # === WATCHDOG REGISTRATION (CRITICAL - FAIL-CLOSED) ===
                 try:
