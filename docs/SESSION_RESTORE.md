@@ -163,12 +163,14 @@ cd C:\Users\kirillDev\Desktop\TradingBot\minibot
 # 1. Pricefeed Gateway
 Start-Process python -ArgumentList "scripts/pricefeed_gateway.py"
 
-# 2. AutoTrader
-Start-Process python -ArgumentList "scripts/autotrader.py"
+# 2. AutoTrader (LIVE MODE - REAL MONEY!)
+Start-Process python -ArgumentList "scripts/autotrader.py","--mode","LIVE","--yes","--confirm"
 
 # 3. Momentum Trader (опционально)
 python scripts/momentum_trader.py --once
 ```
+
+**ВАЖНО**: AutoTrader теперь синхронизирует состояние с Binance при старте и каждую минуту.
 
 ---
 
@@ -185,11 +187,16 @@ python scripts/momentum_trader.py --once
 
 ## 10. ПОСЛЕДНИЕ ИЗМЕНЕНИЯ
 
+**2026-02-02:**
+- CRITICAL FIX: AutoTrader теперь синхронизирует позиции с Binance
+- Добавлен _sync_with_binance() - вызывается при старте и каждую минуту
+- Исправлена проблема с фейковыми/устаревшими позициями в state
+- Добавлен IGNORE_ASSETS фильтр (SLF, USDT, USDC, etc.)
+
 **2026-01-31:**
 - Интеграция momentum_trader.py с unified_allowlist
 - Символы автоматически добавляются в HOT_LIST при momentum-сигнале
 - Исправлена проблема с STRAXUSDT (не был в AllowList)
-- AutoTrader: LIVE, PnL +$0.17
 
 ---
 
