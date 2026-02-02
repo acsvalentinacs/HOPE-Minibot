@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-30T02:25:00Z
-# v2.5.2: Added /supervisor command for AI watchdog control
+# Modified at: 2026-02-02T16:30:00Z
+# v2.7.0: Added diagnostic & emergency commands (/diagnose, /tradingview, /emergency, /autostart, /positions)
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -3526,6 +3526,244 @@ class HopeMiniBot:
             self.log.error("cmd_allowlist error: %s", e)
             await self._reply(update, f"Error: {e}")
 
+    # === HOPE v2.7.0: DIAGNOSTIC & EMERGENCY COMMANDS ===
+
+    async def cmd_diagnose(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Run full system diagnostics: /diagnose"""
+        if not await self._guard_admin(update):
+            return
+
+        await self._reply(update, "Running full diagnostics...")
+
+        try:
+            diag_script = ROOT / "scripts" / "hope_diagnostics.py"
+            if not diag_script.exists():
+                await self._reply(update, f"Error: {diag_script} not found")
+                return
+
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(diag_script),
+                cwd=str(ROOT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+
+            output = _decode_bytes(stdout) if stdout else ""
+            errors = _decode_bytes(stderr) if stderr else ""
+
+            # Truncate if too long
+            if len(output) > 3500:
+                output = output[:3500] + "\n... (truncated)"
+
+            result = f"<b>HOPE DIAGNOSTICS</b>\n<pre>{output}</pre>"
+            if errors:
+                result += f"\n<b>Errors:</b>\n<pre>{errors[:500]}</pre>"
+
+            await self._reply(update, result, parse_mode="HTML")
+
+        except asyncio.TimeoutError:
+            await self._reply(update, "Diagnostics timeout (60s)")
+        except Exception as e:
+            self.log.error("cmd_diagnose error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
+    async def cmd_tradingview(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Get TradingView link: /tradingview <symbol>"""
+        if not await self._guard_admin(update):
+            return
+
+        if not context.args:
+            # Default: show current positions from watchdog
+            try:
+                watchdog_file = ROOT / "state" / "ai" / "watchdog" / "positions.json"
+                if watchdog_file.exists():
+                    data = json.loads(watchdog_file.read_text(encoding="utf-8"))
+                    positions = data.get("positions", [])
+                    if positions:
+                        lines = ["<b>TradingView Links (Open Positions):</b>", ""]
+                        for pos in positions:
+                            symbol = pos.get("symbol", "").replace("USDT", "")
+                            tv_symbol = f"{symbol}USDT"
+                            url = f"https://ru.tradingview.com/symbols/{tv_symbol}/"
+                            mae = pos.get("mae", 0)
+                            mfe = pos.get("mfe", 0)
+                            lines.append(f"<a href=\"{url}\">{tv_symbol}</a> (MAE: {mae:.1f}%, MFE: {mfe:.1f}%)")
+                        await self._reply(update, "\n".join(lines), parse_mode="HTML")
+                        return
+            except Exception:
+                pass
+
+            await self._reply(
+                update,
+                "Usage: /tradingview <symbol>\n\n"
+                "Examples:\n"
+                "  /tradingview BTC\n"
+                "  /tradingview ARDRUSDT\n"
+                "  /tradingview ETH"
+            )
+            return
+
+        symbol = context.args[0].upper()
+        if not symbol.endswith("USDT"):
+            symbol = f"{symbol}USDT"
+
+        url = f"https://ru.tradingview.com/symbols/{symbol}/"
+        await self._reply(
+            update,
+            f"<b>TradingView: {symbol}</b>\n\n"
+            f"<a href=\"{url}\">Open Chart</a>",
+            parse_mode="HTML"
+        )
+
+    async def cmd_emergency(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Emergency position fix: /emergency [--execute] [--symbol XXX]"""
+        if not await self._guard_admin(update):
+            return
+
+        args_str = " ".join(context.args) if context.args else ""
+
+        await self._reply(update, f"Running emergency fix... (args: {args_str or 'dry-run'})")
+
+        try:
+            fix_script = ROOT / "scripts" / "emergency_fix.py"
+            if not fix_script.exists():
+                await self._reply(update, f"Error: {fix_script} not found")
+                return
+
+            cmd = [sys.executable, str(fix_script)]
+            if context.args:
+                cmd.extend(context.args)
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(ROOT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+
+            output = _decode_bytes(stdout) if stdout else ""
+            errors = _decode_bytes(stderr) if stderr else ""
+
+            # Truncate if too long
+            if len(output) > 3500:
+                output = output[:3500] + "\n... (truncated)"
+
+            result = f"<b>EMERGENCY FIX</b>\n<pre>{output}</pre>"
+            if errors:
+                result += f"\n<b>Errors:</b>\n<pre>{errors[:500]}</pre>"
+
+            await self._reply(update, result, parse_mode="HTML")
+
+        except asyncio.TimeoutError:
+            await self._reply(update, "Emergency fix timeout (60s)")
+        except Exception as e:
+            self.log.error("cmd_emergency error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
+    async def cmd_autostart(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Run HOPE autostart: /autostart [--force]"""
+        if not await self._guard_admin(update):
+            return
+
+        force = "--force" in (context.args or []) or "-Force" in (context.args or [])
+
+        await self._reply(update, f"Running autostart... (force: {force})")
+
+        try:
+            script = ROOT / "tools" / "hope_autostart.ps1"
+            if not script.exists():
+                await self._reply(update, f"Error: {script} not found")
+                return
+
+            cmd = [
+                _ps_exe(),
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", str(script),
+            ]
+            if force:
+                cmd.append("-Force")
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(ROOT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+
+            output = _decode_bytes(stdout) if stdout else ""
+            errors = _decode_bytes(stderr) if stderr else ""
+
+            if len(output) > 3500:
+                output = output[:3500] + "\n... (truncated)"
+
+            result = f"<b>HOPE AUTOSTART</b>\n<pre>{output}</pre>"
+            if errors:
+                result += f"\n<b>Errors:</b>\n<pre>{errors[:500]}</pre>"
+
+            await self._reply(update, result, parse_mode="HTML")
+
+        except asyncio.TimeoutError:
+            await self._reply(update, "Autostart timeout (120s)")
+        except Exception as e:
+            self.log.error("cmd_autostart error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
+    async def cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show current positions: /positions"""
+        if not await self._guard_admin(update):
+            return
+
+        try:
+            # Get watchdog positions
+            watchdog_file = ROOT / "state" / "ai" / "watchdog" / "positions.json"
+
+            lines = ["<b>CURRENT POSITIONS</b>", ""]
+
+            if watchdog_file.exists():
+                data = json.loads(watchdog_file.read_text(encoding="utf-8"))
+                positions = data.get("positions", [])
+                updated_at = data.get("updated_at", "unknown")
+
+                if positions:
+                    lines.append(f"<i>Updated: {updated_at}</i>")
+                    lines.append("")
+
+                    for pos in positions:
+                        symbol = pos.get("symbol", "?")
+                        entry = pos.get("entry_price", 0)
+                        current = pos.get("current_price", 0)
+                        qty = pos.get("quantity", 0)
+                        mae = pos.get("mae", 0)
+                        mfe = pos.get("mfe", 0)
+                        status = pos.get("status", "?")
+                        close_attempts = pos.get("close_attempts", 0)
+
+                        pnl_pct = ((current - entry) / entry * 100) if entry > 0 else 0
+                        value = qty * current
+
+                        icon = "+" if pnl_pct >= 0 else ""
+                        lines.append(f"<b>{symbol}</b> ({status})")
+                        lines.append(f"  Entry: ${entry:.6f} | Now: ${current:.6f}")
+                        lines.append(f"  PnL: {icon}{pnl_pct:.2f}% | Value: ${value:.2f}")
+                        lines.append(f"  MAE: {mae:.1f}% | MFE: {mfe:.1f}%")
+                        if close_attempts > 0:
+                            lines.append(f"  Close attempts: {close_attempts}")
+                        lines.append("")
+                else:
+                    lines.append("<i>No open positions</i>")
+            else:
+                lines.append("<i>Watchdog file not found</i>")
+
+            await self._reply(update, "\n".join(lines), parse_mode="HTML")
+
+        except Exception as e:
+            self.log.error("cmd_positions error: %s", e)
+            await self._reply(update, f"Error: {e}")
+
     async def _post_init(self, app: Application) -> None:
         cmds = [
             BotCommand("panel", "панель + кнопки"),
@@ -3553,6 +3791,12 @@ class HopeMiniBot:
             BotCommand("start_process", "запустить процесс"),
             BotCommand("stop_process", "остановить процесс"),
             BotCommand("allowlist", "статус AllowList"),
+            # HOPE v2.7.0: Diagnostic & Emergency
+            BotCommand("diagnose", "полная диагностика"),
+            BotCommand("positions", "открытые позиции"),
+            BotCommand("tradingview", "TradingView chart"),
+            BotCommand("emergency", "emergency fix"),
+            BotCommand("autostart", "запуск стека"),
         ]
         try:
             await app.bot.set_my_commands(cmds)
@@ -3622,6 +3866,13 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("hot", self.cmd_hot))
         app.add_handler(CommandHandler("sigstats", self.cmd_sigstats))
         app.add_handler(CommandHandler("mute", self.cmd_mute))
+        # HOPE v2.7.0: Diagnostic & Emergency commands
+        app.add_handler(CommandHandler("diagnose", self.cmd_diagnose))
+        app.add_handler(CommandHandler("tradingview", self.cmd_tradingview))
+        app.add_handler(CommandHandler("tv", self.cmd_tradingview))  # alias
+        app.add_handler(CommandHandler("emergency", self.cmd_emergency))
+        app.add_handler(CommandHandler("autostart", self.cmd_autostart))
+        app.add_handler(CommandHandler("positions", self.cmd_positions))
 
         app.add_handler(CallbackQueryHandler(self.on_callback))
         return app
