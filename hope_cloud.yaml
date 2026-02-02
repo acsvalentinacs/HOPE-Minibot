@@ -1,0 +1,306 @@
+# === HOPE CLOUD MANIFEST ===
+# Single Source of Truth for HOPE Trading System
+# Version: 1.0
+# Created: 2026-02-02
+#
+# WHAT IS THIS:
+#   This file defines the "cloud" - all services, how they connect,
+#   and in what order they start. ONE file to rule them all.
+#
+# PROBLEM SOLVED:
+#   Before: 6+ scripts, each with own config, own mode, chaos
+#   After: ONE manifest, ONE mode, deterministic startup
+#
+# USAGE:
+#   python -m tools.hope_orchestrator start
+#   python -m tools.hope_orchestrator status
+#   python -m tools.hope_orchestrator stop
+
+version: "1.0"
+name: "HOPE Trading System"
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+global:
+  # Trading mode - set ONCE here, applies to ALL services
+  # Values: DRY | TESTNET | LIVE
+  mode: "TESTNET"
+
+  # Base directories
+  project_root: "C:/Users/kirillDev/Desktop/TradingBot/minibot"
+  state_dir: "state"
+  logs_dir: "logs"
+
+  # Secrets
+  secrets_path: "C:/secrets/hope.env"
+
+  # Event Transport
+  event_journal_dir: "state/events"
+
+  # Health check interval
+  health_check_interval_sec: 10
+
+  # Fail-closed: create STOP.flag on critical errors
+  stop_flag_path: "state/STOP.flag"
+
+# =============================================================================
+# SERVICES
+# =============================================================================
+# Architecture: 3 main processes instead of 6+
+#
+#   TRADING CORE     - All trading logic in ONE process (low latency)
+#   GUARDIAN         - Independent safety watchdog (separate Binance client)
+#   INTERFACE        - Telegram bot + HTTP API
+#
+# Why 3 instead of 6+:
+#   - Trading Core needs low latency: signal -> decision -> order in ONE process
+#   - Guardian MUST be separate: if Core dies, Guardian still closes positions
+#   - Interface is optional: system works without Telegram
+
+services:
+  # ---------------------------------------------------------------------------
+  # TRADING CORE - The brain
+  # ---------------------------------------------------------------------------
+  trading_core:
+    name: "Trading Core"
+    description: "Signal processing, AI decision, order execution"
+
+    # Entry point
+    module: "scripts.trading_core"
+    class: "TradingCore"
+
+    # What it contains (merged for low latency)
+    components:
+      - signal_listener      # Moonbot signals
+      - signal_classifier    # AI scoring
+      - eye_of_god          # Decision engine
+      - order_executor       # Binance execution
+      - position_tracker     # Track open positions
+
+    # Dependencies
+    depends_on: []  # Starts first
+
+    # Ports
+    ports:
+      http: 8100
+
+    # Health check
+    health:
+      endpoint: "/health"
+      interval_sec: 5
+      timeout_sec: 3
+
+    # Environment
+    env:
+      HOPE_PROCESS_NAME: "trading_core"
+      HOPE_MODE: "${global.mode}"
+
+    # Restart policy
+    restart: "always"
+    restart_delay_sec: 5
+
+  # ---------------------------------------------------------------------------
+  # GUARDIAN - Independent safety watchdog
+  # ---------------------------------------------------------------------------
+  guardian:
+    name: "Guardian"
+    description: "Position watchdog with OWN Binance client"
+
+    module: "scripts.guardian"
+    class: "Guardian"
+
+    components:
+      - position_watchdog    # Monitor positions
+      - stop_loss_enforcer   # Force close if SL missed
+      - circuit_breaker      # Daily loss limit
+      - panic_closer         # Emergency close all
+
+    # CRITICAL: Guardian has OWN Binance API client
+    # If Trading Core dies, Guardian can still close positions
+    binance_client: "independent"
+
+    depends_on:
+      - trading_core  # Starts after Core is healthy
+
+    ports:
+      http: 8101
+
+    health:
+      endpoint: "/health"
+      interval_sec: 5
+      timeout_sec: 3
+
+    env:
+      HOPE_PROCESS_NAME: "guardian"
+      HOPE_MODE: "${global.mode}"
+
+    restart: "always"
+    restart_delay_sec: 3
+
+  # ---------------------------------------------------------------------------
+  # INTERFACE - User interaction
+  # ---------------------------------------------------------------------------
+  interface:
+    name: "Interface"
+    description: "Telegram bot and HTTP API"
+
+    module: "scripts.interface"
+    class: "Interface"
+
+    components:
+      - telegram_bot        # Commands and notifications
+      - http_api           # REST API for external tools
+      - dashboard_server   # Web dashboard
+
+    depends_on:
+      - trading_core
+      - guardian
+
+    ports:
+      telegram_webhook: 8443
+      http: 8102
+      dashboard: 8080
+
+    health:
+      endpoint: "/health"
+      interval_sec: 10
+      timeout_sec: 5
+
+    env:
+      HOPE_PROCESS_NAME: "interface"
+      HOPE_MODE: "${global.mode}"
+
+    # Interface is optional - system works without it
+    optional: true
+    restart: "on-failure"
+    restart_delay_sec: 10
+
+# =============================================================================
+# EVENT TRANSPORT
+# =============================================================================
+# Cross-process communication via file-based journal
+transport:
+  type: "file_journal"
+  journal_dir: "${global.event_journal_dir}"
+
+  # Events that cross process boundaries
+  cross_process_events:
+    - SIGNAL_RECEIVED      # Core -> Guardian (for tracking)
+    - FILL                 # Core -> Guardian (new position)
+    - CLOSE               # Core/Guardian -> Interface (notify)
+    - POSITION_SNAPSHOT   # Guardian -> Interface (status)
+    - PANIC               # Any -> All (emergency)
+    - STOPLOSS_FAILURE    # Guardian -> Core (alert)
+
+  # Polling interval for readers
+  poll_interval_ms: 100
+
+# =============================================================================
+# STARTUP SEQUENCE
+# =============================================================================
+startup:
+  # Order is important!
+  sequence:
+    1:
+      service: trading_core
+      wait_for_health: true
+      timeout_sec: 30
+    2:
+      service: guardian
+      wait_for_health: true
+      timeout_sec: 20
+    3:
+      service: interface
+      wait_for_health: false  # Optional, don't block
+      timeout_sec: 10
+
+  # Pre-flight checks before starting anything
+  preflight:
+    - check: "secrets_exist"
+      path: "${global.secrets_path}"
+      required_keys:
+        - BINANCE_API_KEY
+        - BINANCE_API_SECRET
+        - TELEGRAM_BOT_TOKEN
+
+    - check: "no_stop_flag"
+      path: "${global.stop_flag_path}"
+
+    - check: "disk_space"
+      min_mb: 100
+
+# =============================================================================
+# SHUTDOWN SEQUENCE
+# =============================================================================
+shutdown:
+  # Reverse order - Interface first, Core last
+  sequence:
+    1:
+      service: interface
+      timeout_sec: 5
+    2:
+      service: guardian
+      timeout_sec: 10
+      # Guardian waits to ensure all positions are safe
+    3:
+      service: trading_core
+      timeout_sec: 15
+
+  # On panic: close all positions first
+  panic:
+    - action: "close_all_positions"
+      executor: guardian
+      timeout_sec: 60
+    - action: "create_stop_flag"
+      reason: "panic_shutdown"
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+monitoring:
+  # Log aggregation
+  logs:
+    format: "%(asctime)s | %(levelname)-5s | %(name)-15s | %(message)s"
+    level: "INFO"
+    rotation: "daily"
+    retention_days: 7
+
+  # Metrics
+  metrics:
+    enabled: true
+    export_interval_sec: 60
+    file: "state/metrics/hope_metrics.jsonl"
+
+  # Alerts
+  alerts:
+    telegram_chat_id: "${TELEGRAM_ADMIN_CHAT_ID}"
+    on_events:
+      - PANIC
+      - STOPLOSS_FAILURE
+      - CIRCUIT_BREAKER
+
+# =============================================================================
+# SCALPING CONFIGURATION
+# =============================================================================
+scalping:
+  # Why everything in Trading Core:
+  #   Signal -> AI -> Decision -> Order must be in ONE process
+  #   File/HTTP between components = death for scalping latency
+
+  # Target latencies (inside Trading Core)
+  latency_targets:
+    signal_to_decision_ms: 50    # Signal received -> BUY/SKIP
+    decision_to_order_ms: 20     # BUY decision -> order sent
+    total_cycle_ms: 100          # End-to-end
+
+  # Position limits
+  max_concurrent_positions: 5
+  max_position_size_usdt: 100
+
+  # Timeouts
+  position_timeout_sec: 1800    # 30 min max
+
+  # Targets
+  target_pct: 1.5
+  stop_pct: -1.0

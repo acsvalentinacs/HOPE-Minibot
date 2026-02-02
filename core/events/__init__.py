@@ -90,6 +90,13 @@ from .integration import (
     start_bus_background,
 )
 
+from .transport import (
+    EventTransport,
+    get_transport,
+    publish_cross_process,
+    start_bridge,
+)
+
 __all__ = [
     # Base
     "HopeEvent",
@@ -138,4 +145,9 @@ __all__ = [
     "get_publisher",
     "check_bus_health",
     "start_bus_background",
+    # Transport (cross-process)
+    "EventTransport",
+    "get_transport",
+    "publish_cross_process",
+    "start_bridge",
 ]
