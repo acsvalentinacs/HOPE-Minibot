@@ -59,6 +59,7 @@ cd C:\Users\kirillDev\Desktop\TradingBot\minibot
 | `scripts/momentum_trader.py` | - | Momentum-сигналы |
 | `scripts/eye_of_god_v3.py` | - | Классификация сигналов |
 | `scripts/position_watchdog.py` | - | Мониторинг позиций |
+| `scripts/protocol_checker.py` | - | Проверка протоколов + автокорректировка позиций |
 
 ### Core модули
 | Файл | Назначение |
@@ -170,7 +171,22 @@ Start-Process python -ArgumentList "scripts/autotrader.py","--mode","LIVE","--ye
 python scripts/momentum_trader.py --once
 ```
 
-**ВАЖНО**: AutoTrader теперь синхронизирует состояние с Binance при старте и каждую минуту.
+**ВАЖНО**: AutoTrader теперь:
+- Синхронизирует состояние с Binance каждую минуту
+- Запускает Protocol Checker каждые 5 минут
+- Автоматически корректирует размеры позиций при изменении баланса
+
+### Protocol Checker (отдельный запуск):
+```powershell
+# Одна проверка
+python scripts/protocol_checker.py --once
+
+# Демон (каждые 5 мин)
+python scripts/protocol_checker.py --daemon
+
+# Пересчитать позиции
+python scripts/protocol_checker.py --recalc
+```
 
 ---
 
