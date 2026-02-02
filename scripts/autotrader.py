@@ -597,6 +597,40 @@ class AutoTrader:
 
         except Exception as e:
             logger.error(f"[SYNC] Failed to sync with Binance: {e}")
+
+    def _run_protocol_check(self):
+        """
+        Run HOPE Protocol Check - verifies system health and recalculates position sizes.
+
+        Called every 5 minutes to ensure:
+        1. All services are running (STARTUP PROTOCOL)
+        2. Position sizes are adjusted for current balance (CYCLIC TRADING PROTOCOL)
+        """
+        try:
+            from protocol_checker import ProtocolChecker
+
+            checker = ProtocolChecker()
+            results = checker.run_full_check()
+
+            if results.get("overall_status") == "PASS":
+                logger.info("[PROTOCOL] Check PASS - system healthy")
+
+                # Update config if position size changed
+                cyclic = results.get("cyclic_protocol", {})
+                if cyclic.get("can_trade"):
+                    new_size = cyclic.get("position_size_usd", 0)
+                    if new_size > 0 and hasattr(self.config, 'default_position_usdt'):
+                        old_size = self.config.default_position_usdt
+                        if abs(new_size - old_size) > 0.5:  # Only if changed by >$0.50
+                            self.config.default_position_usdt = new_size
+                            logger.info(f"[PROTOCOL] Position size updated: ${old_size:.2f} → ${new_size:.2f}")
+            else:
+                logger.warning(f"[PROTOCOL] Check FAIL - review system")
+
+        except ImportError:
+            logger.debug("[PROTOCOL] protocol_checker not available")
+        except Exception as e:
+            logger.error(f"[PROTOCOL] Check error: {e}")
     
     def add_signal(self, raw_signal: Dict):
         """Add raw signal to processing queue"""
@@ -969,7 +1003,9 @@ class AutoTrader:
         signal.signal(signal.SIGTERM, signal_handler)
         
         sync_counter = 0
+        protocol_counter = 0
         SYNC_INTERVAL = 60  # Sync with Binance every 60 loops (~1 min at 1s interval)
+        PROTOCOL_INTERVAL = 300  # Protocol check every 300 loops (~5 min)
 
         try:
             while self.running:
@@ -981,6 +1017,12 @@ class AutoTrader:
                     if sync_counter >= SYNC_INTERVAL:
                         self._sync_with_binance()
                         sync_counter = 0
+
+                    # Periodic protocol check + position size recalculation
+                    protocol_counter += 1
+                    if protocol_counter >= PROTOCOL_INTERVAL:
+                        self._run_protocol_check()
+                        protocol_counter = 0
 
                 except Exception as e:
                     logger.error(f"Loop error: {e}")
