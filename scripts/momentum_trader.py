@@ -3,9 +3,9 @@
 # Created by: Claude (opus-4.5)
 # Created at: 2026-01-31 12:30:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-31 11:25:00 UTC
-# Purpose: Momentum Trader - enters coins with strong 24h gains not at highs
-# Changes: FIX - Signal format for AutoTrader (direction, signal_type, ai_override)
+# Modified at: 2026-01-31 15:10:00 UTC
+# Purpose: Momentum Trader - enters coins with strong 24h gains
+# Changes: Added unified_allowlist integration - auto-add symbols to HOT_LIST before trade
 # === END SIGNATURE ===
 """
 MOMENTUM TRADER - Catches trending coins before they peak.
@@ -51,12 +51,12 @@ log = logging.getLogger("MOMENTUM")
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Entry criteria - TWO MODES
+# Entry criteria - THREE MODES
 # Mode 1: MOMENTUM (riding the wave)
-MIN_GAIN_24H = 10.0       # Minimum 24h gain %
-MAX_POSITION_IN_RANGE = 70  # Must be below 70% of 24h range
-MIN_VOLUME_USD = 5_000_000  # $5M minimum volume
-MIN_GAIN_1H = 2.0         # At least 2% gain in last hour (still moving)
+MIN_GAIN_24H = 8.0        # Minimum 24h gain % (relaxed from 10)
+MAX_POSITION_IN_RANGE = 80  # Must be below 80% of 24h range (relaxed from 70)
+MIN_VOLUME_USD = 2_000_000  # $2M minimum volume (relaxed from $5M)
+MIN_GAIN_1H = 1.5         # At least 1.5% gain in last hour (relaxed from 2)
 
 # Mode 2: PULLBACK (buying the dip in uptrend)
 PULLBACK_ENABLED = True
@@ -65,6 +65,12 @@ PULLBACK_MIN_1H_LOSS = -5.0   # Min pullback -5% (don't buy crash)
 PULLBACK_MAX_1H_LOSS = -0.5   # Max pullback -0.5% (small dip OK)
 PULLBACK_MIN_POSITION = 20    # Range 20-65%
 PULLBACK_MAX_POSITION = 65
+
+# Mode 3: HIGH_MOMENTUM (strong runners, even at highs)
+HIGH_MOMENTUM_ENABLED = True
+HIGH_MOMENTUM_MIN_GAIN_24H = 15.0  # Must be very strong (>15%)
+HIGH_MOMENTUM_MIN_GAIN_1H = 3.0    # Still actively moving (>3%/h)
+HIGH_MOMENTUM_MAX_POSITION = 95    # Allow up to 95% (near highs OK for strong moves)
 
 # Risk management
 MAX_POSITION_USD = 25.0   # Max $25 per trade (25% of $100)
@@ -184,9 +190,13 @@ class MomentumTrader:
                 # Calculate position in range
                 position_in_range = (price - low) / (high - low) * 100
 
-                # Must not be at highs
+                # Must not be at highs UNLESS HIGH_MOMENTUM candidate
                 if position_in_range > MAX_POSITION_IN_RANGE:
-                    continue
+                    # Allow HIGH_MOMENTUM candidates through (strong moves at highs)
+                    if not (HIGH_MOMENTUM_ENABLED and
+                            gain_24h >= HIGH_MOMENTUM_MIN_GAIN_24H and
+                            position_in_range <= HIGH_MOMENTUM_MAX_POSITION):
+                        continue
 
                 candidates.append({
                     'symbol': symbol,
@@ -233,12 +243,20 @@ class MomentumTrader:
         # Check entry mode
         entry_mode = "momentum"
 
-        # Mode 1: MOMENTUM - still rising
-        if gain_1h >= MIN_GAIN_1H:
+        # Mode 1: MOMENTUM - still rising, not at highs
+        if gain_1h >= MIN_GAIN_1H and coin['position_in_range'] <= MAX_POSITION_IN_RANGE:
             entry_mode = "momentum"
             log.info(f"{symbol}: MOMENTUM mode - 1h gain {gain_1h:.2f}%")
 
-        # Mode 2: PULLBACK - dip in uptrend
+        # Mode 2: HIGH_MOMENTUM - strong runners even at highs
+        elif (HIGH_MOMENTUM_ENABLED and
+              coin['gain_24h'] >= HIGH_MOMENTUM_MIN_GAIN_24H and
+              gain_1h >= HIGH_MOMENTUM_MIN_GAIN_1H and
+              coin['position_in_range'] <= HIGH_MOMENTUM_MAX_POSITION):
+            entry_mode = "high_momentum"
+            log.info(f"{symbol}: HIGH_MOMENTUM mode - 24h +{coin['gain_24h']:.1f}%, 1h +{gain_1h:.2f}%, range {coin['position_in_range']:.0f}%")
+
+        # Mode 3: PULLBACK - dip in uptrend
         elif PULLBACK_ENABLED and coin['gain_24h'] >= PULLBACK_MIN_GAIN_24H:
             if (PULLBACK_MIN_1H_LOSS <= gain_1h <= PULLBACK_MAX_1H_LOSS and
                 PULLBACK_MIN_POSITION <= coin['position_in_range'] <= PULLBACK_MAX_POSITION):
@@ -248,7 +266,7 @@ class MomentumTrader:
                 log.info(f"{symbol}: 1h gain {gain_1h:.2f}% outside pullback range [{PULLBACK_MIN_1H_LOSS}, {PULLBACK_MAX_1H_LOSS}]")
                 return None
         else:
-            log.info(f"{symbol}: 1h gain {gain_1h:.2f}% - skipping (not momentum, not pullback)")
+            log.info(f"{symbol}: 1h gain {gain_1h:.2f}%, range {coin['position_in_range']:.0f}% - skipping (not momentum/high_momentum/pullback)")
             return None
 
         # Calculate position size based on confidence
@@ -301,6 +319,22 @@ class MomentumTrader:
             # Map signal strength to buys_per_sec equivalent for classification
             # Higher 24h gain = stronger signal
             equiv_buys_sec = max(50, signal.gain_24h * 3)  # 20% gain = 60 buys/sec
+
+            # === ADD TO HOT_LIST BEFORE SENDING ===
+            # This ensures Eye of God will allow the trade
+            try:
+                from core.unified_allowlist import process_signal_for_allowlist
+                allowlist_signal = {
+                    "symbol": signal.symbol,
+                    "buys_per_sec": equiv_buys_sec,
+                    "delta_pct": signal.gain_1h,
+                    "vol_raise_pct": signal.gain_24h * 5,  # Map 24h gain to vol_raise equivalent
+                    "volume_24h": signal.volume_usd,
+                }
+                result = process_signal_for_allowlist(allowlist_signal)
+                log.info(f"AllowList: {signal.symbol} -> {result.get('action', 'UNKNOWN')}")
+            except Exception as e:
+                log.warning(f"AllowList integration skipped: {e}")
 
             payload = {
                 "symbol": signal.symbol,
@@ -368,7 +402,7 @@ class MomentumTrader:
 
         signals = []
 
-        for coin in candidates[:3]:  # Max 3 signals per scan
+        for coin in candidates[:10]:  # Max 10 candidates evaluated per scan
             # Skip if already have active signal for this symbol
             active_symbols = [s.get('symbol') for s in self.state.get('active_signals', [])]
             if coin['symbol'] in active_symbols:

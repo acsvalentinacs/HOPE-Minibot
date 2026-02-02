@@ -81,13 +81,22 @@
   },
   
   "signal_filters": {
-    "min_liquidity_usd": 3000000,
-    "min_volume_ratio": 1.5,
-    "min_buy_dominance": 0.55,
-    "min_delta_pct": 0.3,
-    "min_trades_per_sec": 5,
+    "min_liquidity_usd": 2000000,
+    "min_volume_ratio": 1.2,
+    "min_buy_dominance": 0.52,
+    "min_delta_pct": 0.2,
+    "min_trades_per_sec": 3,
     "blacklist": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "USDCUSDT", "FDUSDUSDT"],
     "prefer_symbols": ["altcoins_high_volume"]
+  },
+
+  "fees": {
+    "taker_fee_pct": 0.10,
+    "maker_fee_pct": 0.10,
+    "round_trip_fee_pct": 0.20,
+    "slippage_pct": 0.05,
+    "total_cost_pct": 0.25,
+    "_comment": "Add to TP target, subtract from SL to cover fees"
   },
   
   "market_regime": {
