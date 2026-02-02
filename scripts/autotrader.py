@@ -3,9 +3,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-01-31 05:20:00 UTC
+# Modified at: 2026-02-02 09:20:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# Changes: FIX 4 - COOLDOWN + STOP-LOSS ENFORCEMENT + NO RE-BUY SAME SYMBOL
+# Changes: Added _sync_with_binance() to prevent stale/fake positions
 # sha256: autotrader_v1.3_cooldown
 # === END SIGNATURE ===
 """
@@ -98,6 +98,16 @@ try:
 except ImportError:
     # Fallback for standalone testing
     TradingMode = Enum('TradingMode', ['DRY', 'TESTNET', 'LIVE'])
+
+# Binance client for position verification
+try:
+    from binance.client import Client as BinanceClient
+    from dotenv import load_dotenv
+    import os
+    BINANCE_AVAILABLE = True
+except ImportError:
+    BINANCE_AVAILABLE = False
+    BinanceClient = None
 
 # Import Eye of God V3 for two-chamber decision making
 try:
@@ -508,8 +518,85 @@ class AutoTrader:
         self.symbol_trade_times: Dict[str, List[datetime]] = {}
         # Currently open positions (symbol set)
         self.open_positions: Set[str] = set()
-        
+
+        # Binance client for verification
+        self.binance_client = None
+        self._init_binance_client()
+
+        # CRITICAL: Sync state with Binance on startup
+        self._sync_with_binance()
+
         logger.info(f"AutoTrader initialized in {config.mode} mode")
+
+    def _init_binance_client(self):
+        """Initialize Binance client for position verification."""
+        if not BINANCE_AVAILABLE:
+            logger.warning("Binance client not available - cannot verify positions")
+            return
+        try:
+            load_dotenv('C:/secrets/hope.env')
+            api_key = os.getenv('BINANCE_API_KEY')
+            api_secret = os.getenv('BINANCE_API_SECRET')
+            if api_key and api_secret:
+                self.binance_client = BinanceClient(api_key, api_secret)
+                logger.info("Binance client initialized for position verification")
+            else:
+                logger.warning("Binance API keys not found")
+        except Exception as e:
+            logger.error(f"Failed to init Binance client: {e}")
+
+    def _sync_with_binance(self):
+        """
+        CRITICAL: Sync internal state with real Binance positions.
+
+        This prevents showing fake positions that don't exist on Binance.
+        Called on startup and periodically.
+        """
+        if not self.binance_client:
+            logger.warning("Cannot sync - no Binance client")
+            return
+
+        try:
+            # Get real account balances
+            account = self.binance_client.get_account()
+            real_positions = set()
+
+            # Assets to IGNORE (not trading positions, just holdings)
+            IGNORE_ASSETS = {'USDT', 'USDC', 'BNB', 'AUD', 'SLF', 'FDUSD', 'BUSD', 'EUR', 'GBP', 'RUB'}
+
+            for balance in account['balances']:
+                asset = balance['asset']
+                free = float(balance['free'])
+                locked = float(balance['locked'])
+
+                # Only consider assets that are NOT in ignore list
+                # and have meaningful balance (> 0.001)
+                if asset not in IGNORE_ASSETS and (free > 0.001 or locked > 0.001):
+                    symbol = f"{asset}USDT"
+                    real_positions.add(symbol)
+
+            # Compare with internal state
+            internal_positions = self.open_positions.copy()
+
+            # Positions in internal state but NOT on Binance = STALE, remove them
+            stale_positions = internal_positions - real_positions
+            for symbol in stale_positions:
+                logger.warning(f"[SYNC] Removing stale position: {symbol} (not on Binance)")
+                self.open_positions.discard(symbol)
+
+            # Positions on Binance but NOT in internal state = add them
+            missing_positions = real_positions - internal_positions
+            for symbol in missing_positions:
+                logger.info(f"[SYNC] Adding missing position: {symbol} (found on Binance)")
+                self.open_positions.add(symbol)
+
+            if stale_positions or missing_positions:
+                logger.info(f"[SYNC] State synchronized. Open positions: {self.open_positions}")
+            else:
+                logger.info(f"[SYNC] State OK. Open positions: {len(self.open_positions)}")
+
+        except Exception as e:
+            logger.error(f"[SYNC] Failed to sync with Binance: {e}")
     
     def add_signal(self, raw_signal: Dict):
         """Add raw signal to processing queue"""
@@ -881,13 +968,23 @@ class AutoTrader:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
         
+        sync_counter = 0
+        SYNC_INTERVAL = 60  # Sync with Binance every 60 loops (~1 min at 1s interval)
+
         try:
             while self.running:
                 try:
                     self.run_once()
+
+                    # Periodic Binance sync to prevent stale state
+                    sync_counter += 1
+                    if sync_counter >= SYNC_INTERVAL:
+                        self._sync_with_binance()
+                        sync_counter = 0
+
                 except Exception as e:
                     logger.error(f"Loop error: {e}")
-                
+
                 time.sleep(self.config.loop_interval_sec)
                 
         finally:
@@ -909,14 +1006,16 @@ class AutoTrader:
         print("=" * 60 + "\n")
     
     def get_status(self) -> Dict:
-        """Get current status"""
+        """Get current status - uses Binance-synced open_positions"""
         return {
             "mode": self.config.mode,
             "running": self.running,
             "circuit_breaker_open": self.circuit_breaker.is_open,
             "stats": self.stats,
-            "open_positions": len(self.executor.get_open_positions()) if self.executor else 0,
+            "open_positions": len(self.open_positions),  # Synced with Binance
+            "open_symbols": list(self.open_positions),   # Actual symbols
             "watched_symbols": list(self.watch_symbols),
+            "binance_synced": self.binance_client is not None,
         }
 
 
