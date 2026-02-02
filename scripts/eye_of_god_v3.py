@@ -4,8 +4,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-30T05:00:00Z
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-02-02T11:30:00Z
-# Changes: Added MIN_CONFIDENCE_MOMENTUM (40%) - even momentum signals need minimum confidence
+# Modified at: 2026-02-02T15:15:00Z
+# Changes: Adaptive three-tier confidence (Momentum=35%, AI_Override=45%, Regular=65%)
 # Purpose: Eye of God V3 - Hardened with Two-Chamber Architecture + Adaptive Targets
 # Contract: Alpha Committee (want) + Risk Committee (allow) + AdaptiveTargets = Decision
 # === END SIGNATURE ===
@@ -131,8 +131,14 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 MAX_SIGNAL_AGE_SEC = 60           # Reject signals older than 60s
 MAX_PRICE_AGE_SEC = 30            # Price stale after 30s
 MIN_DAILY_VOLUME_M = 10.0         # $10M minimum daily volume (higher = safer)
-MIN_CONFIDENCE_TO_TRADE = 0.65    # Minimum confidence (raised for $100 capital)
-MIN_CONFIDENCE_MOMENTUM = 0.40    # Minimum confidence for momentum/ai_override signals
+
+# === ADAPTIVE CONFIDENCE THRESHOLDS (Option C) ===
+# Three-tier system based on signal type:
+MIN_CONFIDENCE_TO_TRADE = 0.65    # Regular signals - highest bar
+MIN_CONFIDENCE_AI_OVERRIDE = 0.45 # AI override signals - medium bar
+MIN_CONFIDENCE_MOMENTUM = 0.35    # Momentum/trending signals - lower bar (more trades)
+# Rationale: Momentum signals are pre-validated by 24h trend, so lower bar is acceptable
+
 MAX_OPEN_POSITIONS = 2            # Maximum concurrent positions (conservative)
 MAX_DAILY_LOSS_USD = 15.0         # Daily loss limit ($15 = 15% of capital)
 MAX_EXPOSURE_PER_SYMBOL = 25.0    # Max USD per symbol ($25 max position)
@@ -437,27 +443,36 @@ class AlphaCommittee:
         if signal_type:
             log.debug(f"[ALPHA] {symbol} signal_type={signal_type} is_momentum={is_momentum} ai_override={has_ai_override}")
 
-        # Determine action
-        # CRITICAL FIX: Even momentum/ai_override signals need minimum confidence!
+        # === ADAPTIVE THREE-TIER CONFIDENCE THRESHOLDS ===
+        # Tier 1: Regular signals need >= 65% confidence
+        # Tier 2: AI override signals need >= 45% confidence
+        # Tier 3: Momentum signals need >= 35% confidence (pre-validated by 24h trend)
+
         if mode == "SKIP" and not (is_momentum or has_ai_override):
             action = "SKIP"
             reasons.append("MODE_SKIP:LOW_BUYS")
-        elif confidence < MIN_CONFIDENCE_TO_TRADE and not (is_momentum or has_ai_override):
-            action = "SKIP"
-            reasons.append(f"LOW_CONFIDENCE:{confidence*100:.0f}%<{MIN_CONFIDENCE_TO_TRADE*100:.0f}%")
-        elif (is_momentum or has_ai_override) and confidence < MIN_CONFIDENCE_MOMENTUM:
-            # NEW: Momentum signals still need minimum 40% confidence
+        elif is_momentum and confidence < MIN_CONFIDENCE_MOMENTUM:
+            # Tier 3: Momentum threshold (35%)
             action = "SKIP"
             reasons.append(f"MOMENTUM_LOW_CONF:{confidence*100:.0f}%<{MIN_CONFIDENCE_MOMENTUM*100:.0f}%")
             log.warning(f"[ALPHA] {symbol} REJECTED: momentum confidence {confidence:.0%} < {MIN_CONFIDENCE_MOMENTUM:.0%}")
+        elif has_ai_override and not is_momentum and confidence < MIN_CONFIDENCE_AI_OVERRIDE:
+            # Tier 2: AI override threshold (45%)
+            action = "SKIP"
+            reasons.append(f"AI_OVERRIDE_LOW_CONF:{confidence*100:.0f}%<{MIN_CONFIDENCE_AI_OVERRIDE*100:.0f}%")
+            log.warning(f"[ALPHA] {symbol} REJECTED: ai_override confidence {confidence:.0%} < {MIN_CONFIDENCE_AI_OVERRIDE:.0%}")
+        elif not (is_momentum or has_ai_override) and confidence < MIN_CONFIDENCE_TO_TRADE:
+            # Tier 1: Regular threshold (65%)
+            action = "SKIP"
+            reasons.append(f"LOW_CONFIDENCE:{confidence*100:.0f}%<{MIN_CONFIDENCE_TO_TRADE*100:.0f}%")
         else:
             action = "BUY"
             if is_momentum:
-                reasons.append(f"MOMENTUM_OVERRIDE:{signal_type}")
+                reasons.append(f"MOMENTUM_PASS:{signal_type}@{confidence*100:.0f}%>={MIN_CONFIDENCE_MOMENTUM*100:.0f}%")
                 mode = "SWING"  # Use SWING mode for momentum signals
                 mode_config = self.MODE_CONFIG.get("SWING", mode_config)
             elif has_ai_override:
-                reasons.append("AI_OVERRIDE")
+                reasons.append(f"AI_OVERRIDE_PASS:{confidence*100:.0f}%>={MIN_CONFIDENCE_AI_OVERRIDE*100:.0f}%")
             else:
                 reasons.append(f"CONF:{confidence*100:.0f}%>={MIN_CONFIDENCE_TO_TRADE*100:.0f}%")
         
