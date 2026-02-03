@@ -2,6 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 03:42:00 UTC
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-02-03 19:10:00 UTC
+# Change: Added RSSFetcher class for news fetching
 # Purpose: Sentiment analysis using Claude API and rule-based fallback
 # === END SIGNATURE ===
 """
@@ -53,6 +56,89 @@ FG_EXTREME_FEAR = 20
 FG_FEAR = 40
 FG_GREED = 60
 FG_EXTREME_GREED = 80
+
+# RSS Feed URLs for crypto news
+RSS_FEEDS = [
+    "https://coindesk.com/arc/outboundfeeds/rss/",
+    "https://cointelegraph.com/rss",
+]
+
+
+class RSSFetcher:
+    """
+    Fetch news headlines from RSS feeds.
+
+    Used by Sentiment module to gather crypto news for analysis.
+    """
+
+    def __init__(self, feeds: List[str] = None, timeout: int = 10):
+        self.feeds = feeds or RSS_FEEDS
+        self.timeout = timeout
+
+    async def fetch_all(self) -> List[Dict[str, str]]:
+        """
+        Fetch headlines from all RSS feeds.
+
+        Returns:
+            List of news items: [{"title": "headline", "source": "feed_url"}, ...]
+        """
+        items = []
+
+        try:
+            import aiohttp
+        except ImportError:
+            logger.warning("aiohttp not installed, RSS fetching disabled")
+            return items
+
+        for feed_url in self.feeds:
+            try:
+                fetched = await self._fetch_feed(feed_url)
+                for title in fetched:
+                    items.append({"title": title, "source": feed_url})
+            except Exception as e:
+                logger.debug(f"Failed to fetch {feed_url}: {e}")
+
+        # Dedupe by title and limit
+        seen = set()
+        unique = []
+        for item in items:
+            if item["title"] not in seen:
+                seen.add(item["title"])
+                unique.append(item)
+                if len(unique) >= 50:
+                    break
+
+        logger.info(f"RSSFetcher: fetched {len(unique)} headlines from {len(self.feeds)} feeds")
+        return unique
+
+    async def _fetch_feed(self, url: str) -> List[str]:
+        """Fetch single RSS feed and extract titles."""
+        import aiohttp
+
+        headlines = []
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=self.timeout) as resp:
+                    if resp.status != 200:
+                        return headlines
+
+                    text = await resp.text()
+
+                    # Simple regex to extract <title> tags from RSS/Atom
+                    import re
+                    titles = re.findall(r'<title[^>]*>([^<]+)</title>', text, re.IGNORECASE)
+
+                    # Skip first title (usually feed name)
+                    for title in titles[1:20]:
+                        # Clean up title
+                        clean = title.strip()
+                        clean = re.sub(r'<!\[CDATA\[|\]\]>', '', clean)
+                        if clean and len(clean) > 10:
+                            headlines.append(clean)
+        except Exception as e:
+            logger.debug(f"RSS fetch error {url}: {e}")
+
+        return headlines
 
 
 class SentimentAnalyzer:

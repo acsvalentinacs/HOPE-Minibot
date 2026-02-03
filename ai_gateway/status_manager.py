@@ -2,6 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 03:35:00 UTC
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-02-03 18:50:00 UTC
+# Change: Added enable/disable aliases for tg_bot_simple.py compatibility
 # Purpose: Module status management with emoji indicators for Telegram
 # === END SIGNATURE ===
 """
@@ -206,6 +209,15 @@ class StatusManager:
         self._save_state()
         logger.info(f"Module {module} disabled")
         return True
+
+    # Aliases for backward compatibility (tg_bot_simple.py)
+    def enable(self, module: str) -> bool:
+        """Alias for enable_module (backward compatibility)."""
+        return self.enable_module(module)
+
+    def disable(self, module: str) -> bool:
+        """Alias for disable_module (backward compatibility)."""
+        return self.disable_module(module)
 
     def is_enabled(self, module: str) -> bool:
         """Check if module is enabled."""

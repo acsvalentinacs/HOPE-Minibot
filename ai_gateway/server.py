@@ -2,9 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 04:00:00 UTC
-# Modified by: Claude (opus-4)
-# Modified at: 2026-01-29 18:40:00 UTC
-# Change: Integrated PriceFeedBridge for real-time outcome tracking
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-02-03 19:20:00 UTC
+# Change: Added DecisionEngine HTTP endpoints (/decision/evaluate, /decision/stats)
 # Purpose: FastAPI HTTP server for AI-Gateway
 # === END SIGNATURE ===
 """
@@ -757,6 +757,98 @@ def create_app() -> "FastAPI":
             "active_version": registry.get_active_version(),
             "is_trained": loop.classifier.is_trained if loop.classifier else False,
             "registry_stats": registry.get_stats(),
+        }
+
+    # === Decision Engine Endpoints ===
+
+    @app.post("/decision/evaluate")
+    async def evaluate_signal(signal: Dict[str, Any]):
+        """
+        Evaluate a signal through DecisionEngine.
+
+        Required fields:
+        - symbol: Trading pair (e.g., "BTCUSDT")
+        - price: Current price
+        - direction: "Long" or "Short"
+        - delta_pct: Price change percentage
+
+        Returns decision: BUY or SKIP with reasoning.
+        """
+        import time as time_module
+        from .core.decision_engine import get_decision_engine, SignalContext, Action
+        from .contracts import MarketRegime
+
+        engine = get_decision_engine()
+
+        # Build signal context
+        ctx = SignalContext(
+            signal_id=signal.get("signal_id", f"api_{int(time_module.time()*1000)}"),
+            symbol=signal.get("symbol", "UNKNOWN"),
+            price=float(signal.get("price", 0)),
+            direction=signal.get("direction", "Long"),
+            delta_pct=float(signal.get("delta_pct", 0)),
+            volume_24h=float(signal.get("volume_24h", 0)),
+            raw_signal=signal,
+        )
+
+        # Get latest regime from artifact
+        regime_artifact = read_valid("regime")
+        if regime_artifact:
+            try:
+                regime_str = regime_artifact.get("current_regime")
+                if regime_str:
+                    ctx.regime = MarketRegime(regime_str)
+            except (ValueError, KeyError):
+                pass
+            ctx.anomaly_score = regime_artifact.get("market_stress_level", 0)
+
+        # Get latest anomaly from artifact
+        anomaly_artifact = read_valid("anomaly")
+        if anomaly_artifact:
+            ctx.anomaly_score = anomaly_artifact.get("market_stress_level", 0)
+
+        # Evaluate
+        decision = engine.evaluate(ctx)
+
+        # Build response
+        checks_failed = [k for k, v in decision.checks_passed.items() if not v]
+        skip_reasons = [r.value for r in decision.reasons] if decision.reasons else []
+
+        return {
+            "action": decision.action.value,
+            "skip_reasons": skip_reasons,
+            "confidence": decision.confidence,
+            "checks_passed": decision.checks_passed,
+            "checks_failed": checks_failed,
+            "checks_values": decision.checks_values,
+            "position_size_modifier": decision.position_size_modifier,
+            "signal_id": ctx.signal_id,
+            "timestamp": decision.timestamp,
+        }
+
+    @app.get("/decision/stats")
+    async def get_decision_stats():
+        """Get DecisionEngine statistics."""
+        from .core.decision_engine import get_decision_engine
+
+        engine = get_decision_engine()
+        return engine.get_stats()
+
+    @app.get("/decision/config")
+    async def get_decision_config():
+        """Get DecisionEngine policy configuration."""
+        from .core.decision_engine import get_decision_engine
+
+        engine = get_decision_engine()
+        config = engine.config
+        return {
+            "prediction_min": config.prediction_min,
+            "prediction_strong": config.prediction_strong,
+            "anomaly_max": config.anomaly_max,
+            "volume_min_24h": config.volume_min_24h,
+            "max_positions": config.max_positions,
+            "cooldown_seconds": config.cooldown_seconds,
+            "allowed_regimes": [r.value for r in config.allowed_regimes],
         }
 
     return app
