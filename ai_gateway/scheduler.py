@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 MODULE_INTERVALS = {
     "sentiment": 900.0,       # 15 min - RSS + Claude API
     "regime": 300.0,          # 5 min - Binance klines
-    "doctor": 3600.0,         # 1 hour - on-demand mainly
+    "doctor": 300.0,         # 1 hour - on-demand mainly
     "anomaly": 60.0,          # 1 min - fast scan
     "self_improver": 60.0,    # 1 min - check for retraining + outcome updates
 }
