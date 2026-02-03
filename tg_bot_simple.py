@@ -128,10 +128,9 @@ except ImportError:
     pass
 
 THIS_FILE = Path(__file__).resolve()
-if THIS_FILE.parent.name.lower() == "minibot":
-    ROOT = THIS_FILE.parents[1]
-else:
-    ROOT = THIS_FILE.parent
+# ROOT is always the directory containing this file (minibot/)
+# This ensures STATE_DIR points to minibot/state/ where engine writes health_v5.json
+ROOT = THIS_FILE.parent
 
 # CRITICAL: Apply win_subprocess_fix BEFORE any subprocess calls
 # This ensures all child Python processes use venv python, preventing Python312 clones

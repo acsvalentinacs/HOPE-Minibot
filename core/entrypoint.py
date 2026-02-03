@@ -1,11 +1,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T02:00:00Z
-# Modified by: Claude (opus-4)
-# Modified at: 2026-01-29T00:20:00Z
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-02-03T01:30:00Z
 # Purpose: Unified Live Trading Entrypoint - single path to production
 # Security: Gatekeeper must pass, STOP.flag halts trading, health_v5.json updated
-# Change: Added systemd watchdog integration (sd_notify)
+# Change: Added engine_ok field to health_v5.json for TG bot status
 # === END SIGNATURE ===
 """
 HOPE Live Trading Entrypoint.
@@ -102,6 +102,7 @@ def write_health_v5(
     daily_pnl_usd: float = 0.0,
     daily_stop_hit: bool = False,
     last_error: Optional[str] = None,
+    engine_ok: bool = True,
 ) -> None:
     """
     Write health_v5.json for TG bot and health probes.
@@ -111,6 +112,7 @@ def write_health_v5(
     health = {
         "engine_version": "5.2.0",
         "mode": mode,
+        "engine_ok": engine_ok,
         "hb_ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "uptime_sec": uptime_sec,
         "open_positions": open_positions,
