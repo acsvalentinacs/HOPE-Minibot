@@ -1302,12 +1302,15 @@ class HopeMiniBot:
 
         sm = get_status_manager()
         gateway_status = sm.get_gateway_status()
+        # Handle both string and enum returns
+        status_str = gateway_status.value if hasattr(gateway_status, 'value') else str(gateway_status)
         gateway_emoji = {
             "healthy": "🟢",
             "warning": "🟡",
             "error": "🔴",
             "disabled": "⚪",
-        }.get(gateway_status.value, "⚪")
+            "offline": "⚫",
+        }.get(status_str, "⚪")
 
         lines = [
             "🤖 AI-GATEWAY СТАТУС",
