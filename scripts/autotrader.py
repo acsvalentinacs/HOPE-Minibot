@@ -80,11 +80,15 @@ from collections import deque
 # Ensure project root is in path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Centralized secrets
+# Centralized secrets (cross-platform)
 try:
     from core.secrets import SECRETS_PATH
 except ImportError:
-    SECRETS_PATH = Path("C:/secrets/hope.env")
+    import platform
+    if platform.system() == "Windows":
+        SECRETS_PATH = Path("C:/secrets/hope.env")
+    else:
+        SECRETS_PATH = Path("/opt/hope/secrets/hope.env")
 
 try:
     import httpx

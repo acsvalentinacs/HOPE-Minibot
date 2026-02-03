@@ -308,7 +308,45 @@ class BinanceClient:
         if "error" in resp:
             return 0.0
         return float(resp.get("price", 0))
-    
+
+    def get_step_size(self, symbol: str) -> float:
+        """Get LOT_SIZE step size for symbol (for quantity rounding)."""
+        info = self.get_symbol_info(symbol)
+        if not info:
+            return 0.00001  # Default fallback
+
+        for f in info.get("filters", []):
+            if f.get("filterType") == "LOT_SIZE":
+                return float(f.get("stepSize", 0.00001))
+        return 0.00001
+
+    def round_quantity(self, symbol: str, quantity: float) -> float:
+        """Round quantity DOWN to valid step size for symbol."""
+        step = self.get_step_size(symbol)
+        if step <= 0:
+            return quantity
+        # Round down to step size
+        return float(int(quantity / step) * step)
+
+    def get_actual_balance(self, symbol: str) -> float:
+        """Get actual free balance for base asset of symbol (e.g., BTC for BTCUSDT)."""
+        # Extract base asset from symbol (remove USDT suffix)
+        base_asset = symbol.replace("USDT", "").replace("BUSD", "").replace("BTC", "")
+        if not base_asset:
+            base_asset = "BTC" if "BTCUSDT" in symbol else symbol[:3]
+
+        # Common mappings
+        if symbol == "BTCUSDT":
+            base_asset = "BTC"
+        elif symbol == "ETHUSDT":
+            base_asset = "ETH"
+        elif symbol == "BNBUSDT":
+            base_asset = "BNB"
+        elif symbol.endswith("USDT"):
+            base_asset = symbol[:-4]
+
+        return self.get_balance(base_asset)
+
     def place_order(self, symbol: str, side: OrderSide, order_type: OrderType,
                     quantity: float = None, quote_quantity: float = None,
                     price: float = None, stop_price: float = None,
@@ -705,7 +743,7 @@ class OrderExecutor:
         
         if position and quantity is None:
             quantity = position.quantity
-        
+
         if quantity is None or quantity <= 0:
             return OrderResult(
                 success=False,
@@ -714,7 +752,19 @@ class OrderExecutor:
                 error="No quantity specified and no open position found",
                 timestamp=now.isoformat(),
             )
-        
+
+        # === FIX: Use actual balance for LIVE/TESTNET to avoid "insufficient balance" ===
+        if self.mode in (TradingMode.LIVE, TradingMode.TESTNET) and self.client:
+            actual_balance = self.client.get_actual_balance(symbol)
+            if actual_balance > 0:
+                # Round down to valid step size
+                rounded_qty = self.client.round_quantity(symbol, actual_balance)
+                if rounded_qty > 0 and rounded_qty < quantity:
+                    logger.warning(f"Quantity adjustment: {quantity} -> {rounded_qty} (actual balance)")
+                    quantity = rounded_qty
+                elif rounded_qty <= 0:
+                    logger.warning(f"Actual balance {actual_balance} too small to sell after rounding")
+
         # DRY mode
         if self.mode == TradingMode.DRY:
             logger.info(f"[DRY] Would sell {quantity} of {symbol}")
