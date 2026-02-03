@@ -1322,10 +1322,9 @@ class HopeMiniBot:
         for module in ["sentiment", "regime", "doctor", "anomaly"]:
             emoji = sm.get_emoji(module)
             name_ru = MODULE_NAMES_RU.get(module, module)
-            tooltip = sm.get_tooltip(module)
             enabled = "✓" if sm.is_enabled(module) else "✗"
-            lines.append(f"{emoji} {name_ru} [{enabled}]")
-            lines.append(f"   └─ {tooltip}")
+            status = sm.get_status(module) if hasattr(sm, 'get_status') else "—"
+            lines.append(f"{emoji} {name_ru} [{enabled}] {status}")
 
         lines.append("")
         lines.append("Нажмите модуль для деталей")
@@ -1341,17 +1340,16 @@ class HopeMiniBot:
 
         sm = get_status_manager()
         emoji = sm.get_emoji(module)
-        status = sm.get_status(module)
-        tooltip = sm.get_tooltip(module)
+        status = sm.get_status(module) if hasattr(sm, 'get_status') else "—"
         enabled = sm.is_enabled(module)
-        last_run = sm.get_last_run(module)
-        error_count = sm.get_error_count(module)
-        last_error = sm.get_last_error(module)
+        last_run = sm.get_last_run(module) if hasattr(sm, 'get_last_run') else None
+        error_count = sm.get_error_count(module) if hasattr(sm, 'get_error_count') else 0
+        last_error = sm.get_last_error(module) if hasattr(sm, 'get_last_error') else None
 
         lines = [
             f"{emoji} {name_ru}",
             "━━━━━━━━━━━━━━━━━━",
-            f"Статус: {tooltip}",
+            f"Статус: {status}",
             f"Включен: {'Да' if enabled else 'Нет'}",
         ]
 
