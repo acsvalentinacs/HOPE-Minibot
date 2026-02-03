@@ -476,19 +476,33 @@ class Guardian:
 
             transport = EventTransport(process_name="guardian")
 
-            for event in transport.subscribe(["HEARTBEAT", "FILL", "PANIC"]):
-                event_type = event.event_type
+            # Register event handlers
+            def on_heartbeat(event):
+                if event.payload.get("source") == "trading_core":
+                    self.heartbeat_monitor.record_heartbeat()
+                    log.debug("Heartbeat received from trading_core")
 
-                if event_type == "HEARTBEAT":
-                    if event.payload.get("source") == "trading_core":
-                        self.heartbeat_monitor.record_heartbeat()
+            def on_fill(event):
+                log.info(f"Fill event from Core: {event.payload}")
 
-                elif event_type == "FILL":
-                    log.info(f"Fill event from Core: {event.payload}")
+            def on_panic(event):
+                log.error(f"PANIC event received: {event.payload}")
+                # Schedule panic close in async context
+                asyncio.create_task(self._panic_close(event.payload.get("reason", "External PANIC")))
 
-                elif event_type == "PANIC":
-                    log.error(f"PANIC event received: {event.payload}")
-                    await self._panic_close(event.payload.get("reason", "External PANIC"))
+            transport.subscribe("HEARTBEAT", on_heartbeat)
+            transport.subscribe("FILL", on_fill)
+            transport.subscribe("PANIC", on_panic)
+
+            # Start background reader
+            transport.start_reader()
+            log.info("Transport reader started, listening for events")
+
+            # Keep running until stopped
+            while self._running:
+                await asyncio.sleep(1)
+
+            transport.stop_reader()
 
         except Exception as e:
             log.error(f"Transport loop error: {e}")

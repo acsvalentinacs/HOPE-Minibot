@@ -341,18 +341,15 @@ class EventListener:
     async def start(self):
         """Start listening for events."""
         self._running = True
+        self._pending_alerts: list = []
 
         try:
             from core.events.transport import EventTransport
 
             transport = EventTransport(process_name="interface")
 
-            log.info("EventListener started")
-
-            for event in transport.subscribe(["FILL", "CLOSE", "PANIC", "STOPLOSS_FAILURE"]):
-                if not self._running:
-                    break
-
+            def on_event(event):
+                """Handle incoming event."""
                 event_type = event.event_type
                 payload = event.payload
 
@@ -381,9 +378,28 @@ class EventListener:
                         f"Error: {payload.get('error')}"
                     )
                 else:
-                    continue
+                    return
 
-                await self.telegram.send_alert(msg)
+                self._pending_alerts.append(msg)
+
+            # Subscribe to events
+            transport.subscribe("FILL", on_event)
+            transport.subscribe("CLOSE", on_event)
+            transport.subscribe("PANIC", on_event)
+            transport.subscribe("STOPLOSS_FAILURE", on_event)
+
+            # Start background reader
+            transport.start_reader()
+            log.info("EventListener started")
+
+            # Process pending alerts
+            while self._running:
+                while self._pending_alerts:
+                    msg = self._pending_alerts.pop(0)
+                    await self.telegram.send_alert(msg)
+                await asyncio.sleep(0.5)
+
+            transport.stop_reader()
 
         except Exception as e:
             log.error(f"EventListener error: {e}")
