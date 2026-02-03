@@ -9,9 +9,9 @@
   },
   "position_sizing": {
     "base_size_pct": 20,
-    "base_size_usd": 18.04,
+    "base_size_usd": 20.09,
     "min_size_usd": 10,
-    "max_size_usd": 45.09,
+    "max_size_usd": 50.23,
     "max_exposure_pct": 50,
     "max_exposure_usd": 50,
     "max_positions": 2,

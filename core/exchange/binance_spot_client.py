@@ -1,11 +1,12 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at (UTC): 2026-01-25T22:45:00Z
-# Modified by: Claude (opus-4)
-# Modified at (UTC): 2026-01-26T04:35:00Z
+# Modified by: Claude (opus-4.5)
+# Modified at (UTC): 2026-02-03T00:00:00Z
 # Purpose: Binance Spot API thin client - HMAC-signed REST (fail-closed)
 # P0 FIX: Uses core.net.http_client for egress policy enforcement
 # P0 FIX: Added newClientOrderId for order idempotency
+# P0 FIX: RFC 3986 percent-encoding for signatures (Binance 2026-01-15 change)
 # === END SIGNATURE ===
 """
 Binance Spot API Client v1.0.
@@ -41,7 +42,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 # P0 FIX: Use egress-safe HTTP client (AllowList enforcement)
 from core.net.http_client import (
@@ -115,7 +116,10 @@ class BinanceSpotClient:
 
     def _sign(self, params: Dict[str, Any]) -> str:
         """
-        Generate HMAC-SHA256 signature.
+        Generate HMAC-SHA256 signature with RFC 3986 percent-encoding.
+
+        As of 2026-01-15, Binance requires strict percent-encoding
+        (quote instead of quote_plus) for signature computation.
 
         Args:
             params: Query parameters
@@ -123,7 +127,9 @@ class BinanceSpotClient:
         Returns:
             Hex signature
         """
-        query = urlencode(params)
+        # RFC 3986 percent-encoding: use quote() instead of quote_plus()
+        # This encodes spaces as %20 instead of +, per Binance requirement
+        query = urlencode(params, quote_via=quote)
         signature = hmac.new(
             self.credentials.api_secret.encode("utf-8"),
             query.encode("utf-8"),

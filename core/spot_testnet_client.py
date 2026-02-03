@@ -126,8 +126,13 @@ class SpotTestnetClient:
             )
 
     def _sign(self, params: Dict[str, Any]) -> str:
-        """Generate HMAC SHA256 signature."""
-        query_string = urllib.parse.urlencode(params)
+        """
+        Generate HMAC SHA256 signature with RFC 3986 percent-encoding.
+
+        As of 2026-01-15, Binance requires strict percent-encoding.
+        """
+        # RFC 3986: use quote() instead of quote_plus()
+        query_string = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         signature = hmac.new(
             self.api_secret.encode("utf-8"),
             query_string.encode("utf-8"),
