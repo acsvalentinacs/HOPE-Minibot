@@ -224,34 +224,9 @@ class HopeOrchestrator:
             log.error(f"  No module specified for {service_name}")
             return False
 
-        # For now, create a simple runner script
-        # In production, this would start the actual service module
-        cmd = [sys.executable, "-c", f"""
-import os
-import time
-import sys
-os.environ['HOPE_PROCESS_NAME'] = '{service_name}'
-print(f'[{service_name}] Starting...')
-print(f'[{service_name}] Mode: {env.get("HOPE_MODE", "UNKNOWN")}')
-
-# Import and start the actual service when it exists
-# For now, just simulate
-try:
-    # Try to import the module
-    import importlib
-    mod_name = '{module}'
-    # module = importlib.import_module(mod_name)
-    # service = getattr(module, '{service_config.get("class", "Service")}')()
-    # service.run()
-    print(f'[{service_name}] Running (simulated)...')
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    print(f'[{service_name}] Shutting down...')
-except Exception as e:
-    print(f'[{service_name}] Error: {{e}}')
-    sys.exit(1)
-"""]
+        # Run the actual module as a script
+        # Each module has `if __name__ == "__main__":` entry point
+        cmd = [sys.executable, "-m", module]
 
         try:
             # Start process

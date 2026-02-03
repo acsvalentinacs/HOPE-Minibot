@@ -474,7 +474,7 @@ class Guardian:
         try:
             from core.events.transport import EventTransport
 
-            transport = EventTransport(source_name="guardian")
+            transport = EventTransport(process_name="guardian")
 
             for event in transport.subscribe(["HEARTBEAT", "FILL", "PANIC"]):
                 event_type = event.event_type
@@ -594,7 +594,7 @@ async def main(mode: GuardianMode):
     if app:
         try:
             import uvicorn
-            config = uvicorn.Config(app, host="127.0.0.1", port=8101, log_level="warning")
+            config = uvicorn.Config(app, host="127.0.0.1", port=8104, log_level="warning")
             server = uvicorn.Server(config)
             asyncio.create_task(server.serve())
             log.info("HTTP API started on :8101")

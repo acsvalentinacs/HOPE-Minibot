@@ -393,6 +393,36 @@ def publish_cross_process(event: HopeEvent) -> bool:
     return get_transport().publish(event)
 
 
+def publish_event(
+    event_type: str,
+    payload: Dict[str, Any],
+    correlation_id: str = None,
+    source: str = "unknown",
+) -> bool:
+    """
+    Convenience function to publish event with simple parameters.
+
+    Args:
+        event_type: Type of event (e.g., "HEARTBEAT", "FILL", "PANIC")
+        payload: Event payload dict
+        correlation_id: Optional correlation ID for tracking
+        source: Source process name
+
+    Returns:
+        True if published successfully
+    """
+    from .event_schema import HopeEvent
+    import uuid
+
+    event = HopeEvent(
+        event_type=event_type,
+        payload=payload,
+        correlation_id=correlation_id or str(uuid.uuid4()),
+        source=source,
+    )
+    return get_transport(source).publish(event)
+
+
 # =========================================================================
 # BRIDGE: Connect in-memory Event Bus to Transport
 # =========================================================================

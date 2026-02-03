@@ -863,7 +863,7 @@ async def main(mode: TradingMode):
     if app:
         try:
             import uvicorn
-            config = uvicorn.Config(app, host="127.0.0.1", port=8100, log_level="warning")
+            config = uvicorn.Config(app, host="127.0.0.1", port=8103, log_level="warning")
             server = uvicorn.Server(config)
             asyncio.create_task(server.serve())
             log.info("HTTP API started on :8100")

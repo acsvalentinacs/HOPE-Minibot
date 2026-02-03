@@ -85,8 +85,8 @@ class StatusAggregator:
 
     def __init__(
         self,
-        core_url: str = "http://127.0.0.1:8100",
-        guardian_url: str = "http://127.0.0.1:8101",
+        core_url: str = "http://127.0.0.1:8103",
+        guardian_url: str = "http://127.0.0.1:8104",
     ):
         self.core_url = core_url
         self.guardian_url = guardian_url
@@ -345,7 +345,7 @@ class EventListener:
         try:
             from core.events.transport import EventTransport
 
-            transport = EventTransport(source_name="interface")
+            transport = EventTransport(process_name="interface")
 
             log.info("EventListener started")
 
@@ -473,7 +473,7 @@ class Interface:
         if app:
             try:
                 import uvicorn
-                config = uvicorn.Config(app, host="127.0.0.1", port=8102, log_level="warning")
+                config = uvicorn.Config(app, host="127.0.0.1", port=8105, log_level="warning")
                 server = uvicorn.Server(config)
                 asyncio.create_task(server.serve())
                 log.info("HTTP API started on :8102")
