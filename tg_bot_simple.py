@@ -3291,14 +3291,29 @@ class HopeMiniBot:
         out_file = LOGS_DIR / f"stack_{action.lower()}_stdout.log"
         err_file = LOGS_DIR / f"stack_{action.lower()}_stderr.log"
 
-        cmd = [
-            _ps_exe(),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(PS_LAUNCHER_V2),
-        ] + args
+        # Cross-platform command building
+        if sys.platform == "win32":
+            cmd = [
+                _ps_exe(),
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(PS_LAUNCHER_V2),
+            ] + args
+        else:
+            # Linux: bash script.sh ACTION [MODE]
+            # Convert PowerShell args to positional: -Action start -Mode DRY -> start DRY
+            bash_args = []
+            i = 0
+            while i < len(args):
+                if args[i] in ("-Action", "-Mode") and i + 1 < len(args):
+                    bash_args.append(args[i + 1])
+                    i += 2
+                else:
+                    bash_args.append(args[i])
+                    i += 1
+            cmd = [_ps_exe(), str(PS_LAUNCHER_V2)] + bash_args
 
         try:
             proc = await asyncio.create_subprocess_exec(
