@@ -15,21 +15,21 @@ HEAVY COINS BLACKLIST for LIVE Trading
 # ══════════════════════════════════════════════════════════════════════════════
 
 HEAVY_COINS_BLACKLIST = {
-    # Топ-5 по капитализации - слишком тяжёлые для скальпинга
+    # Топ по капитализации - слишком тяжёлые для скальпинга
     "BTCUSDT",   # Bitcoin - $83,000+ | delta ~0.01%/мин
-    "ETHUSDT",   # Ethereum - $2,750+ | delta ~0.02%/мин  
-    "BNBUSDT",   # Binance Coin - $850+ | delta ~0.05%/мин
-    "SOLUSDT",   # Solana - $117+ | delta ~0.05%/мин
-    "XRPUSDT",   # Ripple - $0.50+ | delta ~0.05%/мин
+    "ETHUSDT",   # Ethereum - $2,750+ | delta ~0.02%/мин
+    "BNBUSDT",   # Binance Coin - $850+ | delta ~0.05%/мин | NOTIONAL проблемы
+    "SOLUSDT",   # Solana - $117+ | delta ~0.05%/мин | Проблемы с балансом
+    "AVAXUSDT",  # Avalanche - Исключён по указанию пользователя 2026-02-04
 }
 
 # Причины исключения
 EXCLUSION_REASONS = {
     "BTCUSDT": "Market cap $1.6T+ | Moves <0.1%/min | Need $10K+ for visible profit",
     "ETHUSDT": "Market cap $330B+ | Moves <0.1%/min | Too slow for scalping",
-    "BNBUSDT": "Market cap $120B+ | Low intraday volatility",
-    "SOLUSDT": "Market cap $55B+ | Slower than smaller alts",
-    "XRPUSDT": "Market cap $25B+ | Low volatility periods",
+    "BNBUSDT": "Market cap $120B+ | Low intraday volatility | NOTIONAL filter issues",
+    "SOLUSDT": "Market cap $55B+ | Balance sync issues on Binance",
+    "AVAXUSDT": "Excluded per user request 2026-02-04",
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -37,18 +37,28 @@ EXCLUSION_REASONS = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 SCALP_FRIENDLY_COINS = {
-    # Mid-cap с хорошей волатильностью
+    # Мем-коины (высокая волатильность)
     "PEPEUSDT",   # Meme coin - высокая волатильность
     "DOGEUSDT",   # Meme coin - популярный, волатильный
     "SHIBUSDT",   # Meme coin - волатильный
+    "WIFUSDT",    # Meme coin - новый
+    "FLOKIUSDT",  # Meme coin
+    "BONKUSDT",   # Meme coin
+
+    # Mid-cap L1/L2 с хорошей волатильностью
     "SUIUSDT",    # New L1 - активная торговля
-    "AVAXUSDT",   # L1 - хорошая волатильность
+    "SEIUSDT",    # New L1 - волатильный
+    "APTUSDT",    # L1 - хорошая волатильность
+    "ARBUSDT",    # L2 - активная торговля
+    "OPUSDT",     # L2 Optimism
+    "INJUSDT",    # DeFi - волатильный
     "LINKUSDT",   # Oracle - средняя волатильность
     "ADAUSDT",    # L1 - средняя волатильность
-    
-    # Small-cap с высокой волатильностью (осторожно!)
+    "XRPUSDT",    # Высокая ликвидность
+
+    # DeFi (осторожно!)
     "ENSOUSDT",   # DeFi - очень волатильный
-    "BIFIUSDT",   # DeFi - волатильный
+    "JUPUSDT",    # Jupiter DEX
 }
 
 # ══════════════════════════════════════════════════════════════════════════════

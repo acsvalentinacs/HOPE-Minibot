@@ -57,13 +57,53 @@ SIGNAL_COOLDOWN = 180        # 3 minutes cooldown per symbol
 MAX_SIGNALS_PER_MINUTE = 5   # Rate limit
 SCAN_INTERVAL = 10           # Scan every 10 seconds
 
-# Whitelist of tradeable symbols
+# ═══════════════════════════════════════════════════════════════════════════
+# BLACKLIST - НЕ ТОРГОВАТЬ! (по указанию пользователя 2026-02-04)
+# ═══════════════════════════════════════════════════════════════════════════
+BLACKLIST = {
+    "BTCUSDT",   # Слишком тяжёлая, низкая волатильность
+    "ETHUSDT",   # Слишком тяжёлая, низкая волатильность
+    "BNBUSDT",   # Слишком тяжёлая, NOTIONAL проблемы
+    "AVAXUSDT",  # Исключён по указанию пользователя
+    "SOLUSDT",   # Проблемы с балансом
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WHITELIST - Волатильные монеты для скальпинга
+# ═══════════════════════════════════════════════════════════════════════════
 ALLOWED_SYMBOLS = {
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
-    "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT",
-    "LINKUSDT", "LTCUSDT", "ATOMUSDT", "UNIUSDT", "NEARUSDT",
-    "APTUSDT", "ARBUSDT", "OPUSDT", "INJUSDT", "SUIUSDT",
-    "SEIUSDT", "TIAUSDT", "JUPUSDT", "WIFUSDT", "PEPEUSDT",
+    # Mid-cap с хорошей волатильностью
+    "DOGEUSDT",  # Мем-коин, волатильный
+    "PEPEUSDT",  # Мем-коин, высокая волатильность
+    "SHIBUSDT",  # Мем-коин, волатильный
+    "WIFUSDT",   # Мем-коин, новый, волатильный
+    "FLOKIUSDT", # Мем-коин
+    "BONKUSDT",  # Мем-коин
+
+    # L1/L2 с активной торговлей
+    "SUIUSDT",   # Новый L1, активный
+    "SEIUSDT",   # Новый L1, волатильный
+    "APTUSDT",   # L1, хорошая волатильность
+    "ARBUSDT",   # L2, активная торговля
+    "OPUSDT",    # L2 Optimism
+    "INJUSDT",   # DeFi, волатильный
+
+    # DeFi/Utility
+    "JUPUSDT",   # Jupiter, Solana DEX
+    "TIAUSDT",   # Celestia, новый
+    "NEARUSDT",  # L1, хорошая волатильность
+    "LINKUSDT",  # Oracle, средняя волатильность
+    "ADAUSDT",   # L1, средняя волатильность
+    "DOTUSDT",   # L0, средняя волатильность
+    "XRPUSDT",   # Высокая ликвидность
+    "ATOMUSDT",  # Cosmos hub
+    "UNIUSDT",   # DEX token
+    "LTCUSDT",   # Высокая ликвидность
+
+    # Новые/трендовые (высокий риск, высокая волатильность)
+    "TRUMPUSDT", # Политика, высокая волатильность
+    "AIUSDT",    # AI тренд
+    "RENDERUSDT",# AI тренд
 }
 
 
@@ -164,6 +204,10 @@ class AutoSignalLoop:
 
         for t in tickers:
             symbol = t.get("symbol", "")
+
+            # Filter: check blacklist first
+            if symbol in BLACKLIST:
+                continue
 
             # Filter: only allowed USDT pairs
             if symbol not in ALLOWED_SYMBOLS:
