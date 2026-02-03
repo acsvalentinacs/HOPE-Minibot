@@ -77,6 +77,15 @@ from enum import Enum
 import threading
 from collections import deque
 
+# Ensure project root is in path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Centralized secrets
+try:
+    from core.secrets import SECRETS_PATH
+except ImportError:
+    SECRETS_PATH = Path("C:/secrets/hope.env")
+
 try:
     import httpx
 except ImportError:
@@ -542,7 +551,7 @@ class AutoTrader:
             logger.warning("Binance client not available - cannot verify positions")
             return
         try:
-            load_dotenv('C:/secrets/hope.env')
+            load_dotenv(SECRETS_PATH)
             api_key = os.getenv('BINANCE_API_KEY')
             api_secret = os.getenv('BINANCE_API_SECRET')
             if api_key and api_secret:

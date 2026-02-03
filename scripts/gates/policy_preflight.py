@@ -38,6 +38,9 @@ from typing import Any, Dict, List, Tuple
 # Ensure project root in path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Centralized secrets
+from core.secrets import SECRETS_PATH
+
 
 class CheckResult:
     """Single check result."""
@@ -111,17 +114,16 @@ def check_credentials(mode: str) -> List[CheckResult]:
     """Check API credentials."""
     results = []
 
-    # Load from env file
-    env_path = Path("C:/secrets/hope.env")
+    # Load from env file (use centralized path)
     env_vars = {}
 
-    if env_path.exists():
+    if SECRETS_PATH.exists():
         try:
             from dotenv import dotenv_values
-            env_vars = dotenv_values(env_path)
+            env_vars = dotenv_values(SECRETS_PATH)
         except ImportError:
             # Manual parse
-            for line in env_path.read_text(encoding="utf-8").splitlines():
+            for line in SECRETS_PATH.read_text(encoding="utf-8").splitlines():
                 if "=" in line and not line.strip().startswith("#"):
                     key, _, value = line.partition("=")
                     env_vars[key.strip()] = value.strip()

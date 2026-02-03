@@ -39,6 +39,9 @@ from typing import List, Dict, Optional, Any
 # Ensure project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Centralized secrets
+from core.secrets import SECRETS_PATH as _SECRETS_PATH
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -51,7 +54,7 @@ logger = logging.getLogger("PANIC")
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SECRETS_PATH = Path("C:/secrets/hope.env")
+SECRETS_PATH = _SECRETS_PATH
 STATE_DIR = Path("state/ai/production")
 STOP_FLAG = Path("state/STOP.flag")
 PANIC_LOG = STATE_DIR / "panic_events.jsonl"

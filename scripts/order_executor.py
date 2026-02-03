@@ -32,6 +32,7 @@ Usage:
 """
 
 import os
+import sys
 import time
 import hmac
 import hashlib
@@ -43,6 +44,15 @@ from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 from enum import Enum
 from urllib.parse import urlencode
+
+# Ensure project root
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Centralized secrets
+try:
+    from core.secrets import SECRETS_PATH
+except ImportError:
+    SECRETS_PATH = Path("C:/secrets/hope.env")
 
 try:
     import httpx
@@ -408,11 +418,10 @@ class OrderExecutor:
                         elif line.startswith("BINANCE_API_SECRET="):
                             self.api_secret = line.split("=", 1)[1].strip()
         
-        # Try default secrets location
+        # Try default secrets location (use centralized path)
         if not self.api_key:
-            default_env = Path("C:/secrets/hope.env")
-            if default_env.exists():
-                with open(default_env, 'r') as f:
+            if SECRETS_PATH.exists():
+                with open(SECRETS_PATH, 'r') as f:
                     for line in f:
                         if line.startswith("BINANCE_API_KEY="):
                             self.api_key = line.split("=", 1)[1].strip()

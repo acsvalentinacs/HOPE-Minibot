@@ -19,6 +19,9 @@ from typing import Optional, Tuple
 from enum import Enum
 from pathlib import Path
 
+# Centralized secrets path
+from core.secrets import SECRETS_PATH
+
 log = logging.getLogger(__name__)
 
 
@@ -38,9 +41,9 @@ class MissingCredentials(Exception):
     pass
 
 
-def load_env_file(path: str = "C:/secrets/hope.env") -> None:
+def load_env_file(path: Optional[Path] = None) -> None:
     """Load .env file if exists (append to os.environ, not overwrite)."""
-    env_path = Path(path)
+    env_path = path or SECRETS_PATH
     if not env_path.exists():
         log.warning(f"Env file not found: {path}")
         return
@@ -70,7 +73,7 @@ def get_trading_mode() -> TradingMode:
     HOPE_MODE=LIVE requires HOPE_LIVE_ACK=YES_I_UNDERSTAND
     """
     # Load secrets first
-    load_env_file("C:/secrets/hope.env")
+    load_env_file()
 
     mode_str = os.environ.get("HOPE_MODE", "DRY").upper()
 
@@ -123,8 +126,8 @@ def get_binance_credentials(mode: TradingMode) -> Tuple[str, str]:
 
     if not api_key or not api_secret:
         raise MissingCredentials(
-            "LIVE mode requires BINANCE_API_KEY and BINANCE_API_SECRET in environment. "
-            "Set them in C:/secrets/hope.env"
+            f"LIVE mode requires BINANCE_API_KEY and BINANCE_API_SECRET in environment. "
+            f"Set them in {SECRETS_PATH}"
         )
 
     # Validate key format (basic check)
@@ -216,7 +219,7 @@ def check_live_barrier() -> Tuple[bool, str]:
     Returns:
         Tuple[is_live_ready, message]
     """
-    load_env_file("C:/secrets/hope.env")
+    load_env_file()
 
     mode = os.environ.get("HOPE_MODE", "DRY").upper()
     ack = os.environ.get("HOPE_LIVE_ACK", "")

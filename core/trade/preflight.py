@@ -1,8 +1,11 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-28T01:00:00Z
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-02-03T17:00:00Z
 # Purpose: Preflight Gate - единственная точка входа в Live режим
 # Security: Fail-closed, все проверки обязательны, никаких "soft" режимов
+# Change: Use centralized core/secrets.py for secrets path
 # === END SIGNATURE ===
 """
 Preflight Gate - Pre-Trade Safety Checks.
@@ -53,7 +56,9 @@ logger = logging.getLogger("trade.preflight")
 # SSoT paths
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 STATE_DIR = BASE_DIR / "state"
-SECRETS_PATH = Path(r"C:\secrets\hope\.env")
+
+# Import centralized secrets path (SSoT)
+from core.secrets import SECRETS_PATH, get_secrets_path, load_secrets
 
 
 class PreflightStatus(str, Enum):

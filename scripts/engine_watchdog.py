@@ -26,6 +26,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Centralized secrets
+from core.secrets import SECRETS_PATH
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -47,7 +50,7 @@ def load_telegram_config():
     """Load Telegram config for alerts."""
     try:
         from dotenv import load_dotenv
-        load_dotenv(Path("C:/secrets/hope.env"))
+        load_dotenv(SECRETS_PATH)
     except ImportError:
         pass
 

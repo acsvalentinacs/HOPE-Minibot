@@ -39,7 +39,10 @@ logger = logging.getLogger(__name__)
 # Paths
 STATE_DIR = Path(__file__).parent.parent / "state" / "ai"
 CONFIG_DIR = Path(__file__).parent.parent / "config"
-SECRETS_FILE = Path("C:/secrets/hope.env")
+
+# Use centralized secrets path
+from core.secrets import SECRETS_PATH
+SECRETS_FILE = SECRETS_PATH
 
 
 @dataclass

@@ -50,6 +50,9 @@ import argparse
 # Ensure project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Centralized secrets
+from core.secrets import SECRETS_PATH
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -1688,10 +1691,9 @@ async def main():
     # Load env
     try:
         from dotenv import load_dotenv
-        env_path = Path("C:/secrets/hope.env")
-        if env_path.exists():
-            load_dotenv(env_path)
-            logger.info(f"Loaded env from {env_path}")
+        if SECRETS_PATH.exists():
+            load_dotenv(SECRETS_PATH)
+            logger.info(f"Loaded env from {SECRETS_PATH}")
     except ImportError:
         logger.warning("python-dotenv not installed, using system env only")
 

@@ -43,6 +43,9 @@ from dataclasses import dataclass, asdict
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+# Centralized secrets
+from core.secrets import SECRETS_PATH
+
 try:
     import httpx
 except ImportError:
@@ -52,7 +55,7 @@ except ImportError:
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path("C:/secrets/hope.env"))
+    load_dotenv(SECRETS_PATH)
 except ImportError:
     pass
 
