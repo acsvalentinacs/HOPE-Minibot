@@ -1507,38 +1507,48 @@ class HopeMiniBot:
         overall = data.get("overall", "unknown")
         overall_emoji = "✅" if overall == "healthy" else "⚠️" if overall == "degraded" else "❌"
 
+        # Build formatted output
         lines = [
-            "☁️ HOPE Cloud Status",
-            "━━━━━━━━━━━━━━━━━━",
-            f"Overall: {overall_emoji} {overall.upper()}",
-            "",
+            "☁️ <b>HOPE Cloud Status</b>",
+            "┌─────────────────────────────┐",
+            f"│ Overall: {overall_emoji} {overall.upper():8} │",
+            "├─────────────────────────────┤",
         ]
 
         for name, info in data.get("services", {}).items():
             status = info.get("status", "unknown")
             emoji = "✅" if status == "healthy" else "❌"
-            lines.append(f"{emoji} {name}: {status}")
+
+            # Service header
+            display_name = name.replace("_", " ").title()
+            lines.append(f"│ {emoji} <b>{display_name:14}</b>│")
 
             svc_data = info.get("data", {})
             if "mode" in svc_data:
-                lines.append(f"   Mode: {svc_data['mode']}")
+                mode = svc_data['mode']
+                lines.append(f"│   Mode:      {mode:5}        │")
             if "active_positions" in svc_data:
-                lines.append(f"   Positions: {svc_data['active_positions']}")
+                pos = svc_data['active_positions']
+                lines.append(f"│   Positions: {pos:<5}        │")
             if "heartbeat" in svc_data:
                 hb = svc_data["heartbeat"]
                 hb_emoji = "✅" if hb.get("core_alive") else "❌"
                 elapsed = int(hb.get("elapsed_sec", 0))
-                lines.append(f"   Heartbeat: {hb_emoji} ({elapsed}s ago)")
+                lines.append(f"│   Heartbeat: {hb_emoji} {elapsed:>2}s ago   │")
             if "circuit_breaker" in svc_data:
                 cb = svc_data["circuit_breaker"]
-                cb_emoji = "🔴" if cb.get("tripped") else "🟢"
-                lines.append(f"   Circuit: {cb_emoji}")
+                cb_emoji = "🟢 OK" if not cb.get("tripped") else "🔴 TRIP"
+                lines.append(f"│   Circuit:   {cb_emoji:6}      │")
 
-        ts = data.get("timestamp", "N/A")[:19]
-        lines.append("")
-        lines.append(f"🕐 {ts}")
+            lines.append("├─────────────────────────────┤")
 
-        await self._reply(update, "\n".join(lines))
+        # Remove last separator and add footer
+        lines[-1] = "└─────────────────────────────┘"
+
+        ts = data.get("timestamp", "N/A")[:19].replace("T", " ")
+        lines.append(f"<code>🕐 {ts}</code>")
+
+        await self._reply(update, "\n".join(lines), parse_mode="HTML")
 
     async def cmd_help(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -3707,7 +3717,15 @@ class HopeMiniBot:
                 await self._reply(update, f"Error: {fix_script} not found")
                 return
 
-            cmd = [sys.executable, str(fix_script)]
+            # Use correct python path for platform
+            if os.name == 'nt':
+                python_exe = sys.executable
+            else:
+                # Linux VPS - use venv python
+                venv_python = Path("/opt/hope/venv/bin/python")
+                python_exe = str(venv_python) if venv_python.exists() else "python3"
+
+            cmd = [python_exe, str(fix_script)]
             if context.args:
                 cmd.extend(context.args)
 
@@ -3748,19 +3766,25 @@ class HopeMiniBot:
         await self._reply(update, f"Running autostart... (force: {force})")
 
         try:
-            script = ROOT / "tools" / "hope_autostart.ps1"
-            if not script.exists():
-                await self._reply(update, f"Error: {script} not found")
-                return
-
-            cmd = [
-                _ps_exe(),
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-File", str(script),
-            ]
-            if force:
-                cmd.append("-Force")
+            # Use orchestrator on Linux, PowerShell on Windows
+            if os.name == 'nt':
+                script = ROOT / "tools" / "hope_autostart.ps1"
+                if not script.exists():
+                    await self._reply(update, f"Error: {script} not found")
+                    return
+                cmd = [
+                    _ps_exe(),
+                    "-NoProfile",
+                    "-ExecutionPolicy", "Bypass",
+                    "-File", str(script),
+                ]
+                if force:
+                    cmd.append("-Force")
+            else:
+                # Linux - use orchestrator
+                venv_python = Path("/opt/hope/venv/bin/python")
+                python_exe = str(venv_python) if venv_python.exists() else "python3"
+                cmd = [python_exe, "-m", "tools.hope_orchestrator", "start"]
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
