@@ -1679,9 +1679,9 @@ class HopeMiniBot:
         action = "enable" if enable else "disable"
 
         if enable:
-            success = sm.enable_module(module)
+            success = sm.enable(module) if hasattr(sm, 'enable') else False
         else:
-            success = sm.disable_module(module)
+            success = sm.disable(module) if hasattr(sm, 'disable') else False
 
         if success:
             status = "включен ✅" if enable else "отключен ⏸️"
