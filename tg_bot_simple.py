@@ -1128,18 +1128,27 @@ def _read_pid_file(role: str) -> Optional[int]:
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Check if PID is alive via tasklist (Windows)."""
+    """Check if PID is alive (cross-platform)."""
     if not pid or pid <= 0:
         return False
     try:
-        result = subprocess.run(
-            ["tasklist", "/fi", f"PID eq {pid}"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            creationflags=_create_no_window_flag(),
-        )
-        return str(pid) in (result.stdout or "")
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/fi", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                creationflags=_create_no_window_flag(),
+            )
+            return str(pid) in (result.stdout or "")
+        else:
+            # Linux/Unix: check /proc/{pid} or use kill(0)
+            import os
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
     except Exception:
         return False
 
@@ -2324,7 +2333,6 @@ class HopeMiniBot:
         # Build PID-truth status table
         engine_st = _get_role_status("ENGINE")
         tgbot_st = _get_role_status("TGBOT")
-        listener_st = _get_role_status("LISTENER")
 
         # Detect problems
         problems = []
@@ -2332,17 +2340,14 @@ class HopeMiniBot:
             problems.append("ENGINE stale (pid file exists but process dead)")
         if "STALE" in tgbot_st:
             problems.append("TGBOT stale")
-        if "STALE" in listener_st:
-            problems.append("LISTENER stale")
 
-        # Build table (monospace)
+        # Build table (monospace) - LISTENER removed (deprecated component)
         table = (
             "```\n"
             "ROLE      STATE\n"
             "━━━━━━━━━━━━━━━━━━\n"
             f"ENGINE    {engine_st}\n"
             f"TGBOT     {tgbot_st}\n"
-            f"LISTENER  {listener_st}\n"
             "```"
         )
 
@@ -3901,7 +3906,14 @@ def main() -> None:
     # HOPE_SINGLETON_RUNPOLLING_PATCH
     root = _hope_project_root()
     _hope_venv_guard(root)
-    _hope_acquire_pid_lock(root / "state" / "pids" / "tg_bot_simple.lock")
+    _hope_acquire_pid_lock(PIDS_DIR / "tg_bot_simple.lock")
+    # Write TGBOT.pid for stack status checks
+    try:
+        tgbot_pid_file = PIDS_DIR / "TGBOT.pid"
+        tgbot_pid_file.write_text(str(os.getpid()), encoding="utf-8")
+        logger.info("TGBOT.pid written: %s (pid=%d)", tgbot_pid_file, os.getpid())
+    except Exception as e:
+        logger.error("Failed to write TGBOT.pid: %s", e)
     _hope_install_log_redaction()
 
     # v2.3.5: Write initial health, job scheduled via post_init
