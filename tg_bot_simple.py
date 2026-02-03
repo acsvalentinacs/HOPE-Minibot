@@ -1484,6 +1484,62 @@ class HopeMiniBot:
         )
         await self._reply(update, txt)
 
+    async def cmd_cloud(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show HOPE Cloud services status."""
+        if not await self._guard_admin(update):
+            return
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://127.0.0.1:8105/status", timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                    else:
+                        await self._reply(update, f"❌ Interface API error: {resp.status}")
+                        return
+        except Exception as e:
+            await self._reply(update, f"❌ Cloud недоступен: {e}")
+            return
+
+        overall = data.get("overall", "unknown")
+        overall_emoji = "✅" if overall == "healthy" else "⚠️" if overall == "degraded" else "❌"
+
+        lines = [
+            "☁️ HOPE Cloud Status",
+            "━━━━━━━━━━━━━━━━━━",
+            f"Overall: {overall_emoji} {overall.upper()}",
+            "",
+        ]
+
+        for name, info in data.get("services", {}).items():
+            status = info.get("status", "unknown")
+            emoji = "✅" if status == "healthy" else "❌"
+            lines.append(f"{emoji} {name}: {status}")
+
+            svc_data = info.get("data", {})
+            if "mode" in svc_data:
+                lines.append(f"   Mode: {svc_data['mode']}")
+            if "active_positions" in svc_data:
+                lines.append(f"   Positions: {svc_data['active_positions']}")
+            if "heartbeat" in svc_data:
+                hb = svc_data["heartbeat"]
+                hb_emoji = "✅" if hb.get("core_alive") else "❌"
+                elapsed = int(hb.get("elapsed_sec", 0))
+                lines.append(f"   Heartbeat: {hb_emoji} ({elapsed}s ago)")
+            if "circuit_breaker" in svc_data:
+                cb = svc_data["circuit_breaker"]
+                cb_emoji = "🔴" if cb.get("tripped") else "🟢"
+                lines.append(f"   Circuit: {cb_emoji}")
+
+        ts = data.get("timestamp", "N/A")[:19]
+        lines.append("")
+        lines.append(f"🕐 {ts}")
+
+        await self._reply(update, "\n".join(lines))
+
     async def cmd_help(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -3854,6 +3910,7 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
         app.add_handler(CommandHandler("status", self.cmd_status))
+        app.add_handler(CommandHandler("cloud", self.cmd_cloud))
         app.add_handler(CommandHandler("balance", self.cmd_balance))
         app.add_handler(CommandHandler("market", self.cmd_market))
         app.add_handler(CommandHandler("stop", self.cmd_stop))
