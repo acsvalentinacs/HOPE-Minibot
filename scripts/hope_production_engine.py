@@ -1512,6 +1512,17 @@ class HopeProductionEngine:
             logger.warning(f"⚠️ INVALID SYMBOL: {signal.symbol} not on exchange")
             return {"action": "SKIP", "reasons": ["INVALID_SYMBOL"]}
 
+        # === SAFETY CHECK 0.5: Heavy coins blacklist (bad for scalping) ===
+        try:
+            from config.heavy_coins_blacklist import is_allowed_for_live
+            allowed, reason = is_allowed_for_live(signal.symbol)
+            if not allowed:
+                self.cycle_stats["heavy_coins_blocked"] = self.cycle_stats.get("heavy_coins_blocked", 0) + 1
+                logger.warning(f"🐘 HEAVY COIN BLOCKED: {signal.symbol} - {reason}")
+                return {"action": "SKIP", "reasons": ["HEAVY_COIN", reason]}
+        except ImportError:
+            pass  # Blacklist not available, continue
+
         # === SAFETY CHECK 1: Circuit breaker ===
         if self.circuit_breaker.is_tripped():
             self.cycle_stats["circuit_breaker_blocks"] += 1

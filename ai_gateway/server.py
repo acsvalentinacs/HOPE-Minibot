@@ -207,6 +207,18 @@ def create_app() -> "FastAPI":
             bridge = get_price_bridge()
             if await bridge.start():
                 logger.info("PriceFeedBridge auto-started for outcome tracking")
+
+                # Auto-subscribe to SCALP_FRIENDLY_COINS for real-time tracking
+                try:
+                    from config.heavy_coins_blacklist import SCALP_FRIENDLY_COINS
+                    feed = bridge._get_feed()
+                    if feed and SCALP_FRIENDLY_COINS:
+                        await feed.subscribe(list(SCALP_FRIENDLY_COINS))
+                        logger.info(f"Auto-subscribed to {len(SCALP_FRIENDLY_COINS)} scalp-friendly coins")
+                except ImportError:
+                    logger.debug("heavy_coins_blacklist not available, skipping auto-subscribe")
+                except Exception as sub_err:
+                    logger.warning(f"Auto-subscribe to scalp coins failed: {sub_err}")
         except Exception as e:
             logger.warning(f"PriceFeedBridge auto-start failed: {e}")
 
