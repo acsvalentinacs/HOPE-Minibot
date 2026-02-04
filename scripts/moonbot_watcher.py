@@ -2,7 +2,9 @@
 # === AI SIGNATURE ===
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 13:40:00 UTC
-# Purpose: Auto-watch MoonBot log and register signals for tracking
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-02-04 23:45:00 UTC
+# Purpose: Auto-watch MoonBot log and register signals for tracking + forward to HOPE Core
 # === END SIGNATURE ===
 """
 MoonBot Log Watcher - Automatic Signal Registration
@@ -45,6 +47,18 @@ try:
 except ImportError:
     logger.error("requests not installed. Run: pip install requests")
     sys.exit(1)
+
+# Import SignalForwarder for HOPE Core v2.0 integration
+try:
+    from signal_forwarder import forward_signal, get_forwarder
+    SIGNAL_FORWARDER_AVAILABLE = True
+except ImportError:
+    try:
+        from scripts.signal_forwarder import forward_signal, get_forwarder
+        SIGNAL_FORWARDER_AVAILABLE = True
+    except ImportError:
+        SIGNAL_FORWARDER_AVAILABLE = False
+        logger.warning("SignalForwarder not available - signals will not be forwarded to HOPE Core")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -295,6 +309,14 @@ class MoonBotWatcher:
                             logger.info(f"Registered: {symbol} @ {signal['price']} -> {signal_id}")
                             self.stats["signals_registered"] += 1
                             registered.append(signal)
+
+                            # Forward to HOPE Core v2.0 for trading
+                            if SIGNAL_FORWARDER_AVAILABLE:
+                                fwd_result = forward_signal(signal)
+                                if fwd_result.get("success"):
+                                    logger.info(f"Forwarded: {symbol} -> {fwd_result.get('target')}")
+                                else:
+                                    logger.warning(f"Forward failed: {fwd_result.get('error')}")
 
                     self._record_signal(symbol)
 
