@@ -140,6 +140,18 @@ except ImportError:
     get_publisher = None
     logging.warning("Event Bus not available")
 
+# Import Event Journal for persistent event logging (P1 integration)
+try:
+    from core.events.journal_sink import init_journal, log_signal, log_decision, log_fill, log_error
+    _journal = init_journal()
+    JOURNAL_AVAILABLE = _journal is not None
+    if JOURNAL_AVAILABLE:
+        logging.info("Event Journal initialized")
+except ImportError:
+    JOURNAL_AVAILABLE = False
+    init_journal = None
+    logging.warning("Event Journal not available")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s'
@@ -748,6 +760,13 @@ class AutoTrader:
             except Exception as e:
                 logger.warning(f"Event publish failed: {e}")
 
+        # Log to Event Journal (persistent)
+        if JOURNAL_AVAILABLE and corr_id:
+            try:
+                log_signal(corr_id, symbol, raw_signal)
+            except Exception:
+                pass  # Non-critical, don't block trading
+
         self.signal_queue.append(raw_signal)
         self.stats["signals_received"] += 1
 
@@ -898,6 +917,13 @@ class AutoTrader:
                 )
             except Exception as e:
                 logger.warning(f"Decision event publish failed: {e}")
+
+        # Log to Event Journal (persistent)
+        if JOURNAL_AVAILABLE and corr_id:
+            try:
+                log_decision(corr_id, decision.symbol, decision.action, decision.confidence, decision.reasons[:5])
+            except Exception:
+                pass
 
         # Attach correlation_id to decision for downstream tracing
         decision._correlation_id = corr_id
