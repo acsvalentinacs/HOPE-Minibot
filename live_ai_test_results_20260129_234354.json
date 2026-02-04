@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-01-29T21:43:54.549935+00:00",
+  "stats": {
+    "signals_sent": 8,
+    "ai_decisions": {
+      "BUY": 0,
+      "SKIP": 0,
+      "WATCH": 0
+    },
+    "trades_executed": 8,
+    "errors": 0
+  },
+  "final_autotrader_status": {
+    "mode": "TESTNET",
+    "running": true,
+    "circuit_breaker_open": false,
+    "stats": {
+      "signals_received": 9,
+      "signals_traded": 6,
+      "signals_skipped": 1,
+      "positions_opened": 6,
+      "positions_closed": 1,
+      "total_pnl": -0.13440860215052283
+    },
+    "open_positions": 5,
+    "watched_symbols": [
+      "SYNUSDT",
+      "XVSUSDT",
+      "KITEUSDT",
+      "DUSKUSDT",
+      "ETHUSDT",
+      "SENTUSDT",
+      "ARPAUSDT"
+    ]
+  },
+  "results": [
+    {
+      "symbol": "KITEUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 1
+      }
+    },
+    {
+      "symbol": "DUSKUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 2
+      }
+    },
+    {
+      "symbol": "XVSUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 1
+      }
+    },
+    {
+      "symbol": "SENTUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 1
+      }
+    },
+    {
+      "symbol": "SYNUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 1
+      }
+    },
+    {
+      "symbol": "ARPAUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 1
+      }
+    },
+    {
+      "symbol": "BTCUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 1
+      }
+    },
+    {
+      "symbol": "ETHUSDT",
+      "traded": true,
+      "error": null,
+      "autotrader_response": {
+        "status": "queued",
+        "queue_size": 1
+      }
+    }
+  ]
+}
