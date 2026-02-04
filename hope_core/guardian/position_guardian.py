@@ -152,6 +152,10 @@ class PositionGuardian:
         self.eye_of_god = eye_of_god
         self.secret_sauce = secret_sauce
 
+        # Try to create Binance client if none provided
+        if not self.binance:
+            self.binance = self._create_binance_client()
+
         # State
         self.positions: Dict[str, Position] = {}
         self.btc_prices: List[Tuple[float, float]] = []  # (timestamp, price)
@@ -173,6 +177,46 @@ class PositionGuardian:
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
 
         log.info(f"[GUARDIAN] Initialized with config: hard_sl={self.config.hard_sl_pct}%, base_tp={self.config.base_tp_pct}%")
+        log.info(f"[GUARDIAN] Binance client: {type(self.binance)}")
+
+    def _create_binance_client(self) -> Optional[Any]:
+        """Try to create Binance client from environment."""
+        try:
+            # Try importing from scripts/order_executor.py
+            import sys
+            from pathlib import Path
+
+            # Add scripts to path if needed
+            scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+            if str(scripts_dir) not in sys.path:
+                sys.path.insert(0, str(scripts_dir))
+
+            from order_executor import BinanceClient, TradingMode
+
+            # Load API keys from environment
+            api_key = os.environ.get("BINANCE_API_KEY")
+            api_secret = os.environ.get("BINANCE_API_SECRET")
+
+            if api_key and api_secret:
+                mode_str = os.environ.get("TRADING_MODE", "LIVE").upper()
+                if mode_str == "TESTNET":
+                    mode = TradingMode.TESTNET
+                else:
+                    mode = TradingMode.LIVE
+
+                client = BinanceClient(api_key, api_secret, mode)
+                log.info(f"[GUARDIAN] Created BinanceClient in {mode.name} mode")
+                return client
+            else:
+                log.warning("[GUARDIAN] No BINANCE_API_KEY/SECRET in environment")
+                return None
+
+        except ImportError as e:
+            log.warning(f"[GUARDIAN] Could not import BinanceClient: {e}")
+            return None
+        except Exception as e:
+            log.error(f"[GUARDIAN] Failed to create BinanceClient: {e}")
+            return None
 
     # =========================================================================
     # POSITION TRACKING
@@ -207,32 +251,53 @@ class PositionGuardian:
 
     async def sync_positions_from_binance(self) -> int:
         """Sync positions from Binance account."""
+        log.info(f"[GUARDIAN] sync_positions_from_binance called, binance client: {type(self.binance)}")
+
         if not self.binance:
             log.warning("[GUARDIAN] No Binance client, skipping sync")
             return 0
 
         try:
             # Get account balances
+            log.info("[GUARDIAN] Fetching account balances...")
             account = await self._get_account_balances()
+            log.info(f"[GUARDIAN] Got {len(account)} assets from Binance")
 
             synced = 0
+            assets_checked = []
+
+            # Skip these non-tradeable or base currencies
+            SKIP_ASSETS = {
+                "USDT", "USDC", "BUSD", "BTC", "ETH",  # Base currencies
+                "AUD", "EUR", "GBP", "USD", "JPY", "RUB",  # Fiat
+                "LDUSDT", "LDBUSD", "LDBNB",  # Lending
+            }
+
             for asset, balance in account.items():
-                if asset in ("USDT", "USDC", "BUSD", "BTC", "ETH"):
-                    continue  # Skip base currencies
+                if asset in SKIP_ASSETS:
+                    continue  # Skip base/fiat currencies
 
                 quantity = float(balance.get("free", 0)) + float(balance.get("locked", 0))
                 if quantity <= 0:
                     continue
 
+                assets_checked.append(f"{asset}={quantity}")
                 symbol = f"{asset}USDT"
 
                 # Get current price
                 price = await self._get_price(symbol)
                 if not price:
+                    log.warning(f"[GUARDIAN] No price for {symbol}")
                     continue
 
                 value = quantity * price
-                if value < 1.0:  # Skip dust
+                log.info(f"[GUARDIAN] Asset {asset}: qty={quantity}, price={price}, value=${value:.2f}")
+
+                # Skip positions below Binance minimum notional (~$5-10 depending on pair)
+                # These can't be sold due to NOTIONAL filter
+                MIN_NOTIONAL = 5.0
+                if value < MIN_NOTIONAL:
+                    log.debug(f"[GUARDIAN] Skipping below-notional position: {symbol} value=${value:.2f} < ${MIN_NOTIONAL}")
                     continue
 
                 # Track if not already tracked
@@ -240,15 +305,93 @@ class PositionGuardian:
                     # Try to get entry price from trades
                     entry_price = await self._get_entry_price(symbol) or price
                     self.track_position(symbol, quantity, entry_price)
+                    log.info(f"[GUARDIAN] NEW POSITION: {symbol} qty={quantity} entry=${entry_price:.4f}")
 
                 synced += 1
 
-            log.info(f"[GUARDIAN] Synced {synced} positions from Binance")
+            log.info(f"[GUARDIAN] Synced {synced} positions from Binance. Assets checked: {assets_checked}")
+
+            # Load real entry prices from executor state
+            await self.load_entry_prices_from_executor()
+
             return synced
 
         except Exception as e:
-            log.error(f"[GUARDIAN] Sync error: {e}")
+            log.error(f"[GUARDIAN] Sync error: {e}", exc_info=True)
             return 0
+
+    async def load_entry_prices_from_executor(self) -> int:
+        """
+        Load real entry prices from executor_state_live.json.
+        This provides accurate PnL calculations based on actual trade entries.
+        """
+        updated = 0
+
+        # Try multiple possible paths
+        state_paths = [
+            Path("state/ai/executor_state_live.json"),
+            Path("/opt/hope/minibot/state/ai/executor_state_live.json"),
+            self.config.state_dir.parent.parent / "ai" / "executor_state_live.json",
+        ]
+
+        executor_state = None
+        for state_path in state_paths:
+            if state_path.exists():
+                try:
+                    with open(state_path, "r", encoding="utf-8") as f:
+                        executor_state = json.load(f)
+                    log.info(f"[GUARDIAN] Loaded executor state from {state_path}")
+                    break
+                except Exception as e:
+                    log.warning(f"[GUARDIAN] Failed to load {state_path}: {e}")
+
+        if not executor_state:
+            log.debug("[GUARDIAN] No executor state file found")
+            return 0
+
+        positions_data = executor_state.get("positions", {})
+
+        for pos_id, pos_data in positions_data.items():
+            if pos_data.get("status") != "OPEN":
+                continue
+
+            symbol = pos_data.get("symbol")
+            if symbol not in self.positions:
+                continue
+
+            entry_price = pos_data.get("entry_price")
+            entry_time_str = pos_data.get("entry_time")
+
+            if entry_price:
+                guardian_pos = self.positions[symbol]
+                old_entry = guardian_pos.entry_price
+
+                guardian_pos.entry_price = entry_price
+
+                # Parse entry time
+                if entry_time_str:
+                    try:
+                        from datetime import datetime
+                        entry_dt = datetime.fromisoformat(entry_time_str.replace('Z', '+00:00'))
+                        guardian_pos.entry_time = entry_dt.timestamp()
+                    except Exception:
+                        pass
+
+                # Recalculate PnL with real entry
+                if guardian_pos.current_price > 0:
+                    guardian_pos.update_price(guardian_pos.current_price)
+
+                log.info(
+                    f"[GUARDIAN] Updated {symbol}: entry ${old_entry:.6f} -> ${entry_price:.6f}, "
+                    f"PnL now {guardian_pos.pnl_pct:+.2f}%"
+                )
+                updated += 1
+
+        if updated > 0:
+            self._save_state()
+            log.info(f"[GUARDIAN] Updated {updated} positions with real entry prices")
+
+        return updated
 
     # =========================================================================
     # PRICE UPDATES
@@ -413,17 +556,62 @@ class PositionGuardian:
         return ((current_price - old_price) / old_price) * 100
 
     async def _get_ai_score(self, symbol: str) -> float:
-        """Get AI score from Eye of God."""
+        """
+        Get AI score from Eye of God V3.
+
+        IMPORTANT: Default is 0.5 (neutral/HOLD).
+        Only return < 0.3 if AI explicitly says SELL.
+        """
+        DEFAULT_SCORE = 0.5  # Neutral - don't close based on AI alone
+
         if not self.eye_of_god:
-            return 0.5
+            return DEFAULT_SCORE
 
         try:
-            # Call Eye of God for analysis
-            analysis = await self.eye_of_god.analyze_symbol(symbol)
-            return analysis.get("score", 0.5)
+            # EyeOfGodV3 uses decide() with a signal dict
+            if hasattr(self.eye_of_god, 'decide'):
+                # Create minimal signal for evaluation
+                pos = self.positions.get(symbol)
+                if not pos:
+                    return DEFAULT_SCORE
+
+                # Get current price change as delta
+                delta_pct = pos.pnl_pct if pos else 0
+
+                signal = {
+                    'symbol': symbol,
+                    'delta_pct': delta_pct,
+                    'timestamp': time.time(),
+                    'buys_per_sec': 0,  # Unknown in monitoring
+                    'vol_raise_pct': 0,
+                }
+
+                decision = self.eye_of_god.decide(signal)
+
+                # FinalDecision has confidence field
+                confidence = getattr(decision, 'confidence', DEFAULT_SCORE)
+                action = getattr(decision, 'action', 'SKIP')
+
+                # Only trust low confidence if AI explicitly decided
+                # If action is SKIP/invalid, use default score
+                if action in ('SKIP', 'HOLD', None, ''):
+                    return DEFAULT_SCORE
+
+                # If confidence is 0 but action is BUY, something is wrong
+                if confidence == 0 and action != 'SELL':
+                    return DEFAULT_SCORE
+
+                return max(confidence, 0.1)  # Never return exactly 0
+
+            # Fallback for other Eye of God versions
+            if hasattr(self.eye_of_god, 'analyze_symbol'):
+                analysis = await self.eye_of_god.analyze_symbol(symbol)
+                return analysis.get("score", DEFAULT_SCORE)
+
+            return DEFAULT_SCORE
         except Exception as e:
-            log.warning(f"[GUARDIAN] AI score error for {symbol}: {e}")
-            return 0.5
+            log.debug(f"[GUARDIAN] AI score unavailable for {symbol}: {e}")
+            return DEFAULT_SCORE
 
     # =========================================================================
     # EXECUTION
@@ -686,15 +874,39 @@ class PositionGuardian:
     async def _get_account_balances(self) -> Dict[str, Dict]:
         """Get account balances from Binance."""
         if not self.binance:
+            log.warning("[GUARDIAN] _get_account_balances: binance is None")
             return {}
 
         try:
+            log.info(f"[GUARDIAN] binance client type: {type(self.binance)}")
+            log.info(f"[GUARDIAN] binance has get_account: {hasattr(self.binance, 'get_account')}")
+
             if hasattr(self.binance, 'get_account'):
-                account = await self.binance.get_account()
-                return {b['asset']: b for b in account.get('balances', [])}
+                result = self.binance.get_account()
+                log.info(f"[GUARDIAN] get_account() returned type: {type(result)}")
+
+                # Handle both sync and async clients
+                if hasattr(result, '__await__'):
+                    log.info("[GUARDIAN] Awaiting async result...")
+                    account = await result
+                else:
+                    account = result
+
+                balances = account.get('balances', [])
+                log.info(f"[GUARDIAN] Got {len(balances)} balances from account")
+
+                # Filter non-zero balances for logging
+                non_zero = [b for b in balances if float(b.get('free', 0)) > 0 or float(b.get('locked', 0)) > 0]
+                log.info(f"[GUARDIAN] Non-zero balances: {len(non_zero)}")
+                for b in non_zero[:10]:  # Log first 10
+                    log.info(f"[GUARDIAN]   {b['asset']}: free={b.get('free')}, locked={b.get('locked')}")
+
+                return {b['asset']: b for b in balances}
+
+            log.warning("[GUARDIAN] binance client has no get_account method")
             return {}
         except Exception as e:
-            log.error(f"[GUARDIAN] Balance fetch error: {e}")
+            log.error(f"[GUARDIAN] Balance fetch error: {e}", exc_info=True)
             return {}
 
     async def _get_price(self, symbol: str) -> Optional[float]:
@@ -703,11 +915,23 @@ class PositionGuardian:
             return None
 
         try:
-            if hasattr(self.binance, 'get_symbol_ticker'):
-                ticker = await self.binance.get_symbol_ticker(symbol=symbol)
+            # Try different method names (python-binance vs custom BinanceClient)
+            if hasattr(self.binance, 'get_price'):
+                # Custom BinanceClient from order_executor.py
+                price = self.binance.get_price(symbol)
+                if price and price > 0:
+                    return price
+            elif hasattr(self.binance, 'get_symbol_ticker'):
+                # python-binance library
+                result = self.binance.get_symbol_ticker(symbol=symbol)
+                if hasattr(result, '__await__'):
+                    ticker = await result
+                else:
+                    ticker = result
                 return float(ticker.get('price', 0))
             return None
-        except Exception:
+        except Exception as e:
+            log.warning(f"[GUARDIAN] Price fetch error for {symbol}: {e}")
             return None
 
     async def _get_prices_batch(self, symbols: List[str]) -> Dict[str, float]:
@@ -716,9 +940,24 @@ class PositionGuardian:
             return {}
 
         try:
+            # Try get_all_tickers for python-binance
             if hasattr(self.binance, 'get_all_tickers'):
-                tickers = await self.binance.get_all_tickers()
+                result = self.binance.get_all_tickers()
+                if hasattr(result, '__await__'):
+                    tickers = await result
+                else:
+                    tickers = result
                 return {t['symbol']: float(t['price']) for t in tickers if t['symbol'] in symbols}
+
+            # Fallback to individual price fetches for custom BinanceClient
+            if hasattr(self.binance, 'get_price'):
+                prices = {}
+                for symbol in symbols:
+                    price = self.binance.get_price(symbol)
+                    if price and price > 0:
+                        prices[symbol] = price
+                return prices
+
             return {}
         except Exception as e:
             log.error(f"[GUARDIAN] Batch price error: {e}")
@@ -730,13 +969,22 @@ class PositionGuardian:
             return None
 
         try:
+            # python-binance library
             if hasattr(self.binance, 'get_my_trades'):
-                trades = await self.binance.get_my_trades(symbol=symbol, limit=10)
+                result = self.binance.get_my_trades(symbol=symbol, limit=10)
+                if hasattr(result, '__await__'):
+                    trades = await result
+                else:
+                    trades = result
                 buys = [t for t in trades if t.get('isBuyer')]
                 if buys:
                     return float(buys[-1]['price'])
+
+            # Custom BinanceClient - no trade history, use current price
+            # Entry price will be set to current price when syncing
             return None
-        except Exception:
+        except Exception as e:
+            log.debug(f"[GUARDIAN] Entry price fetch error for {symbol}: {e}")
             return None
 
     async def _market_sell(self, symbol: str, quantity: float) -> Optional[Dict]:
@@ -746,15 +994,48 @@ class PositionGuardian:
             return {"orderId": "DRY_RUN", "status": "FILLED"}
 
         try:
+            # Custom BinanceClient from order_executor.py
+            if hasattr(self.binance, 'place_order'):
+                # Import enums if available
+                try:
+                    from order_executor import OrderSide, OrderType
+                    result = self.binance.place_order(
+                        symbol=symbol,
+                        side=OrderSide.SELL,
+                        order_type=OrderType.MARKET,
+                        quantity=quantity,
+                    )
+                except ImportError:
+                    # Fallback without enums
+                    result = self.binance.place_order(
+                        symbol=symbol,
+                        side="SELL",
+                        order_type="MARKET",
+                        quantity=quantity,
+                    )
+
+                if result and "error" not in result:
+                    log.info(f"[GUARDIAN] Sold {symbol}: orderId={result.get('orderId')}")
+                    return result
+                else:
+                    log.error(f"[GUARDIAN] Sell failed for {symbol}: {result}")
+                    return None
+
+            # python-binance library
             if hasattr(self.binance, 'create_order'):
-                order = await self.binance.create_order(
+                result = self.binance.create_order(
                     symbol=symbol,
                     side="SELL",
                     type="MARKET",
                     quantity=quantity,
                 )
+                if hasattr(result, '__await__'):
+                    order = await result
+                else:
+                    order = result
                 log.info(f"[GUARDIAN] Sold {symbol}: orderId={order.get('orderId')}")
                 return order
+
             return None
         except Exception as e:
             log.error(f"[GUARDIAN] Sell error for {symbol}: {e}")
@@ -850,7 +1131,36 @@ def create_api_app(guardian: PositionGuardian):
     @app.post("/sync")
     async def sync():
         count = await guardian.sync_positions_from_binance()
-        return {"synced": count}
+        return {"synced": count, "positions": len(guardian.positions)}
+
+    @app.get("/debug")
+    async def debug():
+        """Debug endpoint to check binance client status."""
+        debug_info = {
+            "binance_client_type": str(type(guardian.binance)),
+            "binance_client_present": guardian.binance is not None,
+            "positions_count": len(guardian.positions),
+            "running": guardian._running,
+        }
+
+        if guardian.binance and hasattr(guardian.binance, 'get_account'):
+            try:
+                account = guardian.binance.get_account()
+                if "error" not in account:
+                    balances = account.get("balances", [])
+                    non_zero = [
+                        {"asset": b["asset"], "free": b["free"], "locked": b["locked"]}
+                        for b in balances
+                        if float(b.get("free", 0)) > 0 or float(b.get("locked", 0)) > 0
+                    ]
+                    debug_info["balances_count"] = len(balances)
+                    debug_info["non_zero_balances"] = non_zero[:20]  # First 20
+                else:
+                    debug_info["account_error"] = account
+            except Exception as e:
+                debug_info["account_error"] = str(e)
+
+        return debug_info
 
     @app.post("/close/{symbol}")
     async def close(symbol: str):

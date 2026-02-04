@@ -3255,11 +3255,73 @@ class HopeMiniBot:
                 async with aiohttp.ClientSession() as session:
                     async with session.post("http://127.0.0.1:8201/api/guardian/sync", timeout=10) as resp:
                         if resp.status == 200:
-                            data = await resp.json()
-                            await self._reply(update, f"✅ Synced {data.get('synced', 0)} positions")
+                            result = await resp.json()
+                            await self._reply(update, f"✅ Synced {result.get('synced', 0)} positions")
                         else:
                             await self._reply(update, "❌ Sync failed")
                 await self.cmd_guardian(update, context)
+            except Exception as e:
+                await self._reply(update, f"❌ Error: {e}")
+            return
+        if data == "guardian_start":
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("http://127.0.0.1:8201/api/guardian/start", timeout=10) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            status = result.get('status', 'unknown')
+                            if status == 'started':
+                                await self._reply(update, f"▶️ Guardian started! Tracking {result.get('positions', 0)} positions")
+                            elif status == 'already_running':
+                                await self._reply(update, "ℹ️ Guardian already running")
+                            else:
+                                await self._reply(update, f"⚠️ Status: {status}")
+                        else:
+                            await self._reply(update, "❌ Start failed")
+                await self.cmd_guardian(update, context)
+            except Exception as e:
+                await self._reply(update, f"❌ Error: {e}")
+            return
+        if data == "guardian_stop":
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("http://127.0.0.1:8201/api/guardian/stop", timeout=10) as resp:
+                        if resp.status == 200:
+                            await self._reply(update, "⏹️ Guardian stopped")
+                        else:
+                            await self._reply(update, "❌ Stop failed")
+                await self.cmd_guardian(update, context)
+            except Exception as e:
+                await self._reply(update, f"❌ Error: {e}")
+            return
+        if data == "guardian_run_once":
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("http://127.0.0.1:8201/api/guardian/run-once", timeout=30) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            checked = result.get('checked', 0)
+                            closed = result.get('closed', 0)
+                            positions = result.get('positions', [])
+
+                            lines = [f"🧪 <b>Guardian Cycle Complete</b>"]
+                            lines.append(f"Checked: {checked} | Closed: {closed}")
+                            lines.append("")
+                            for p in positions:
+                                emoji = "🟢" if p.get('pnl_pct', 0) >= 0 else "🔴"
+                                decision = p.get('decision', 'HOLD')
+                                reason = p.get('reason')
+                                line = f"{emoji} {p.get('symbol')}: {p.get('pnl_pct', 0):+.2f}% → {decision}"
+                                if reason:
+                                    line += f" ({reason})"
+                                lines.append(line)
+
+                            await self._reply(update, "\n".join(lines), parse_mode="HTML")
+                        else:
+                            await self._reply(update, "❌ Run-once failed")
             except Exception as e:
                 await self._reply(update, f"❌ Error: {e}")
             return
@@ -3939,12 +4001,17 @@ class HopeMiniBot:
                     if resp.status == 200:
                         data = await resp.json()
 
+                        running = data.get("running", False)
                         stats = data.get("stats", {})
                         config = data.get("config", {})
                         positions = data.get("positions_detail", [])
 
+                        # Running status
+                        status_icon = "🟢 RUNNING" if running else "🔴 STOPPED"
+
                         lines = [
                             "🛡️ <b>POSITION GUARDIAN</b>",
+                            f"Status: {status_icon}",
                             "",
                             f'⚙️ <b>Config:</b>',
                             f'  Hard SL: {config.get("hard_sl", -2)}%',
@@ -3961,21 +4028,43 @@ class HopeMiniBot:
                         ]
 
                         if positions:
-                            lines.append("📈 <b>Active Positions:</b>")
+                            lines.append(f"📈 <b>Active Positions ({len(positions)}):</b>")
+                            total_value = 0
+                            total_pnl_usd = 0
                             for pos in positions:
                                 pnl = pos.get("pnl_pct", 0)
+                                value = pos.get("value_usd", 0)
+                                entry = pos.get("entry_price", 0)
+                                current = pos.get("current_price", 0)
                                 emoji = "🟢" if pnl >= 0 else "🔴"
+                                pnl_usd = value * pnl / 100 if pnl else 0
+                                total_value += value
+                                total_pnl_usd += pnl_usd
                                 lines.append(
-                                    f'  {emoji} {pos.get("symbol")}: {pnl:+.2f}% '
-                                    f'(${pos.get("value_usd", 0):.2f})'
+                                    f'  {emoji} <b>{pos.get("symbol")}</b>: {pnl:+.2f}%'
                                 )
+                                lines.append(
+                                    f'      Entry: ${entry:.4f} → ${current:.4f} (${value:.2f})'
+                                )
+                            lines.append("")
+                            lines.append(f"💰 <b>Total:</b> ${total_value:.2f} ({total_pnl_usd:+.2f})")
                         else:
                             lines.append("<i>No positions tracked</i>")
 
+                        # Buttons: Start/Stop + Sync + Refresh + Run Once
+                        if running:
+                            start_stop_btn = InlineKeyboardButton("⏹️ Stop", callback_data="guardian_stop")
+                        else:
+                            start_stop_btn = InlineKeyboardButton("▶️ Start", callback_data="guardian_start")
+
                         keyboard = InlineKeyboardMarkup([
                             [
-                                InlineKeyboardButton("🔃 Refresh", callback_data="guardian_refresh"),
+                                start_stop_btn,
                                 InlineKeyboardButton("🔄 Sync", callback_data="guardian_sync"),
+                            ],
+                            [
+                                InlineKeyboardButton("🔃 Refresh", callback_data="guardian_refresh"),
+                                InlineKeyboardButton("🧪 Run Once", callback_data="guardian_run_once"),
                             ],
                         ])
                         await self._reply(update, "\n".join(lines), markup=keyboard, parse_mode="HTML")

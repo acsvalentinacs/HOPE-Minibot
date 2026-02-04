@@ -220,6 +220,51 @@ class HopeCoreAPIServer:
                 )
                 return {"success": success}
             return {"error": "Position Guardian not available"}
+
+        @self.app.post("/api/guardian/start")
+        async def start_guardian():
+            """Start the Position Guardian monitoring loop."""
+            if hasattr(self.core, 'position_guardian') and self.core.position_guardian:
+                guardian = self.core.position_guardian
+                if guardian._running:
+                    return {"status": "already_running", "positions": len(guardian.positions)}
+
+                # Start in background task
+                import asyncio
+                asyncio.create_task(guardian.start())
+                return {"status": "started", "positions": len(guardian.positions)}
+            return {"error": "Position Guardian not available"}
+
+        @self.app.post("/api/guardian/stop")
+        async def stop_guardian():
+            """Stop the Position Guardian monitoring loop."""
+            if hasattr(self.core, 'position_guardian') and self.core.position_guardian:
+                guardian = self.core.position_guardian
+                guardian.stop()
+                return {"status": "stopped", "positions": len(guardian.positions)}
+            return {"error": "Position Guardian not available"}
+
+        @self.app.post("/api/guardian/run-once")
+        async def run_guardian_once():
+            """Run one guardian monitoring cycle (for testing)."""
+            if hasattr(self.core, 'position_guardian') and self.core.position_guardian:
+                guardian = self.core.position_guardian
+                results = await guardian.run_once()
+                return {
+                    "checked": results["checked"],
+                    "closed": results["closed"],
+                    "positions": [
+                        {
+                            "symbol": p["symbol"],
+                            "pnl_pct": round(p["pnl_pct"], 2),
+                            "decision": p["decision"],
+                            "reason": p.get("reason"),
+                        }
+                        for p in results["positions"]
+                    ],
+                }
+            return {"error": "Position Guardian not available"}
+
         @self.app.get("/api/health")
         async def get_health():
             """Health check endpoint (P0)."""

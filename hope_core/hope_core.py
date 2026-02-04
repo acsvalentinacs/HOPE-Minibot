@@ -306,14 +306,19 @@ class HopeCore:
                 binance_client = None
                 if self.order_executor and hasattr(self.order_executor, 'client'):
                     binance_client = self.order_executor.client
-                
+                    print(f"[HOPE CORE] Guardian will use binance client: {type(binance_client)}")
+                else:
+                    print(f"[HOPE CORE] WARNING: No binance client! order_executor={self.order_executor}")
+                    if self.order_executor:
+                        print(f"[HOPE CORE] order_executor attrs: {[a for a in dir(self.order_executor) if not a.startswith('_')]}")
+
                 self.position_guardian = PositionGuardian(
                     config=guardian_config,
                     binance_client=binance_client,
                     eye_of_god=self.eye_of_god,
                     secret_sauce=self.secret_sauce,
                 )
-                print("[HOPE CORE] Position Guardian initialized")
+                print(f"[HOPE CORE] Position Guardian initialized (binance={binance_client is not None})")
         except Exception as e:
             print(f"[HOPE CORE] Position Guardian init failed: {e}")
     
