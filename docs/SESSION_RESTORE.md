@@ -1,10 +1,23 @@
 # HOPE AI Trading System - Session Restore
 
-<!-- AI SIGNATURE: Created by Claude (opus-4.5) at 2026-01-31 14:30:00 UTC -->
+<!-- AI SIGNATURE: Modified by Claude (opus-4.5) at 2026-02-04 09:30:00 UTC -->
 
 ## КРИТИЧЕСКАЯ ИНФОРМАЦИЯ ДЛЯ CLAUDE
 
 При начале новой сессии — ПРОЧИТАЙ ЭТОТ ФАЙЛ ПЕРВЫМ!
+
+---
+
+## 🚀 БЫСТРЫЙ СТАРТ (копируй в новую сессию)
+
+```
+Прочитай docs/SESSION_RESTORE.md и CLAUDE.md. Затем выполни команды проверки VPS:
+
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "curl -s http://127.0.0.1:8200/api/health | python3 -m json.tool"
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "journalctl -u hope-autotrader -n 20 --no-pager"
+git log --oneline -10
+git status
+```
 
 ---
 
@@ -15,182 +28,222 @@
 Владелец:     Валентин (kirillDev - это username Windows, не имя)
 Статус:       LIVE PRODUCTION
 Биржа:        Binance (РЕАЛЬНЫЕ ДЕНЬГИ)
-Капитал:      $100
+Капитал:      ~$100
 Режим:        24/7 автоматическая торговля
 ```
 
 ---
 
-## 2. ПУТИ (КРИТИЧЕСКИ ВАЖНО)
+## 2. VPS (ОСНОВНОЙ СЕРВЕР)
 
 ```
-КОРЕНЬ ПРОЕКТА:    C:\Users\kirillDev\Desktop\TradingBot\minibot
-SECRETS (.env):    C:\secrets\hope.env
-STATE FILES:       C:\Users\kirillDev\Desktop\TradingBot\minibot\state\
-CONFIG:            C:\Users\kirillDev\Desktop\TradingBot\minibot\config\
-SCRIPTS:           C:\Users\kirillDev\Desktop\TradingBot\minibot\scripts\
-CORE:              C:\Users\kirillDev\Desktop\TradingBot\minibot\core\
-АРХИВ:             C:\Users\kirillDev\Desktop\TradingBot\Старые файлы от проекта НОРЕ 2025-11-23
+IP:           46.62.232.161 (Hetzner)
+SSH ключ:     ~/.ssh/id_ed25519_hope
+User:         root
+Проект:       /opt/hope/minibot
+Python:       /opt/hope/venv/bin/python
 ```
 
-**ПЕРЕД ЛЮБОЙ КОМАНДОЙ:**
-```powershell
-cd C:\Users\kirillDev\Desktop\TradingBot\minibot
+**SSH подключение:**
+```bash
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161
+```
+
+**Сервисы systemd:**
+| Сервис | Порт | Статус |
+|--------|------|--------|
+| hope-autotrader | 8200 | ✅ Active |
+| hope-core | 8100 | ✅ Active |
+| hope-signal-loop | - | ✅ Active |
+| hope-watchdog | - | ✅ Active |
+| hope-tgbot | - | ✅ Active |
+| hope-dashboard | 8080 | ❌ Failed |
+
+---
+
+## 3. ПУТИ
+
+### Локальный (Windows)
+```
+КОРЕНЬ:        C:\Users\kirillDev\Desktop\TradingBot\minibot
+SECRETS:       C:\secrets\hope.env
+STATE:         minibot\state\
+SCRIPTS:       minibot\scripts\
+```
+
+### VPS (Linux)
+```
+КОРЕНЬ:        /opt/hope/minibot
+SECRETS:       /opt/hope/secrets/hope.env
+VENV:          /opt/hope/venv
 ```
 
 ---
 
-## 3. КЛЮЧЕВЫЕ ФАЙЛЫ
+## 4. КЛЮЧЕВЫЕ ФАЙЛЫ
 
-### Конфигурация
-| Файл | Назначение |
-|------|------------|
-| `config/scalping_100.json` | Настройки скальпинга для $100 |
-| `data/AllowList.txt` | Разрешённые символы (старый формат) |
-| `state/allowlist/hot_list.json` | HOT_LIST для pump-сигналов |
-| `state/hot_list.json` | Горячий список монет |
-
-### Основные скрипты
 | Файл | Порт | Назначение |
 |------|------|------------|
-| `scripts/autotrader.py` | 8200 | Исполнение сделок |
-| `scripts/pricefeed_bridge.py` | - | Получение цен с Binance |
-| `scripts/pricefeed_gateway.py` | 8100 | HTTP gateway для цен |
-| `scripts/momentum_trader.py` | - | Momentum-сигналы |
-| `scripts/eye_of_god_v3.py` | - | Классификация сигналов |
-| `scripts/position_watchdog.py` | - | Мониторинг позиций |
-| `scripts/protocol_checker.py` | - | Проверка протоколов + автокорректировка позиций |
-
-### Core модули
-| Файл | Назначение |
-|------|------------|
-| `core/unified_allowlist.py` | Трёхслойный AllowList (CORE+DYNAMIC+HOT) |
-| `core/io_atomic.py` | Атомарная запись файлов |
-| `core/secrets.py` | Загрузка секретов |
+| `scripts/autotrader.py` | 8200 | Главный торговый loop, API |
+| `scripts/eye_of_god_v3.py` | - | AI Decision Engine (two-chamber) |
+| `scripts/order_executor.py` | - | Binance order execution |
+| `scripts/position_watchdog.py` | - | Position monitoring |
+| `scripts/auto_signal_loop.py` | - | Signal generator |
+| `scripts/pricefeed_gateway.py` | 8100 | Price feed HTTP gateway |
 
 ---
 
-## 4. АРХИТЕКТУРА
+## 5. АРХИТЕКТУРА
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     HOPE TRADING SYSTEM                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  [Binance API] ──► [pricefeed_bridge] ──► state/ai/pricefeed.json
-│                           │                                 │
-│                           ▼                                 │
-│                   [pricefeed_gateway:8100]                  │
-│                           │                                 │
-│                           ▼                                 │
-│  [momentum_trader] ──► [unified_allowlist] ──► HOT_LIST     │
-│         │                                                   │
-│         ▼                                                   │
-│  [AutoTrader:8200] ◄── [eye_of_god_v3] ◄── Сигналы          │
-│         │                                                   │
-│         ▼                                                   │
-│  [Binance] ──► Реальные сделки                              │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    HOPE TRADING SYSTEM                           │
+├─────────────────────────────────────────────────────────────────┤
+│  LOCAL (Windows)           │  VPS (46.62.232.161)               │
+│  ├── minibot/              │  ├── /opt/hope/minibot/            │
+│  │   ├── scripts/          │  │   ├── scripts/autotrader.py     │
+│  │   ├── core/             │  │   ├── scripts/eye_of_god_v3.py  │
+│  │   └── docs/             │  │   └── scripts/order_executor.py │
+│                            │                                     │
+│  SSH Key:                  │  Services:                          │
+│  ~/.ssh/id_ed25519_hope    │  ├── hope-autotrader (8200)        │
+│                            │  ├── hope-core (8100)              │
+│                            │  ├── hope-signal-loop              │
+│                            │  └── hope-watchdog                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. ТРЁХСЛОЙНЫЙ ALLOWLIST
+## 6. ТЕКУЩИЕ THRESHOLDS
 
-```
-UNIFIED ALLOWLIST = CORE_LIST + DYNAMIC_LIST + HOT_LIST
+```python
+# eye_of_god_v3.py (2026-02-04)
+MIN_CONFIDENCE_TO_TRADE = 0.50      # Regular signals
+MIN_CONFIDENCE_AI_OVERRIDE = 0.35   # AI override signals
+MIN_CONFIDENCE_MOMENTUM = 0.25      # Momentum signals
 
-CORE_LIST (8 символов):
-  BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX
-  - Постоянный список
-  - 100% размер позиции
-
-DYNAMIC_LIST (до 20 символов):
-  - Топ по объёму ($50M+ 24h)
-  - Обновляется каждый час
-  - 100% размер позиции
-
-HOT_LIST (до 10 символов):
-  - Pump-сигналы и momentum
-  - TTL: 15 минут
-  - 50% размер позиции
+# autotrader.py
+min_confidence: float = 0.35        # Fallback processor
 ```
 
 ---
 
-## 6. ТЕКУЩИЕ НАСТРОЙКИ ($100)
+## 7. КОМАНДЫ ПРОВЕРКИ
 
-```json
-{
-  "capital": 100,
-  "position_size": "$10-25 (по confidence)",
-  "max_positions": 2,
-  "max_exposure": "$50 (50%)",
-  "stop_loss": "3%",
-  "take_profit": "6%",
-  "fees": {
-    "taker": "0.10%",
-    "round_trip": "0.20%"
-  }
-}
+### VPS статус
+```bash
+# Health check (P0 endpoint)
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "curl -s http://127.0.0.1:8200/api/health | python3 -m json.tool"
+
+# Trading status
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "curl -s http://127.0.0.1:8200/status | python3 -m json.tool"
+
+# Логи (последние 30 строк)
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "journalctl -u hope-autotrader -n 30 --no-pager"
+
+# Логи в реальном времени
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "journalctl -u hope-autotrader -f"
+
+# Статус всех сервисов
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "systemctl list-units | grep hope"
 ```
 
----
+### Локальная проверка
+```bash
+# Git история
+git log --oneline -15
 
-## 7. ПРОВЕРКА СТАТУСА
+# Незакоммиченные изменения
+git status && git diff --stat
 
-```powershell
-# Статус AutoTrader
-curl http://127.0.0.1:8200/status
-
-# Статус портов
-netstat -an | findstr ":8100 :8200"
-
-# Проверка синтаксиса
+# Синтаксис
 python -m py_compile scripts/autotrader.py
-
-# Git статус
-git status
 ```
 
 ---
 
-## 8. ЗАПУСК СИСТЕМЫ
+## 8. ДЕПЛОЙ НА VPS
 
-```powershell
-cd C:\Users\kirillDev\Desktop\TradingBot\minibot
+```bash
+# 1. Скопировать файл
+scp -i ~/.ssh/id_ed25519_hope scripts/autotrader.py root@46.62.232.161:/opt/hope/minibot/scripts/
 
-# 1. Pricefeed Gateway
-Start-Process python -ArgumentList "scripts/pricefeed_gateway.py"
+# 2. Перезапустить сервис
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "systemctl restart hope-autotrader"
 
-# 2. AutoTrader (LIVE MODE - REAL MONEY!)
-Start-Process python -ArgumentList "scripts/autotrader.py","--mode","LIVE","--yes","--confirm"
-
-# 3. Momentum Trader (опционально)
-python scripts/momentum_trader.py --once
-```
-
-**ВАЖНО**: AutoTrader теперь:
-- Синхронизирует состояние с Binance каждую минуту
-- Запускает Protocol Checker каждые 5 минут
-- Автоматически корректирует размеры позиций при изменении баланса
-
-### Protocol Checker (отдельный запуск):
-```powershell
-# Одна проверка
-python scripts/protocol_checker.py --once
-
-# Демон (каждые 5 мин)
-python scripts/protocol_checker.py --daemon
-
-# Пересчитать позиции
-python scripts/protocol_checker.py --recalc
+# 3. Проверить логи
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "journalctl -u hope-autotrader -n 20 --no-pager"
 ```
 
 ---
 
-## 9. ПРАВИЛА (из CLAUDE.md)
+## 9. БЫСТРЫЕ ФИКСЫ
+
+### Сбросить circuit breaker
+```bash
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "curl -X POST http://127.0.0.1:8200/circuit-breaker/reset"
+```
+
+### Сбросить daily trades
+```bash
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "cd /opt/hope/minibot && python3 -c \"
+import json
+from pathlib import Path
+state_file = Path('state/ai/autotrader/state.json')
+state = json.loads(state_file.read_text())
+state['daily_trades'] = 0
+state_file.write_text(json.dumps(state, indent=2))
+print('Daily trades reset to 0')
+\""
+```
+
+### Перезапустить все HOPE сервисы
+```bash
+ssh -i ~/.ssh/id_ed25519_hope root@46.62.232.161 "systemctl restart hope-autotrader hope-signal-loop hope-watchdog"
+```
+
+---
+
+## 10. ИСТОРИЯ ИЗМЕНЕНИЙ
+
+### 2026-02-04
+- ✅ Health endpoint `/api/health` (P0)
+- ✅ Startup validation `_validate_startup()` (P0)
+- ✅ Event Bus heartbeat `_emit_heartbeat()` (P0)
+- ✅ EyeOfGodV3 import fix
+- ✅ Lowered confidence thresholds
+
+### 2026-02-02
+- CRITICAL FIX: AutoTrader синхронизирует позиции с Binance
+- Добавлен `_sync_with_binance()` - при старте и каждую минуту
+
+### 2026-01-31
+- Интеграция momentum_trader с unified_allowlist
+
+---
+
+## 11. ЗАДАЧИ (TODO)
+
+### ✅ ВЫПОЛНЕНО (P0)
+- [x] Health endpoint `/api/health`
+- [x] Startup validation
+- [x] Event Bus heartbeat
+- [x] EyeOfGodV3 two-chamber decisions
+
+### 🔄 В РАБОТЕ (P1)
+- [ ] Guardian watchdog (независимый процесс)
+- [ ] Telegram alerts при критических событиях
+- [ ] Консолидация процессов в единое "облако"
+
+### 📋 BACKLOG (P2)
+- [ ] Event Journal с correlation IDs
+- [ ] ML model training (100+ trades)
+- [ ] Backtest validation
+
+---
+
+## 12. ПРАВИЛА (из CLAUDE.md)
 
 1. **FAIL-CLOSED**: сомнение = безопасность
 2. **HONESTY CONTRACT**: никаких фейков, только реальные данные
@@ -201,32 +254,5 @@ python scripts/protocol_checker.py --recalc
 
 ---
 
-## 10. ПОСЛЕДНИЕ ИЗМЕНЕНИЯ
-
-**2026-02-02:**
-- CRITICAL FIX: AutoTrader теперь синхронизирует позиции с Binance
-- Добавлен _sync_with_binance() - вызывается при старте и каждую минуту
-- Исправлена проблема с фейковыми/устаревшими позициями в state
-- Добавлен IGNORE_ASSETS фильтр (SLF, USDT, USDC, etc.)
-
-**2026-01-31:**
-- Интеграция momentum_trader.py с unified_allowlist
-- Символы автоматически добавляются в HOT_LIST при momentum-сигнале
-- Исправлена проблема с STRAXUSDT (не был в AllowList)
-
----
-
-## 11. КОМАНДА ВОССТАНОВЛЕНИЯ
-
-Скопируй и вставь в начале новой сессии:
-
-```
-Прочитай файл docs/SESSION_RESTORE.md и CLAUDE.md для восстановления контекста проекта HOPE. После прочтения:
-1. Подтверди что понял структуру проекта
-2. Проверь статус системы (порты 8100, 8200)
-3. Покажи текущий PnL и открытые позиции
-```
-
----
-
 **Этот файл — точка входа для любой новой сессии Claude.**
+*Last updated: 2026-02-04 09:30 UTC*
