@@ -61,6 +61,21 @@ except ImportError:
         EventJournal, EventType, EventLevel, Event,
         create_state_change_event, create_heartbeat_event
     )
+except ImportError:
+    from journal.event_journal import (
+        EventJournal, EventType, EventLevel, Event,
+        create_state_change_event, create_heartbeat_event
+    )
+
+
+# Secret Sauce
+try:
+    from hope_core.secret_sauce import SecretSauce
+except ImportError:
+    try:
+        from secret_sauce import SecretSauce
+    except ImportError:
+        SecretSauce = None
 
 
 # =============================================================================
@@ -165,7 +180,13 @@ class HopeCore:
     def _init_journal(self):
         """Initialize Event Journal."""
         self.journal = EventJournal(self.config.journal_path)
-        
+
+        # Secret Sauce - Advanced Trading Intelligence
+        if SecretSauce:
+            self.secret_sauce = SecretSauce(self.config.state_dir / "secret_sauce")
+        else:
+            self.secret_sauce = None
+            print(f"[GUARDIAN] Init failed: {e}")
         # Log startup
         self.journal.append(
             EventType.STARTUP,
@@ -258,6 +279,43 @@ class HopeCore:
                     print(f"[HOPE CORE] Mock Order Executor loaded ({self.config.mode})")
                 except ImportError as e:
                     print(f"[HOPE CORE] Order Executor not available: {e}")
+        
+        # Initialize Position Guardian (after Order Executor)
+        self.position_guardian = None
+        try:
+            import importlib.util
+            from pathlib import Path
+            
+            guardian_file = Path(__file__).parent / "guardian" / "position_guardian.py"
+            if guardian_file.exists():
+                spec = importlib.util.spec_from_file_location("position_guardian", guardian_file)
+                guardian_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(guardian_module)
+                
+                PositionGuardian = guardian_module.PositionGuardian
+                GuardianConfig = guardian_module.GuardianConfig
+                
+                guardian_config = GuardianConfig(
+                    state_dir=self.config.state_dir / "guardian",
+                    enable_ai=True,
+                    enable_trailing=True,
+                    hard_sl_pct=-2.0,
+                    base_tp_pct=1.5,
+                )
+                
+                binance_client = None
+                if self.order_executor and hasattr(self.order_executor, 'client'):
+                    binance_client = self.order_executor.client
+                
+                self.position_guardian = PositionGuardian(
+                    config=guardian_config,
+                    binance_client=binance_client,
+                    eye_of_god=self.eye_of_god,
+                    secret_sauce=self.secret_sauce,
+                )
+                print("[HOPE CORE] Position Guardian initialized")
+        except Exception as e:
+            print(f"[HOPE CORE] Position Guardian init failed: {e}")
     
     # =========================================================================
     # CALLBACKS
@@ -459,6 +517,17 @@ class HopeCore:
         
         # Fallback: simple confidence check
         confidence = score / 100.0
+        # Secret Sauce pre-check
+        if self.secret_sauce:
+            sauce_ok, sauce_reason, sauce_meta = self.secret_sauce.should_trade(symbol, confidence)
+            if not sauce_ok:
+                sm.transition(
+                    TradingState.IDLE,
+                    reason=f"Secret Sauce: {sauce_reason}",
+                    correlation_id=command.correlation_id,
+                )
+                return {"decision": "REJECT", "reason": f"SECRET_SAUCE: {sauce_reason}"}
+        
         if confidence >= self.config.min_confidence:
             sm.transition(
                 TradingState.ORDERING,
@@ -770,7 +839,7 @@ class HopeCore:
             try:
                 # Get actual positions from Binance
                 # This would need implementation in order_executor
-                pass
+                print(f"[GUARDIAN] Init failed: {e}")
             except Exception as e:
                 return {"status": "ERROR", "error": str(e)}
         
@@ -796,6 +865,9 @@ class HopeCore:
         }
     
     async def _handle_heartbeat(self, command: Command, ctx: Dict[str, Any]) -> Dict[str, Any]:
+        # Update Secret Sauce heartbeat
+        if self.secret_sauce:
+            self.secret_sauce.heartbeat()
         """Handle HEARTBEAT command."""
         import psutil
         

@@ -184,6 +184,42 @@ class HopeCoreAPIServer:
                 self.core.secret_sauce.learner._save_state()
                 return {"success": True, "message": "Learning data cleared"}
             return {"success": False, "error": "Secret Sauce not available"}
+        
+        # Position Guardian endpoints
+        @self.app.get("/api/guardian/status")
+        async def get_guardian_status():
+            """Get Position Guardian status."""
+            if hasattr(self.core, 'position_guardian') and self.core.position_guardian:
+                return self.core.position_guardian.get_status()
+            return {"error": "Position Guardian not available"}
+        
+        @self.app.get("/api/guardian/positions")
+        async def get_guardian_positions():
+            """Get tracked positions."""
+            if hasattr(self.core, 'position_guardian') and self.core.position_guardian:
+                return self.core.position_guardian.get_status().get("positions_detail", [])
+            return []
+        
+        @self.app.post("/api/guardian/sync")
+        async def sync_guardian_positions():
+            """Sync positions from Binance."""
+            if hasattr(self.core, 'position_guardian') and self.core.position_guardian:
+                count = await self.core.position_guardian.sync_positions_from_binance()
+                return {"synced": count}
+            return {"error": "Position Guardian not available"}
+        
+        @self.app.post("/api/guardian/close/{symbol}")
+        async def close_guardian_position(symbol: str):
+            """Manually close a position."""
+            if hasattr(self.core, 'position_guardian') and self.core.position_guardian:
+                from hope_core.guardian.position_guardian import ExitReason
+                success = await self.core.position_guardian.close_position(
+                    symbol.upper(),
+                    ExitReason.MANUAL,
+                    "Manual close via API"
+                )
+                return {"success": success}
+            return {"error": "Position Guardian not available"}
         @self.app.get("/api/health")
         async def get_health():
             """Health check endpoint (P0)."""
