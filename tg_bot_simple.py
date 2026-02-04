@@ -158,7 +158,12 @@ BOT_AUDIT_LOG = STATE_DIR / "bot_audit.jsonl"
 BOT_ERROR_LOG = STATE_DIR / "bot_errors.jsonl"
 PIDS_DIR.mkdir(parents=True, exist_ok=True)
 
-SECRETS_ENV_PATH = Path(r"C:\secrets\hope\.env")
+# Cross-platform secrets path
+if sys.platform == "win32":
+    SECRETS_ENV_PATH = Path(r"C:\secrets\hope\.env")
+else:
+    # Linux VPS: /etc/hope/.env -> /opt/hope/secrets/hope.env
+    SECRETS_ENV_PATH = Path("/etc/hope/.env")
 FALLBACK_ENV_PATH = ROOT / ".env"
 
 # Cross-platform script paths
