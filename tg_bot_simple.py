@@ -3245,6 +3245,25 @@ class HopeMiniBot:
             await self.cmd_sauce(update, context)
             return
 
+        # Position Guardian callbacks
+        if data == "guardian_refresh":
+            await self.cmd_guardian(update, context)
+            return
+        if data == "guardian_sync":
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("http://127.0.0.1:8201/api/guardian/sync", timeout=10) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            await self._reply(update, f"✅ Synced {data.get('synced', 0)} positions")
+                        else:
+                            await self._reply(update, "❌ Sync failed")
+                await self.cmd_guardian(update, context)
+            except Exception as e:
+                await self._reply(update, f"❌ Error: {e}")
+            return
+
         # Secret Sauce reset callbacks
         if data == "sauce_refresh":
             await self.cmd_sauce(update, context)
@@ -3906,6 +3925,65 @@ class HopeMiniBot:
             self.log.error("cmd_positions error: %s", e)
             await self._reply(update, f"Error: {e}")
 
+    async def cmd_guardian(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Position Guardian status - /guardian"""
+        if not await self._guard_admin(update):
+            return
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://127.0.0.1:8201/api/guardian/status", timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+
+                        stats = data.get("stats", {})
+                        config = data.get("config", {})
+                        positions = data.get("positions_detail", [])
+
+                        lines = [
+                            "🛡️ <b>POSITION GUARDIAN</b>",
+                            "",
+                            f'⚙️ <b>Config:</b>',
+                            f'  Hard SL: {config.get("hard_sl", -2)}%',
+                            f'  Base TP: {config.get("base_tp", 1.5)}%',
+                            f'  Trailing: {"✅" if config.get("trailing_enabled") else "❌"}',
+                            f'  AI: {"✅" if config.get("ai_enabled") else "❌"}',
+                            "",
+                            f'📊 <b>Stats:</b>',
+                            f'  Monitored: {stats.get("positions_monitored", 0)}',
+                            f'  Closed: {stats.get("positions_closed", 0)}',
+                            f'  Wins: {stats.get("wins", 0)} | Losses: {stats.get("losses", 0)}',
+                            f'  Total PnL: ${stats.get("total_pnl", 0):.2f}',
+                            "",
+                        ]
+
+                        if positions:
+                            lines.append("📈 <b>Active Positions:</b>")
+                            for pos in positions:
+                                pnl = pos.get("pnl_pct", 0)
+                                emoji = "🟢" if pnl >= 0 else "🔴"
+                                lines.append(
+                                    f'  {emoji} {pos.get("symbol")}: {pnl:+.2f}% '
+                                    f'(${pos.get("value_usd", 0):.2f})'
+                                )
+                        else:
+                            lines.append("<i>No positions tracked</i>")
+
+                        keyboard = InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("🔃 Refresh", callback_data="guardian_refresh"),
+                                InlineKeyboardButton("🔄 Sync", callback_data="guardian_sync"),
+                            ],
+                        ])
+                        await self._reply(update, "\n".join(lines), markup=keyboard, parse_mode="HTML")
+                    else:
+                        await self._reply(update, "❌ Position Guardian не отвечает")
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
     async def cmd_sauce(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -4028,6 +4106,7 @@ class HopeMiniBot:
             # HOPE v2.7.0: Diagnostic & Emergency
             BotCommand("diagnose", "полная диагностика"),
             BotCommand("positions", "открытые позиции"),
+            BotCommand("guardian", "🛡️ position guardian"),
             BotCommand("sauce", "🧠 secret sauce статус"),
             BotCommand("tradingview", "TradingView chart"),
             BotCommand("emergency", "emergency fix"),
@@ -4109,6 +4188,7 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("emergency", self.cmd_emergency))
         app.add_handler(CommandHandler("autostart", self.cmd_autostart))
         app.add_handler(CommandHandler("positions", self.cmd_positions))
+        app.add_handler(CommandHandler("guardian", self.cmd_guardian))
         app.add_handler(CommandHandler("sauce", self.cmd_sauce))
 
         app.add_handler(CallbackQueryHandler(self.on_callback))
