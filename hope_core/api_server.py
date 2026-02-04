@@ -49,7 +49,7 @@ if HAS_FASTAPI:
     class SignalRequest(BaseModel):
         """Signal submission request."""
         symbol: str = Field(..., pattern=r"^[A-Z]+USDT$")
-        score: float = Field(..., ge=0, le=1)
+        score: float = Field(..., ge=0, le=100)  # Accept 0-100, normalize in handler
         source: str = Field(default="API")
         confidence: Optional[float] = Field(default=None, ge=0, le=1)
         strategy: Optional[str] = None
@@ -150,6 +150,40 @@ class HopeCoreAPIServer:
                 "executor": self.core.order_executor is not None,
             }
         
+        @self.app.get("/api/secret-sauce")
+        async def get_secret_sauce_status():
+            """Get Secret Sauce advanced features status."""
+            if hasattr(self.core, 'secret_sauce') and self.core.secret_sauce:
+                return self.core.secret_sauce.get_status()
+            return {"error": "Secret Sauce not available"}
+        
+        
+        @self.app.post("/api/secret-sauce/reset/panic")
+        async def reset_sauce_panic():
+            """Reset Secret Sauce panic mode."""
+            if hasattr(self.core, 'secret_sauce') and self.core.secret_sauce:
+                self.core.secret_sauce.panic.reset_panic()
+                self.core.secret_sauce.panic.reset_daily()
+                return {"success": True, "message": "Panic mode reset"}
+            return {"success": False, "error": "Secret Sauce not available"}
+        
+        @self.app.post("/api/secret-sauce/reset/threshold")
+        async def reset_sauce_threshold():
+            """Reset adaptive threshold to default (35%)."""
+            if hasattr(self.core, 'secret_sauce') and self.core.secret_sauce:
+                self.core.secret_sauce.adaptive.threshold = 0.35
+                self.core.secret_sauce.adaptive._save_state()
+                return {"success": True, "message": "Threshold reset to 35%"}
+            return {"success": False, "error": "Secret Sauce not available"}
+        
+        @self.app.post("/api/secret-sauce/reset/learning")
+        async def reset_sauce_learning():
+            """Reset symbol learning data (clears blacklist)."""
+            if hasattr(self.core, 'secret_sauce') and self.core.secret_sauce:
+                self.core.secret_sauce.learner.symbols = {}
+                self.core.secret_sauce.learner._save_state()
+                return {"success": True, "message": "Learning data cleared"}
+            return {"success": False, "error": "Secret Sauce not available"}
         @self.app.get("/api/health")
         async def get_health():
             """Health check endpoint (P0)."""
@@ -468,9 +502,11 @@ class HopeCoreAPIServer:
             Receive signal from external sources (MoonBot, Hunters, etc).
             Compatible with existing autotrader.py signal format.
             """
+            # Normalize score to 0-1 if needed
+            normalized_score = request.score / 100.0 if request.score > 1 else request.score
             result = await self.core.submit_signal(
                 symbol=request.symbol,
-                score=request.score,
+                score=normalized_score,
                 source=request.source,
             )
             
