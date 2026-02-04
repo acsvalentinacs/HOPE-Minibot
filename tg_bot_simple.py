@@ -3972,7 +3972,7 @@ class HopeMiniBot:
                                 InlineKeyboardButton("🧹 Clear Learning", callback_data="sauce_reset_learning"),
                             ],
                         ])
-                        await self._reply(update, "\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
+                        await self._reply(update, "\n".join(lines), markup=keyboard, parse_mode="HTML")
                     else:
                         await self._reply(update, "❌ HOPE Core не отвечает")
         except Exception as e:
