@@ -134,9 +134,10 @@ MIN_DAILY_VOLUME_M = 10.0         # $10M minimum daily volume (higher = safer)
 
 # === ADAPTIVE CONFIDENCE THRESHOLDS (Option C) ===
 # Three-tier system based on signal type:
-MIN_CONFIDENCE_TO_TRADE = 0.65    # Regular signals - highest bar
-MIN_CONFIDENCE_AI_OVERRIDE = 0.45 # AI override signals - medium bar
-MIN_CONFIDENCE_MOMENTUM = 0.35    # Momentum/trending signals - lower bar (more trades)
+# LOWERED for $100 capital - need more trades to gather statistics
+MIN_CONFIDENCE_TO_TRADE = 0.50    # Regular signals - medium bar (was 0.65)
+MIN_CONFIDENCE_AI_OVERRIDE = 0.35 # AI override signals - lower bar (was 0.45)
+MIN_CONFIDENCE_MOMENTUM = 0.25    # Momentum/trending signals - lowest bar (was 0.35)
 # Rationale: Momentum signals are pre-validated by 24h trend, so lower bar is acceptable
 
 MAX_OPEN_POSITIONS = 2            # Maximum concurrent positions (conservative)

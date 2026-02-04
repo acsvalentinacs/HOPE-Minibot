@@ -160,8 +160,8 @@ class AutoTraderConfig:
     default_position_usdt: float = 10.0    # Default position size
     max_position_usdt: float = 50.0        # Max position size
 
-    # Signal thresholds
-    min_confidence: float = 0.70           # Minimum confidence to trade
+    # Signal thresholds (LOWERED for more trades)
+    min_confidence: float = 0.35           # Minimum confidence to trade (was 0.70)
     pump_override_buys_sec: float = 100    # Instant buy threshold
     scalp_buys_sec: float = 30             # SCALP threshold
     min_buys_sec: float = 10               # Minimum to consider
