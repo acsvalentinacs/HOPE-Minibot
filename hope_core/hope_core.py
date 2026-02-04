@@ -34,19 +34,33 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-# Local imports
-from bus.command_bus import (
-    CommandBus, CommandType, CommandStatus, CommandResult,
-    Command, RateLimiter, CircuitBreaker
-)
-from bus.contracts import validate_command, SignalSource
-from state.machine import (
-    StateMachine, StateMachineManager, TradingState, StateTransition
-)
-from journal.event_journal import (
-    EventJournal, EventType, EventLevel, Event,
-    create_state_change_event, create_heartbeat_event
-)
+# Local imports - try relative first (when running directly), then absolute (when importing as package)
+try:
+    from bus.command_bus import (
+        CommandBus, CommandType, CommandStatus, CommandResult,
+        Command, RateLimiter, CircuitBreaker
+    )
+    from bus.contracts import validate_command, SignalSource
+    from state.machine import (
+        StateMachine, StateMachineManager, TradingState, StateTransition
+    )
+    from journal.event_journal import (
+        EventJournal, EventType, EventLevel, Event,
+        create_state_change_event, create_heartbeat_event
+    )
+except ImportError:
+    from hope_core.bus.command_bus import (
+        CommandBus, CommandType, CommandStatus, CommandResult,
+        Command, RateLimiter, CircuitBreaker
+    )
+    from hope_core.bus.contracts import validate_command, SignalSource
+    from hope_core.state.machine import (
+        StateMachine, StateMachineManager, TradingState, StateTransition
+    )
+    from hope_core.journal.event_journal import (
+        EventJournal, EventType, EventLevel, Event,
+        create_state_change_event, create_heartbeat_event
+    )
 
 
 # =============================================================================
@@ -203,6 +217,15 @@ class HopeCore:
         self.eye_of_god = None
         self.order_executor = None
         self.binance_client = None
+        self.alert_manager = None
+        
+        # Initialize alert manager
+        try:
+            from alerts import AlertManager, AlertLevel
+            self.alert_manager = AlertManager(min_level=AlertLevel.INFO)
+            print("[HOPE CORE] Alert Manager initialized")
+        except ImportError:
+            print("[HOPE CORE] Alert Manager not available")
         
         # Try to load Eye of God
         if self.config.eye_of_god_enabled:
@@ -210,8 +233,14 @@ class HopeCore:
                 from eye_of_god_v3 import EyeOfGodV3
                 self.eye_of_god = EyeOfGodV3()
                 print("[HOPE CORE] Eye of God V3 loaded")
-            except ImportError as e:
-                print(f"[HOPE CORE] Eye of God not available: {e}")
+            except ImportError:
+                # Try mock
+                try:
+                    from mocks import MockEyeOfGodV3
+                    self.eye_of_god = MockEyeOfGodV3(mode="BALANCED")
+                    print("[HOPE CORE] Mock Eye of God loaded (BALANCED mode)")
+                except ImportError as e:
+                    print(f"[HOPE CORE] Eye of God not available: {e}")
         
         # Try to load Order Executor
         if self.config.binance_enabled:
@@ -220,8 +249,15 @@ class HopeCore:
                 mode = TradingMode[self.config.mode]
                 self.order_executor = OrderExecutor(mode)
                 print(f"[HOPE CORE] Order Executor loaded ({self.config.mode})")
-            except ImportError as e:
-                print(f"[HOPE CORE] Order Executor not available: {e}")
+            except ImportError:
+                # Try mock
+                try:
+                    from mocks import MockOrderExecutor, TradingMode
+                    mode = TradingMode[self.config.mode]
+                    self.order_executor = MockOrderExecutor(mode)
+                    print(f"[HOPE CORE] Mock Order Executor loaded ({self.config.mode})")
+                except ImportError as e:
+                    print(f"[HOPE CORE] Order Executor not available: {e}")
     
     # =========================================================================
     # CALLBACKS
@@ -365,18 +401,24 @@ class HopeCore:
                     "source": payload.get("source", "SCANNER"),
                 })
                 
+                # Handle both dict and object response
+                if isinstance(decision, dict):
+                    action = decision.get("action", "HOLD")
+                    confidence = decision.get("confidence", score)
+                else:
+                    action = getattr(decision, 'action', "HOLD")
+                    confidence = getattr(decision, 'confidence', score)
+                
                 self.journal.append(
                     EventType.DECISION_MADE,
                     payload={
                         "symbol": symbol,
-                        "decision": decision.action if hasattr(decision, 'action') else str(decision),
-                        "confidence": decision.confidence if hasattr(decision, 'confidence') else score / 100,
+                        "decision": action,
+                        "confidence": confidence,
                     },
                     correlation_id=command.correlation_id,
                     symbol=symbol,
                 )
-                
-                action = decision.action if hasattr(decision, 'action') else "HOLD"
                 
                 if action == "BUY":
                     # Proceed to order
@@ -385,17 +427,31 @@ class HopeCore:
                         reason=f"Decision: BUY {symbol}",
                         correlation_id=command.correlation_id,
                     )
-                    return {
-                        "decision": "BUY",
-                        "symbol": symbol,
-                        "confidence": decision.confidence if hasattr(decision, 'confidence') else score / 100,
-                    }
+                    
+                    # Execute order if executor available
+                    if self.order_executor:
+                        order_result = await self._execute_order(symbol, "BUY", command.correlation_id)
+                        return {
+                            "decision": "BUY",
+                            "symbol": symbol,
+                            "confidence": confidence,
+                            "order": order_result,
+                            "position_id": order_result.get("position_id"),
+                        }
+                    else:
+                        return {
+                            "decision": "BUY",
+                            "symbol": symbol,
+                            "confidence": confidence,
+                            "order": "NO_EXECUTOR",
+                        }
                 else:
                     sm.transition(
                         TradingState.IDLE,
                         reason=f"Decision: {action}",
                         correlation_id=command.correlation_id,
                     )
+                    return {"decision": action, "reason": decision.get("reasons", []) if isinstance(decision, dict) else []}
                     return {"decision": action, "reason": "EYE_OF_GOD"}
                     
             except Exception as e:
@@ -417,6 +473,131 @@ class HopeCore:
                 correlation_id=command.correlation_id,
             )
             return {"decision": "REJECT", "reason": "LOW_CONFIDENCE"}
+    
+    async def _execute_order(
+        self,
+        symbol: str,
+        side: str,
+        correlation_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Execute order through Order Executor.
+        
+        Args:
+            symbol: Trading symbol
+            side: BUY or SELL
+            correlation_id: Correlation ID
+            
+        Returns:
+            Order result with position_id if successful
+        """
+        sm = self.state_manager.global_machine
+        
+        # Log order intent
+        self.journal.append(
+            EventType.ORDER_SENT,
+            payload={"symbol": symbol, "side": side, "size_usd": self.config.position_size_usd},
+            correlation_id=correlation_id,
+            symbol=symbol,
+        )
+        
+        try:
+            if self.order_executor:
+                # Execute order
+                result = self.order_executor.execute_order(
+                    symbol=symbol,
+                    side=side,
+                    quote_quantity=self.config.position_size_usd,
+                )
+                
+                if result.get("status") in ["FILLED", "SIMULATED"]:
+                    # Order filled - transition states
+                    sm.transition(
+                        TradingState.PENDING_FILL,
+                        reason="Order submitted",
+                        correlation_id=correlation_id,
+                    )
+                    sm.transition(
+                        TradingState.POSITION_OPEN,
+                        reason="Order filled",
+                        correlation_id=correlation_id,
+                    )
+                    
+                    # Track position
+                    position_id = f"pos_{result.get('orderId', int(time.time() * 1000))}"
+                    self._open_positions[position_id] = {
+                        "id": position_id,
+                        "symbol": symbol,
+                        "side": side,
+                        "entry_price": float(result.get("avgPrice", 0)),
+                        "quantity": float(result.get("executedQty", 0)),
+                        "size_usd": self.config.position_size_usd,
+                        "opened_at": datetime.now(timezone.utc).isoformat(),
+                        "correlation_id": correlation_id,
+                        "order_id": result.get("orderId"),
+                        "mock": result.get("mock", False),
+                    }
+                    
+                    self._stats["positions_opened"] += 1
+                    self._stats["signals_traded"] += 1
+                    
+                    # Log position opened
+                    self.journal.append(
+                        EventType.POSITION_OPENED,
+                        payload=self._open_positions[position_id],
+                        correlation_id=correlation_id,
+                        symbol=symbol,
+                    )
+                    
+                    # Alert if available
+                    if self.alert_manager:
+                        asyncio.create_task(
+                            self.alert_manager.trade_opened(
+                                symbol=symbol,
+                                side=side,
+                                quantity=float(result.get("executedQty", 0)),
+                                price=float(result.get("avgPrice", 0)),
+                            )
+                        )
+                    
+                    return {
+                        "status": "FILLED",
+                        "position_id": position_id,
+                        **result,
+                    }
+                else:
+                    # Order failed
+                    sm.transition(
+                        TradingState.IDLE,
+                        reason=f"Order failed: {result.get('status')}",
+                        correlation_id=correlation_id,
+                    )
+                    return {"status": "FAILED", **result}
+            else:
+                # No executor - DRY mode simulation
+                sm.transition(TradingState.PENDING_FILL, reason="DRY: Simulated", correlation_id=correlation_id)
+                sm.transition(TradingState.POSITION_OPEN, reason="DRY: Simulated", correlation_id=correlation_id)
+                
+                position_id = f"pos_dry_{int(time.time() * 1000)}"
+                self._open_positions[position_id] = {
+                    "id": position_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "mode": "DRY",
+                    "correlation_id": correlation_id,
+                }
+                self._stats["positions_opened"] += 1
+                self._stats["signals_traded"] += 1
+                
+                return {"status": "SIMULATED", "position_id": position_id}
+                
+        except Exception as e:
+            sm.transition(
+                TradingState.ERROR,
+                reason=f"Order error: {e}",
+                correlation_id=correlation_id,
+            )
+            return {"status": "ERROR", "error": str(e)}
     
     async def _handle_order(self, command: Command, ctx: Dict[str, Any]) -> Dict[str, Any]:
         """Handle ORDER command."""

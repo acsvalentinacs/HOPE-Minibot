@@ -43,6 +43,9 @@ class SignalSource(Enum):
     EXTERNAL = "EXTERNAL"       # From Telegram/external
     MANUAL = "MANUAL"           # Manual signal
     SCANNER = "SCANNER"         # From auto_signal_loop
+    TEST = "TEST"               # For testing
+    API = "API"                 # From HTTP API
+    AUTO = "AUTO"               # Auto-generated
 
 
 class OrderSide(Enum):
@@ -80,7 +83,7 @@ SIGNAL_SCHEMA: Dict[str, Any] = {
         },
         "source": {
             "type": "string",
-            "enum": ["MOMENTUM", "PUMP", "EXTERNAL", "MANUAL", "SCANNER"],
+            "enum": ["MOMENTUM", "PUMP", "EXTERNAL", "MANUAL", "SCANNER", "TEST", "API", "AUTO"],
             "description": "Signal source"
         },
         "timestamp": {

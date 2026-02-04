@@ -177,6 +177,70 @@ class HopeCoreAPIServer:
             }
         
         # =====================================================================
+        # DASHBOARD & METRICS ENDPOINTS
+        # =====================================================================
+        
+        @self.app.get("/dashboard")
+        async def get_dashboard():
+            """Serve dashboard HTML."""
+            from fastapi.responses import HTMLResponse
+            dashboard_path = Path(__file__).parent / "static" / "dashboard.html"
+            if dashboard_path.exists():
+                return HTMLResponse(content=dashboard_path.read_text())
+            return HTMLResponse(content="<h1>Dashboard not found</h1>", status_code=404)
+        
+        @self.app.get("/metrics")
+        async def get_prometheus_metrics():
+            """Prometheus metrics endpoint."""
+            from fastapi.responses import PlainTextResponse
+            try:
+                from metrics.collector import get_metrics
+                metrics = get_metrics()
+                
+                # Update metrics from core
+                metrics.positions_open.set(len(self.core._open_positions))
+                metrics.daily_pnl.set(self.core._stats.get("daily_pnl", 0))
+                metrics.total_pnl.set(self.core._stats.get("total_pnl", 0))
+                metrics.circuit_breaker_state.set(
+                    1 if self.core.command_bus.circuit_state.value == "OPEN" else 0
+                )
+                
+                return PlainTextResponse(
+                    content=metrics.get_prometheus_metrics(),
+                    media_type="text/plain"
+                )
+            except ImportError:
+                return PlainTextResponse(
+                    content="# Metrics module not available",
+                    media_type="text/plain"
+                )
+        
+        @self.app.get("/api/dashboard")
+        async def get_dashboard_data():
+            """JSON data for dashboard."""
+            try:
+                from metrics.collector import get_metrics
+                metrics = get_metrics()
+                
+                # Update and return dashboard data
+                metrics.positions_open.set(len(self.core._open_positions))
+                metrics.daily_pnl.set(self.core._stats.get("daily_pnl", 0))
+                metrics.total_pnl.set(self.core._stats.get("total_pnl", 0))
+                
+                data = metrics.get_dashboard_data()
+                data["mode"] = self.core.config.mode
+                data["state"] = self.core.state.value
+                data["positions"] = list(self.core._open_positions.values())
+                
+                return data
+            except ImportError:
+                return {
+                    "error": "Metrics module not available",
+                    "mode": self.core.config.mode,
+                    "state": self.core.state.value,
+                }
+        
+        # =====================================================================
         # SIGNAL ENDPOINTS
         # =====================================================================
         
@@ -311,6 +375,172 @@ class HopeCoreAPIServer:
         async def get_journal_stats():
             """Get journal statistics."""
             return self.core.journal.get_stats()
+        
+        # =====================================================================
+        # DASHBOARD ENDPOINT
+        # =====================================================================
+        
+        @self.app.get("/dashboard")
+        async def get_dashboard():
+            """
+            Full dashboard with all metrics.
+            
+            Returns comprehensive view for monitoring.
+            """
+            health = await self.core.get_health()
+            
+            # Calculate additional metrics
+            open_positions = list(self.core._open_positions.values())
+            total_exposure = sum(p.get("size_usd", 0) for p in open_positions)
+            
+            # Win rate (if we have closed trades)
+            win_count = self.core._stats.get("win_count", 0)
+            loss_count = self.core._stats.get("loss_count", 0)
+            total_trades = win_count + loss_count
+            win_rate = win_count / max(1, total_trades)
+            
+            return {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "mode": self.core.config.mode,
+                "uptime_seconds": self.core.uptime,
+                
+                "health": {
+                    "status": health.get("status"),
+                    "eye_of_god": self.core.eye_of_god is not None,
+                    "executor": self.core.order_executor is not None,
+                    "circuit_breaker": self.core.command_bus.circuit_state.value,
+                },
+                
+                "trading": {
+                    "state": self.core.state.value,
+                    "signals_received": self.core._stats.get("signals_received", 0),
+                    "signals_traded": self.core._stats.get("signals_traded", 0),
+                    "positions_opened": self.core._stats.get("positions_opened", 0),
+                    "positions_closed": self.core._stats.get("positions_closed", 0),
+                },
+                
+                "positions": {
+                    "count": len(open_positions),
+                    "total_exposure_usd": total_exposure,
+                    "max_positions": self.core.config.max_positions,
+                    "details": open_positions,
+                },
+                
+                "performance": {
+                    "daily_pnl": self.core._stats.get("daily_pnl", 0),
+                    "total_pnl": self.core._stats.get("total_pnl", 0),
+                    "win_count": win_count,
+                    "loss_count": loss_count,
+                    "win_rate": win_rate,
+                },
+                
+                "command_bus": self.core.command_bus.get_stats(),
+                
+                "journal": {
+                    "events": self.core.journal.event_count,
+                },
+                
+                "config": {
+                    "min_confidence": self.core.config.min_confidence,
+                    "position_size_usd": self.core.config.position_size_usd,
+                    "max_positions": self.core.config.max_positions,
+                    "daily_loss_limit_percent": self.core.config.daily_loss_limit_percent,
+                },
+            }
+        
+        @self.app.get("/alerts/history")
+        async def get_alert_history(limit: int = 50):
+            """Get alert history."""
+            if self.core.alert_manager:
+                return {
+                    "alerts": self.core.alert_manager.get_history(limit),
+                    "stats": self.core.alert_manager.get_stats(),
+                }
+            return {"alerts": [], "stats": {}}
+        
+        # =====================================================================
+        # INTEGRATION ENDPOINTS (for autotrader.py compatibility)
+        # =====================================================================
+        
+        @self.app.post("/signal/external")
+        async def receive_external_signal(request: SignalRequest):
+            """
+            Receive signal from external sources (MoonBot, Hunters, etc).
+            Compatible with existing autotrader.py signal format.
+            """
+            result = await self.core.submit_signal(
+                symbol=request.symbol,
+                score=request.score,
+                source=request.source,
+            )
+            
+            # Return in autotrader.py compatible format
+            return {
+                "success": result.status.value == "SUCCESS",
+                "status": result.status.value,
+                "signal_id": result.data.get("signal_id") if result.data else None,
+                "decision": result.data.get("auto_decide", {}).get("decision") if result.data else None,
+                "position_id": result.data.get("auto_decide", {}).get("position_id") if result.data else None,
+            }
+        
+        @self.app.get("/positions/open")
+        async def get_open_positions_list():
+            """Get list of open positions (autotrader.py compatible)."""
+            return {
+                "count": len(self.core._open_positions),
+                "positions": list(self.core._open_positions.values()),
+                "total_exposure_usd": sum(
+                    p.get("size_usd", 0) for p in self.core._open_positions.values()
+                ),
+            }
+        
+        @self.app.post("/positions/{position_id}/close")
+        async def close_position_by_id(position_id: str, reason: str = "API"):
+            """Close specific position."""
+            from bus.command_bus import Command, CommandType
+            from datetime import datetime, timezone
+            
+            if position_id not in self.core._open_positions:
+                return {"success": False, "error": "Position not found"}
+            
+            result = await self.core.command_bus.dispatch(
+                Command(
+                    id=f"close_{position_id}",
+                    type=CommandType.CLOSE,
+                    payload={"position_id": position_id, "reason": reason},
+                    timestamp=datetime.now(timezone.utc),
+                    source="API",
+                )
+            )
+            
+            return {
+                "success": result.status.value == "SUCCESS",
+                "status": result.status.value,
+                "data": result.data,
+            }
+        
+        @self.app.get("/stats/trading")
+        async def get_trading_stats():
+            """Get trading statistics."""
+            return {
+                "signals_received": self.core._stats.get("signals_received", 0),
+                "signals_traded": self.core._stats.get("signals_traded", 0),
+                "positions_opened": self.core._stats.get("positions_opened", 0),
+                "positions_closed": self.core._stats.get("positions_closed", 0),
+                "daily_pnl": self.core._stats.get("daily_pnl", 0),
+                "total_pnl": self.core._stats.get("total_pnl", 0),
+                "win_count": self.core._stats.get("win_count", 0),
+                "loss_count": self.core._stats.get("loss_count", 0),
+            }
+        
+        @self.app.get("/mode")
+        async def get_trading_mode():
+            """Get current trading mode."""
+            return {
+                "mode": self.core.config.mode,
+                "eye_of_god_enabled": self.core.config.eye_of_god_enabled,
+                "binance_enabled": self.core.config.binance_enabled,
+            }
         
         # =====================================================================
         # GUARDIAN ENDPOINTS (for Guardian process)

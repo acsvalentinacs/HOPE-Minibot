@@ -1,0 +1,533 @@
+<!-- 
+=== AI SIGNATURE ===
+File: hope_core/static/dashboard.html
+Created by: Claude (opus-4.5)
+Created at: 2026-02-04 11:45:00 UTC
+Purpose: Real-time trading dashboard for HOPE Core v2.0
+=== END SIGNATURE ===
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOPE Core Dashboard</title>
+    <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --accent: #e94560;
+            --success: #00ff88;
+            --warning: #ffaa00;
+            --danger: #ff4444;
+            --text: #ffffff;
+            --text-muted: #8892b0;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .header .status {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .status-badge.healthy {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--success);
+        }
+        
+        .status-badge.degraded {
+            background: rgba(255, 170, 0, 0.2);
+            color: var(--warning);
+        }
+        
+        .status-badge.unhealthy {
+            background: rgba(255, 68, 68, 0.2);
+            color: var(--danger);
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        
+        .card h3 {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+        
+        .card .value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        
+        .card .value.positive { color: var(--success); }
+        .card .value.negative { color: var(--danger); }
+        .card .value.neutral { color: var(--text); }
+        
+        .card .subtext {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 5px;
+        }
+        
+        .wide-card {
+            grid-column: span 2;
+        }
+        
+        .positions-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .positions-table th,
+        .positions-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .positions-table th {
+            color: var(--text-muted);
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        .positions-table .symbol {
+            font-weight: bold;
+            color: var(--accent);
+        }
+        
+        .chart-container {
+            height: 200px;
+            position: relative;
+        }
+        
+        .chart-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            border: 1px dashed rgba(255,255,255,0.2);
+            border-radius: 8px;
+        }
+        
+        .recent-signals {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .signal-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .signal-item:last-child {
+            border-bottom: none;
+        }
+        
+        .signal-item .symbol {
+            font-weight: bold;
+        }
+        
+        .signal-item .source {
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+        
+        .signal-item .confidence {
+            color: var(--success);
+        }
+        
+        .circuit-breaker {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .circuit-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .circuit-indicator.closed { background: var(--success); }
+        .circuit-indicator.open { background: var(--danger); }
+        
+        .state-machine {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .state-badge {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            background: rgba(233, 69, 96, 0.2);
+        }
+        
+        .state-badge.active {
+            background: var(--accent);
+        }
+        
+        .footer {
+            margin-top: 20px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+        
+        .update-time {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--bg-card);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>
+            <span class="live-dot"></span>
+            HOPE Core v2.0
+        </h1>
+        <div class="status">
+            <span id="mode-badge" class="status-badge">DRY</span>
+            <span id="health-badge" class="status-badge healthy">HEALTHY</span>
+        </div>
+    </header>
+    
+    <div class="grid">
+        <!-- PnL Card -->
+        <div class="card">
+            <h3>Daily PnL</h3>
+            <div id="daily-pnl" class="value positive">$0.00</div>
+            <div class="subtext">Today's performance</div>
+        </div>
+        
+        <!-- Total PnL Card -->
+        <div class="card">
+            <h3>Total PnL</h3>
+            <div id="total-pnl" class="value neutral">$0.00</div>
+            <div class="subtext">All time</div>
+        </div>
+        
+        <!-- Trades Card -->
+        <div class="card">
+            <h3>Trades Today</h3>
+            <div id="trades-today" class="value neutral">0</div>
+            <div id="win-rate" class="subtext">Win rate: --%</div>
+        </div>
+        
+        <!-- Open Positions Card -->
+        <div class="card">
+            <h3>Open Positions</h3>
+            <div id="open-positions" class="value neutral">0</div>
+            <div id="exposure" class="subtext">Exposure: $0.00</div>
+        </div>
+        
+        <!-- Signals Card -->
+        <div class="card">
+            <h3>Signals Received</h3>
+            <div id="signals-total" class="value neutral">0</div>
+            <div class="subtext">Last 24 hours</div>
+        </div>
+        
+        <!-- Uptime Card -->
+        <div class="card">
+            <h3>Uptime</h3>
+            <div id="uptime" class="value neutral">0:00:00</div>
+            <div id="memory" class="subtext">Memory: -- MB</div>
+        </div>
+        
+        <!-- State Machine Card -->
+        <div class="card wide-card">
+            <h3>State Machine</h3>
+            <div class="state-machine" id="state-display">
+                <span class="state-badge active">IDLE</span>
+                <span>→</span>
+                <span class="state-badge">SCANNING</span>
+                <span>→</span>
+                <span class="state-badge">DECIDING</span>
+                <span>→</span>
+                <span class="state-badge">ORDERING</span>
+            </div>
+        </div>
+        
+        <!-- Circuit Breaker Card -->
+        <div class="card">
+            <h3>Circuit Breaker</h3>
+            <div class="circuit-breaker">
+                <span id="circuit-indicator" class="circuit-indicator closed"></span>
+                <span id="circuit-state">CLOSED</span>
+            </div>
+            <div id="circuit-failures" class="subtext">Failures: 0</div>
+        </div>
+        
+        <!-- Recent Signals Card -->
+        <div class="card wide-card">
+            <h3>Recent Signals</h3>
+            <div class="recent-signals" id="signals-list">
+                <div class="signal-item">
+                    <div>
+                        <span class="symbol">--</span>
+                        <span class="source">No signals yet</span>
+                    </div>
+                    <span class="confidence">--</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Open Positions Table -->
+        <div class="card wide-card">
+            <h3>Open Positions</h3>
+            <table class="positions-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Entry</th>
+                        <th>Current</th>
+                        <th>PnL</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="positions-body">
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-muted);">
+                            No open positions
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <footer class="footer">
+        HOPE Core v2.0 | Command Bus + State Machine + Guardian
+    </footer>
+    
+    <div class="update-time" id="update-time">
+        Last update: --:--:--
+    </div>
+    
+    <script>
+        // API endpoint
+        const API_BASE = window.location.origin;
+        
+        // Format functions
+        function formatPnL(value) {
+            const sign = value >= 0 ? '+' : '';
+            return `${sign}$${value.toFixed(2)}`;
+        }
+        
+        function formatUptime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+        
+        function formatTime(isoString) {
+            const date = new Date(isoString);
+            return date.toLocaleTimeString();
+        }
+        
+        // Update dashboard
+        async function updateDashboard() {
+            try {
+                // Fetch status
+                const statusResp = await fetch(`${API_BASE}/status`);
+                const status = await statusResp.json();
+                
+                // Fetch health
+                const healthResp = await fetch(`${API_BASE}/api/health`);
+                const health = await healthResp.json();
+                
+                // Update mode
+                document.getElementById('mode-badge').textContent = status.mode;
+                
+                // Update health
+                const healthBadge = document.getElementById('health-badge');
+                healthBadge.textContent = health.status.toUpperCase();
+                healthBadge.className = `status-badge ${health.status}`;
+                
+                // Update stats
+                const stats = status.stats || {};
+                
+                // Daily PnL
+                const dailyPnl = stats.daily_pnl || 0;
+                const dailyPnlEl = document.getElementById('daily-pnl');
+                dailyPnlEl.textContent = formatPnL(dailyPnl);
+                dailyPnlEl.className = `value ${dailyPnl >= 0 ? 'positive' : 'negative'}`;
+                
+                // Total PnL
+                const totalPnl = stats.total_pnl || 0;
+                const totalPnlEl = document.getElementById('total-pnl');
+                totalPnlEl.textContent = formatPnL(totalPnl);
+                totalPnlEl.className = `value ${totalPnl >= 0 ? 'positive' : 'negative'}`;
+                
+                // Trades
+                const trades = (stats.win_count || 0) + (stats.loss_count || 0);
+                document.getElementById('trades-today').textContent = trades;
+                const winRate = trades > 0 ? (stats.win_count / trades * 100) : 0;
+                document.getElementById('win-rate').textContent = `Win rate: ${winRate.toFixed(0)}%`;
+                
+                // Positions
+                document.getElementById('open-positions').textContent = status.open_positions || 0;
+                
+                // Signals
+                document.getElementById('signals-total').textContent = stats.signals_received || 0;
+                
+                // Uptime
+                document.getElementById('uptime').textContent = formatUptime(status.uptime_seconds || 0);
+                
+                // Circuit breaker
+                const cbState = status.circuit_breaker?.state || 'CLOSED';
+                const cbIndicator = document.getElementById('circuit-indicator');
+                cbIndicator.className = `circuit-indicator ${cbState.toLowerCase()}`;
+                document.getElementById('circuit-state').textContent = cbState;
+                document.getElementById('circuit-failures').textContent = 
+                    `Failures: ${status.circuit_breaker?.failures || 0}`;
+                
+                // State machine
+                updateStateDisplay(status.state);
+                
+                // Positions table
+                updatePositionsTable(status.positions || []);
+                
+                // Update time
+                document.getElementById('update-time').textContent = 
+                    `Last update: ${new Date().toLocaleTimeString()}`;
+                
+            } catch (error) {
+                console.error('Dashboard update failed:', error);
+                document.getElementById('health-badge').textContent = 'OFFLINE';
+                document.getElementById('health-badge').className = 'status-badge unhealthy';
+            }
+        }
+        
+        function updateStateDisplay(currentState) {
+            const states = ['IDLE', 'SCANNING', 'SIGNAL_RECEIVED', 'DECIDING', 'ORDERING', 'MONITORING'];
+            const display = document.getElementById('state-display');
+            
+            let html = '';
+            for (let i = 0; i < states.length; i++) {
+                const isActive = states[i] === currentState;
+                html += `<span class="state-badge ${isActive ? 'active' : ''}">${states[i]}</span>`;
+                if (i < states.length - 1) {
+                    html += '<span>→</span>';
+                }
+            }
+            display.innerHTML = html;
+        }
+        
+        function updatePositionsTable(positions) {
+            const tbody = document.getElementById('positions-body');
+            
+            if (!positions || positions.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-muted);">
+                            No open positions
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            let html = '';
+            for (const pos of positions) {
+                const pnl = ((pos.current_price || pos.entry_price) - pos.entry_price) * pos.quantity;
+                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+                
+                html += `
+                    <tr>
+                        <td class="symbol">${pos.symbol}</td>
+                        <td>${pos.side || 'BUY'}</td>
+                        <td>$${(pos.entry_price || 0).toFixed(4)}</td>
+                        <td>$${(pos.current_price || pos.entry_price || 0).toFixed(4)}</td>
+                        <td class="${pnlClass}">${formatPnL(pnl)}</td>
+                        <td>${formatTime(pos.opened_at || new Date().toISOString())}</td>
+                    </tr>
+                `;
+            }
+            tbody.innerHTML = html;
+        }
+        
+        // Initial update
+        updateDashboard();
+        
+        // Auto-refresh every 5 seconds
+        setInterval(updateDashboard, 5000);
+    </script>
+</body>
+</html>

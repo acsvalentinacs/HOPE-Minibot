@@ -126,57 +126,40 @@ class RecoveryEvent:
 @dataclass
 class GuardianConfig:
     """Guardian configuration."""
-
+    
     # Heartbeat settings
     heartbeat_interval_sec: float = 10.0
     heartbeat_timeout_sec: float = 30.0
-
+    
     # Health check settings
     health_check_interval_sec: float = 30.0
     max_consecutive_failures: int = 3
-
+    
     # Recovery settings
     max_restarts_per_hour: int = 5
     restart_delay_sec: float = 5.0
     restart_backoff_multiplier: float = 2.0
     max_restart_delay_sec: float = 300.0
-
+    
     # Process settings
     core_command: List[str] = field(default_factory=lambda: [
         "python", "-m", "hope_core.main", "--mode", "LIVE"
     ])
     core_working_dir: str = "/opt/hope/minibot"
-
+    
     # Alerting
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
-    telegram_use_env: bool = True  # Read from TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars
-
-    # Monitor-only mode (don't start/restart core, just watch health)
-    monitor_only: bool = False
-
+    
     # State file
     state_file: str = "state/guardian_state.json"
-
+    
     # Memory limit (MB)
     memory_limit_mb: float = 500.0
-
+    
     # API endpoint for health check
     health_endpoint: str = "http://127.0.0.1:8200/api/health"
-
-    def __post_init__(self):
-        """Load Telegram credentials from env if telegram_use_env is True."""
-        if self.telegram_use_env:
-            env_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-            env_chat = os.environ.get("TELEGRAM_CHAT_ID", "")
-            if env_token and not self.telegram_bot_token:
-                self.telegram_bot_token = env_token
-            if env_chat and not self.telegram_chat_id:
-                self.telegram_chat_id = env_chat
-            # Auto-enable if credentials found
-            if self.telegram_bot_token and self.telegram_chat_id:
-                self.telegram_enabled = True
 
 
 # =============================================================================
@@ -247,17 +230,13 @@ class Guardian:
         """Start Guardian watchdog loop."""
         self._running = True
         self._start_time = datetime.now(timezone.utc)
-
+        
         print(f"[GUARDIAN] Starting at {self._start_time.isoformat()}")
-        print(f"[GUARDIAN] Mode: {'MONITOR-ONLY' if self._config.monitor_only else 'FULL'}")
         print(f"[GUARDIAN] Heartbeat interval: {self._config.heartbeat_interval_sec}s")
         print(f"[GUARDIAN] Health check interval: {self._config.health_check_interval_sec}s")
-
-        # Start core process only if not in monitor-only mode
-        if not self._config.monitor_only:
-            await self._start_core()
-        else:
-            print("[GUARDIAN] Monitor-only mode - not starting core process")
+        
+        # Start core process
+        await self._start_core()
         
         # Main loop
         last_health_check = time.monotonic()
@@ -273,8 +252,8 @@ class Guardian:
                     await self._run_health_check()
                     last_health_check = now
                 
-                # Check if core is running (only if not in monitor-only mode)
-                if not self._config.monitor_only and not self.is_core_running:
+                # Check if core is running
+                if not self.is_core_running:
                     print("[GUARDIAN] Core process died!")
                     await self._handle_core_crash()
                 
@@ -710,36 +689,33 @@ async def run_guardian(config_path: Optional[str] = None):
 
 
 # =============================================================================
-# MAIN ENTRY POINT
+# TESTING
 # =============================================================================
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="HOPE Guardian Watchdog")
-    parser.add_argument("--config", type=str, help="Path to config JSON file")
-    parser.add_argument("--test", action="store_true", help="Run tests instead of daemon")
-    args = parser.parse_args()
-
-    if args.test:
-        # Run tests
-        print("=== Guardian Tests ===\n")
-        config = GuardianConfig(
-            heartbeat_interval_sec=2,
-            health_check_interval_sec=5,
-            core_command=["echo", "test"],
-        )
-        guardian = Guardian(config)
-        print("Test: Heartbeat freshness check")
-        check = guardian._check_heartbeat_freshness()
-        print(f"  Result: {check.result.value}")
-        print(f"  Message: {check.message}")
-        print()
-        print("Test: Get status")
-        status = guardian.get_status()
-        print(f"  Status: {json.dumps(status, indent=2, default=str)}")
-        print("\n=== Tests Completed ===")
-    else:
-        # Run daemon
-        print("[GUARDIAN] Starting HOPE Guardian Watchdog...")
-        asyncio.run(run_guardian(config_path=args.config))
+    print("=== Guardian Tests ===\n")
+    
+    # Create config for testing (no actual process start)
+    config = GuardianConfig(
+        heartbeat_interval_sec=2,
+        health_check_interval_sec=5,
+        core_command=["echo", "test"],  # Dummy command
+    )
+    
+    guardian = Guardian(config)
+    
+    # Test health check functions
+    print("Test: Heartbeat freshness check")
+    check = guardian._check_heartbeat_freshness()
+    print(f"  Result: {check.result.value}")
+    print(f"  Message: {check.message}")
+    print()
+    
+    print("Test: Get status")
+    status = guardian.get_status()
+    print(f"  Status: {json.dumps(status, indent=2, default=str)}")
+    print()
+    
+    print("=== Tests Completed ===")
+    print("\nTo run Guardian as standalone:")
+    print("  python -m hope_core.guardian.watchdog")

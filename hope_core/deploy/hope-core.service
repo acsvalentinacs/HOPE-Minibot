@@ -17,12 +17,12 @@ Group=root
 WorkingDirectory=/opt/hope/minibot
 
 # Environment
-EnvironmentFile=/opt/hope/secrets/hope.env
+EnvironmentFile=-/opt/hope/secrets/hope.env
 Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONPATH=/opt/hope/minibot:/opt/hope/minibot/scripts
+Environment=PYTHONPATH=/opt/hope/minibot:/opt/hope/minibot/scripts:/opt/hope/minibot/hope_core
 
 # Main command
-ExecStart=/opt/hope/venv/bin/python -m hope_core.api_server \
+ExecStart=/opt/hope/venv/bin/python /opt/hope/minibot/hope_core/main.py \
     --mode LIVE \
     --host 127.0.0.1 \
     --port 8200
