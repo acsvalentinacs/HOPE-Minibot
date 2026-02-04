@@ -3,9 +3,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-02-02 17:30:00 UTC
+# Modified at: 2026-02-04 10:25:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# Changes: Event Bus P0 integration (SignalReceived, Decision, OrderIntent, Fill events)
+# Changes: FIX import path for eye_of_god_v3 (scripts dir added to sys.path)
 # === END SIGNATURE ===
 """
 HOPE AI - AutoTrader v1.0
@@ -77,8 +77,9 @@ from enum import Enum
 import threading
 from collections import deque
 
-# Ensure project root is in path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Ensure project root AND scripts directory are in path
+sys.path.insert(0, str(Path(__file__).parent.parent))  # project root
+sys.path.insert(0, str(Path(__file__).parent))          # scripts directory
 
 # Centralized secrets (cross-platform)
 try:

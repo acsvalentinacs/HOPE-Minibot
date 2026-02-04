@@ -1,0 +1,308 @@
+# ═══════════════════════════════════════════════════════════════════════
+# HOPE CLOUD MANIFEST v1.0
+# ═══════════════════════════════════════════════════════════════════════
+# ЭТО "ОБЛАКО ПРОЕКТА" — единая точка правды для ВСЕЙ системы.
+# Orchestrator читает этот файл и управляет жизненным циклом.
+#
+# Автор: Valentin (kirillDev)
+# Дата: 02.02.2026
+# Статус: DRAFT → требует валидации с реальными файлами
+# ═══════════════════════════════════════════════════════════════════════
+
+# ─── ГЛОБАЛЬНЫЕ НАСТРОЙКИ ────────────────────────────────────────────
+global:
+  project_name: "HOPEminiBOT"
+  version: "5.0.0"
+  mode: LIVE                    # DRY | TESTNET | LIVE (ЕДИНОЕ для всех!)
+  base_dir: "C:\\Users\\kirillDev\\Desktop\\TradingBot\\minibot"
+  python: ".venv\\Scripts\\python.exe"
+  log_dir: "logs"
+  log_level: INFO
+  
+  # Критические файлы-флаги
+  stop_flag: "state\\STOP.flag"           # Любой процесс создаёт → все останавливаются
+  health_file: "state\\health.json"        # Core пишет каждые 5s
+  event_journal: "state\\events\\journal.jsonl"  # Append-only event log
+  
+  # Binance
+  exchange: binance
+  env_file: ".env"                         # BINANCE_API_KEY, BINANCE_API_SECRET
+
+# ─── СЕРВИСЫ (3 процесса) ───────────────────────────────────────────
+services:
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PROCESS 1: TRADING CORE (HOT PATH)
+  # Всё что влияет на торговлю — в ОДНОМ процессе.
+  # Задержка между компонентами: 0ms (in-process Event Bus).
+  # ═══════════════════════════════════════════════════════════════════
+  trading_core:
+    script: "scripts/hope_core.py"
+    port: 8200
+    health_endpoint: "/api/health"
+    priority: 1                            # Запускается ПЕРВЫМ
+    depends_on: []
+    restart_on_fail: true
+    max_restarts: 3
+    restart_delay_sec: 5
+    
+    # Компоненты внутри процесса (НЕ отдельные процессы!)
+    includes:
+      - name: "Binance WebSocket Feed"
+        source: "core/feeds/binance_ws.py"
+        role: "Realtime prices via WebSocket"
+        
+      - name: "Signal Receiver"
+        source: "core/signals/receiver.py"
+        role: "MoonBot Telegram + own scanner signals"
+        
+      - name: "AI Scorer"  
+        source: "core/ai/scorer.py"
+        role: "Pre-loaded ML model, inference <10ms"
+        model_path: "state/ai/models/predictor_latest.joblib"
+        
+      - name: "Decision Engine"
+        source: "core/decision/engine.py"
+        role: "BUY/SELL/SKIP based on score + risk"
+        
+      - name: "Risk Governor"
+        source: "core/risk/risk_governor.py"
+        role: "Balance check, limits, circuit breaker"
+        
+      - name: "Order Router"
+        source: "core/trade/order_router.py"
+        role: "Binance API, 2PC, Outbox pattern, UNKNOWN protocol"
+        
+      - name: "Position Manager"
+        source: "core/trade/position_manager.py"
+        role: "Track open positions, SL/TP management"
+        
+      - name: "Event Bus (in-process)"
+        source: "core/events/event_bus.py"
+        role: "All components share events at 0ms latency"
+        
+      - name: "Event Journal Writer"
+        source: "core/events/journal_writer.py"
+        role: "Persist events to JSONL for cross-process visibility"
+    
+    # События которые публикует
+    publishes:
+      - SignalReceivedEvent
+      - SignalScoredEvent
+      - DecisionEvent
+      - OrderIntentEvent
+      - OrderSubmittedEvent
+      - FillEvent
+      - PositionSnapshotEvent
+      - CloseEvent
+      - StopLossFailureEvent
+      
+    env:
+      HOPE_MODE: "${global.mode}"
+      HOPE_LIVE_ACK: "YES_I_UNDERSTAND"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PROCESS 2: GUARDIAN (SAFETY NET)
+  # Независимый процесс. Если Core умрёт — Guardian спасёт позиции.
+  # Имеет СВОЙ Binance API клиент (не зависит от Core).
+  # ═══════════════════════════════════════════════════════════════════
+  guardian:
+    script: "scripts/hope_guardian.py"
+    priority: 2
+    depends_on: 
+      - trading_core                       # Стартует после Core
+    restart_on_fail: true
+    max_restarts: 5                        # Guardian ДОЛЖЕН жить
+    restart_delay_sec: 2
+    
+    includes:
+      - name: "Position Watchdog"
+        source: "scripts/position_watchdog.py"
+        role: "Monitor positions, timeout close, SL retry"
+        
+      - name: "Heartbeat Monitor"
+        role: "Check health.json freshness every 10s"
+        freshness_max_sec: 300             # 5 min → Core считается мёртвым
+        
+      - name: "Panic Handler"
+        role: "STOP.flag + emergency market close all"
+        
+      - name: "Core Auto-Restart"
+        role: "Restart trading_core if heartbeat stale"
+    
+    reads:
+      - "${global.event_journal}"          # Следит за событиями Core
+      - "${global.health_file}"            # Проверяет пульс Core
+      
+    direct_binance_api: true               # Свой API клиент!
+    
+    actions_on_core_death:
+      - "close_all_positions"              # Закрыть всё через свой API
+      - "create_stop_flag"                 # Остановить всё
+      - "send_telegram_alert"              # Уведомить владельца
+      - "attempt_core_restart"             # Попытаться перезапустить
+
+  # ═══════════════════════════════════════════════════════════════════
+  # PROCESS 3: INTERFACE (OBSERVATION)
+  # НЕ влияет на торговлю. Может упасть — торговля продолжится.
+  # Read-only доступ к Event Journal и HTTP API от Core.
+  # ═══════════════════════════════════════════════════════════════════
+  interface:
+    script: "scripts/hope_interface.py"
+    port: 8080
+    priority: 3
+    depends_on:
+      - trading_core
+    restart_on_fail: false                 # НЕ критичен
+    
+    includes:
+      - name: "Telegram Bot"
+        source: "minibot/tg_bot_simple.py"
+        role: "Commands: /status, /positions, /stop_on, /pnl"
+        
+      - name: "Web Dashboard"
+        source: "dashboard/app.py"
+        role: "Real-time charts, trade history, PnL"
+        
+      - name: "Event Log Viewer"
+        role: "Tail event_journal.jsonl, display in dashboard"
+    
+    reads:
+      - "${global.event_journal}"
+      - "${global.health_file}"
+    
+    api_sources:
+      - "trading_core:${services.trading_core.port}"   # HTTP from Core
+
+# ─── ТРАНСПОРТ МЕЖДУ ПРОЦЕССАМИ ─────────────────────────────────────
+transport:
+  type: "file_journal"                     # file_journal | zeromq | redis
+  
+  # Как Process 1 → Process 2,3
+  event_journal:
+    path: "${global.event_journal}"
+    format: "jsonl"                        # Одна JSON строка = одно событие
+    write_mode: "atomic_append"            # temp → fsync → rename → append
+    rotation: "daily"                      # Новый файл каждый день
+    retention_days: 30
+    
+  # Как Process 2,3 → Process 1  
+  command_channel:
+    type: "stop_flag"                      # STOP.flag = единственный способ
+    path: "${global.stop_flag}"
+    
+  # Heartbeat
+  health:
+    writer: "trading_core"
+    path: "${global.health_file}"
+    interval_sec: 5
+    format: "json"                         # {timestamp, mode, positions, pnl, uptime}
+
+# ─── ТОРГОВЫЕ ПАРАМЕТРЫ ─────────────────────────────────────────────
+trading:
+  
+  # Динамическое позиционирование (compound growth)
+  position_sizing:
+    base_pct: 0.20                         # 20% от баланса
+    max_pct: 0.30                          # Hardcap 30%
+    cooling_pct: 0.10                      # После 3 losses → 10%
+    compound: true                         # Больше баланс → больше позиция
+    
+    # Множители
+    confidence_multiplier:
+      "0.6-0.7": 0.8                       # Низкая уверенность → меньше
+      "0.7-0.8": 1.0                       # Средняя → стандарт
+      "0.8-0.9": 1.2                       # Высокая → больше
+      "0.9-1.0": 1.4                       # Очень высокая → максимум
+    
+    streak_adjustment:
+      wins_3_plus: 1.1                     # 3+ побед → +10%
+      losses_3_plus: 0.5                   # 3+ проигрышей → -50%
+  
+  # Risk Management
+  risk:
+    min_risk_reward: 3.0                   # R:R >= 3:1 ОБЯЗАТЕЛЬНО
+    daily_loss_limit_pct: 5.0              # -5% от баланса → STOP
+    max_open_positions: 3
+    max_position_pct: 30.0                 # Не больше 30% в одной монете
+    
+    circuit_breaker:
+      consecutive_losses: 5
+      cooldown_minutes: 60
+      daily_trade_limit: 50
+    
+    order_rate_limiter:
+      max_orders_per_minute: 10
+      max_orders_per_hour: 100
+  
+  # Скальпинг-специфичные настройки
+  scalping:
+    enabled: true
+    timeframes: ["1m", "5m", "15m"]
+    max_hold_minutes: 60
+    min_volume_24h_usdt: 1000000           # Минимум $1M дневного объёма
+    min_spread_bps: 5                      # Минимальный спред 0.05%
+    trailing_stop:
+      enabled: true
+      activation_pct: 1.5                  # Активировать после +1.5%
+      trail_pct: 0.5                       # Трейлинг 0.5%
+  
+  # Signal Gate (CANNOT BYPASS)
+  signal_gate:
+    bypass: FAIL                           # Попытка обойти = FAIL
+    required_fields:
+      - symbol
+      - direction
+      - entry_price
+      - confidence
+      - source
+    min_confidence: 0.60
+    max_signal_age_sec: 300                # TTL = 5 минут
+    
+# ─── ORCHESTRATOR ────────────────────────────────────────────────────
+orchestrator:
+  script: "tools/hope_orchestrator.py"
+  
+  startup:
+    order: [trading_core, guardian, interface]
+    wait_for_health: true                  # Ждать /api/health OK перед следующим
+    startup_timeout_sec: 30
+    
+  shutdown:
+    order: [interface, guardian, trading_core]  # Обратный порядок
+    graceful_timeout_sec: 10
+    
+  monitoring:
+    health_check_interval_sec: 10
+    restart_backoff: "exponential"          # 2s, 4s, 8s, 16s...
+    max_backoff_sec: 60
+    
+  morning_gate:
+    enabled: true
+    check_time: "08:00"
+    checks:
+      - health_freshness_max_sec: 300
+      - event_journal_not_empty: true
+      - binance_api_reachable: true
+    fail_action: "STOP+PANIC+RESTART"
+    
+  daily_reset:
+    enabled: false                         # Включить после стабилизации
+    time: "03:00"
+    action: "graceful_restart_all"
+
+# ─── МОНИТОРИНГ И МЕТРИКИ ───────────────────────────────────────────
+metrics:
+  quality:
+    - sharpe_ratio                         # > 1.0 хорошо
+    - max_drawdown_pct                     # < 10% допустимо
+    - win_rate                             # > 55% для скальпинга
+    - profit_factor                        # > 1.5
+    - risk_reward_actual                   # >= 3:1
+    
+  operational:
+    - uptime_pct                           # > 99%
+    - signal_to_order_latency_ms           # < 200ms для скальпинга
+    - restart_count_24h                    # < 3
+    - missed_signals_24h                   # = 0 target
+    - event_bus_lag_ms                     # < 10ms
