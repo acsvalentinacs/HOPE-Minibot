@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-02-02T16:30:00Z
-# v2.7.0: Added diagnostic & emergency commands (/diagnose, /tradingview, /emergency, /autostart, /positions)
+# Modified at: 2026-02-05T09:30:00Z
+# v2.8.0: Added /sauce command + panel button for Secret Sauce monitoring
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -1175,7 +1175,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v2.5.0-ai-gateway"
+    VERSION = "tgbot-v2.8.0-secret-sauce"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
@@ -1254,6 +1254,7 @@ class HopeMiniBot:
                 InlineKeyboardButton("📋 AllowList", callback_data="hope_allowlist"),
             ],
             [
+                InlineKeyboardButton("🧠 Sauce", callback_data="hope_sauce"),
                 InlineKeyboardButton("ℹ️ Help", callback_data="hope_help"),
             ],
         ]
@@ -3216,6 +3217,9 @@ class HopeMiniBot:
         if data == "hope_allowlist":
             await self.cmd_allowlist(update, context)
             return
+        if data == "hope_sauce":
+            await self.cmd_sauce(update, context)
+            return
 
         # AllowList callbacks
         if data == "allowlist_refresh":
@@ -3864,6 +3868,65 @@ class HopeMiniBot:
             self.log.error("cmd_positions error: %s", e)
             await self._reply(update, f"Error: {e}")
 
+    async def cmd_sauce(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Secret Sauce status - /sauce"""
+        if not await self._guard_admin(update):
+            return
+
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://127.0.0.1:8201/api/secret-sauce", timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+
+                        panic = data.get("panic", {})
+                        time_f = data.get("time", {})
+
+                        panic_icon = "🔴" if panic.get("panic_mode") else "🟢"
+                        time_icon = "🟢" if time_f.get("allowed") else "🔴"
+
+                        lines = [
+                            "🧠 <b>SECRET SAUCE STATUS</b>",
+                            "",
+                            f'{panic_icon} <b>Panic:</b> {"ACTIVE - " + str(panic.get("panic_reason")) if panic.get("panic_mode") else "OK"}',
+                            f'📊 <b>Daily PnL:</b> ${panic.get("daily_pnl", 0):.2f}',
+                            f'⚡ <b>Circuit Trips:</b> {panic.get("circuit_trips", 0)}',
+                            "",
+                            f'{time_icon} <b>Time Filter:</b> {time_f.get("reason", "?")}',
+                            f'🚫 <b>Blackouts:</b> {", ".join(time_f.get("windows", []))}',
+                            "",
+                            f'📈 <b>Adaptive Threshold:</b> {data.get("threshold", 0.35):.0%}',
+                            "",
+                            "🏆 <b>Top Symbols:</b>",
+                        ]
+
+                        top = data.get("top_symbols", [])
+                        if top:
+                            for sym, pnl in top[:5]:
+                                lines.append(f"  • {sym}: ${pnl:.2f}")
+                        else:
+                            lines.append("  (пока нет данных)")
+
+                        blacklist = data.get("blacklist", [])
+                        if blacklist:
+                            lines.append("")
+                            lines.append(f'🚫 <b>Blacklist:</b> {", ".join(blacklist)}')
+
+                        shadow = data.get("shadow", {})
+                        if shadow.get("total_trades", 0) > 0:
+                            lines.append("")
+                            lines.append("👻 <b>Shadow Mode:</b>")
+                            lines.append(f'  Trades: {shadow.get("total_trades")} | WR: {shadow.get("win_rate", 0):.0%} | PnL: ${shadow.get("total_pnl", 0):.2f}')
+
+                        await self._reply(update, "\n".join(lines), parse_mode="HTML")
+                    else:
+                        await self._reply(update, "❌ HOPE Core не отвечает")
+        except Exception as e:
+            await self._reply(update, f"❌ Ошибка: {e}")
+
     async def _post_init(self, app: Application) -> None:
         cmds = [
             BotCommand("panel", "панель + кнопки"),
@@ -3894,6 +3957,7 @@ class HopeMiniBot:
             # HOPE v2.7.0: Diagnostic & Emergency
             BotCommand("diagnose", "полная диагностика"),
             BotCommand("positions", "открытые позиции"),
+            BotCommand("sauce", "🧠 secret sauce статус"),
             BotCommand("tradingview", "TradingView chart"),
             BotCommand("emergency", "emergency fix"),
             BotCommand("autostart", "запуск стека"),
@@ -3974,6 +4038,7 @@ class HopeMiniBot:
         app.add_handler(CommandHandler("emergency", self.cmd_emergency))
         app.add_handler(CommandHandler("autostart", self.cmd_autostart))
         app.add_handler(CommandHandler("positions", self.cmd_positions))
+        app.add_handler(CommandHandler("sauce", self.cmd_sauce))
 
         app.add_handler(CallbackQueryHandler(self.on_callback))
         return app
