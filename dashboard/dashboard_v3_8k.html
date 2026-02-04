@@ -1458,6 +1458,25 @@
         const API_BASE = window.location.origin;
         const AUTOTRADER_API = 'http://localhost:8200';
         const AI_GATEWAY_API = 'http://localhost:8100';
+
+        // API Key for protected endpoints (set via localStorage or prompt)
+        let API_KEY = localStorage.getItem('hope_api_key') || 'hope2026';
+
+        // Helper for authenticated requests
+        function authFetch(url, options = {}) {
+            options.headers = options.headers || {};
+            options.headers['X-API-Key'] = API_KEY;
+            return fetch(url, options);
+        }
+
+        function setApiKey() {
+            const key = prompt('Enter Dashboard API Key:', API_KEY);
+            if (key) {
+                API_KEY = key;
+                localStorage.setItem('hope_api_key', key);
+                alert('API Key saved');
+            }
+        }
         
         // ═══════════════════════════════════════════════════════════════════
         // QUICK ACTIONS
@@ -1465,30 +1484,30 @@
         
         async function emergencyStop() {
             if (!confirm('⚠️ EMERGENCY STOP: Остановить ВСЕ процессы?')) return;
-            
+
             try {
-                await fetch(`${API_BASE}/api/stop/pump_detector`, {method: 'POST'});
-                await fetch(`${API_BASE}/api/stop/autotrader`, {method: 'POST'});
+                await authFetch(`${API_BASE}/api/stop/pump_detector`, {method: 'POST'});
+                await authFetch(`${API_BASE}/api/stop/autotrader`, {method: 'POST'});
                 alert('✅ Все торговые процессы остановлены');
                 refreshProcesses();
             } catch (e) {
                 alert('❌ Ошибка: ' + e.message);
             }
         }
-        
+
         async function startTrading() {
-            await fetch(`${API_BASE}/api/start/pump_detector`, {method: 'POST'});
-            await fetch(`${API_BASE}/api/start/autotrader`, {method: 'POST'});
+            await authFetch(`${API_BASE}/api/start/pump_detector`, {method: 'POST'});
+            await authFetch(`${API_BASE}/api/start/autotrader`, {method: 'POST'});
             refreshProcesses();
         }
-        
+
         async function pauseTrading() {
-            await fetch(`${API_BASE}/api/stop/pump_detector`, {method: 'POST'});
+            await authFetch(`${API_BASE}/api/stop/pump_detector`, {method: 'POST'});
             refreshProcesses();
         }
-        
+
         async function restartPump() {
-            await fetch(`${API_BASE}/api/restart/pump_detector`, {method: 'POST'});
+            await authFetch(`${API_BASE}/api/restart/pump_detector`, {method: 'POST'});
             refreshProcesses();
         }
         
@@ -1547,7 +1566,7 @@
         }
 
         function openSettings() {
-            alert('Settings panel - Coming soon!');
+            setApiKey();
         }
         
         // ═══════════════════════════════════════════════════════════════════
@@ -1596,8 +1615,12 @@
 
         async function startProc(name) {
             try {
-                const resp = await fetch(`${API_BASE}/api/start/${name}`, {method: 'POST'});
+                const resp = await authFetch(`${API_BASE}/api/start/${name}`, {method: 'POST'});
                 const data = await resp.json();
+                if (resp.status === 401) {
+                    alert('Unauthorized: Check API Key (Settings)');
+                    return;
+                }
                 if (data.success) {
                     console.log(`Started ${name}: PID ${data.pid}`);
                 } else {
@@ -1611,8 +1634,12 @@
 
         async function stopProc(name) {
             try {
-                const resp = await fetch(`${API_BASE}/api/stop/${name}`, {method: 'POST'});
+                const resp = await authFetch(`${API_BASE}/api/stop/${name}`, {method: 'POST'});
                 const data = await resp.json();
+                if (resp.status === 401) {
+                    alert('Unauthorized: Check API Key (Settings)');
+                    return;
+                }
                 if (data.success) {
                     console.log(`Stopped ${name}`);
                 } else {
@@ -1626,8 +1653,12 @@
 
         async function restartProc(name) {
             try {
-                const resp = await fetch(`${API_BASE}/api/restart/${name}`, {method: 'POST'});
+                const resp = await authFetch(`${API_BASE}/api/restart/${name}`, {method: 'POST'});
                 const data = await resp.json();
+                if (resp.status === 401) {
+                    alert('Unauthorized: Check API Key (Settings)');
+                    return;
+                }
                 if (data.success) {
                     console.log(`Restarted ${name}: PID ${data.pid}`);
                 }
@@ -1760,18 +1791,128 @@
         }
         
         // ═══════════════════════════════════════════════════════════════════
+        // WEBSOCKET REAL-TIME UPDATES
+        // ═══════════════════════════════════════════════════════════════════
+
+        let ws = null;
+        let wsReconnectTimer = null;
+
+        function connectWebSocket() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/updates`;
+
+            console.log('Connecting to WebSocket:', wsUrl);
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('ws-status').className = 'status-dot online';
+                if (wsReconnectTimer) {
+                    clearInterval(wsReconnectTimer);
+                    wsReconnectTimer = null;
+                }
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'dashboard_update') {
+                        handleDashboardUpdate(data);
+                    }
+                } catch (e) {
+                    console.error('WS message parse error:', e);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('ws-status').className = 'status-dot offline';
+                // Reconnect after 5 seconds
+                if (!wsReconnectTimer) {
+                    wsReconnectTimer = setTimeout(connectWebSocket, 5000);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                document.getElementById('ws-status').className = 'status-dot warning';
+            };
+        }
+
+        function handleDashboardUpdate(data) {
+            // Update processes
+            if (data.processes) {
+                updateProcessList(data.processes);
+            }
+
+            // Update balances display (if we add a balance widget)
+            if (data.balances && data.balances.USDT) {
+                const usdtBal = document.getElementById('usdt-balance');
+                if (usdtBal) usdtBal.textContent = '$' + data.balances.USDT.toFixed(2);
+            }
+
+            // Update position
+            if (data.position) {
+                updatePositionDisplay(data.position);
+            }
+        }
+
+        function updateProcessList(processes) {
+            const list = document.getElementById('process-list');
+            if (!list) return;
+
+            const order = ['autotrader', 'auto_signal_loop', 'ai_gateway', 'pump_detector'];
+            list.innerHTML = '';
+
+            for (const name of order) {
+                const proc = processes[name];
+                if (!proc) continue;
+
+                const stateClass = proc.state === 'running' ? 'running' :
+                                  proc.state === 'stopped' ? 'stopped' : 'crashed';
+
+                list.innerHTML += `
+                    <div class="process-item ${stateClass}">
+                        <div class="process-info">
+                            <span class="process-name">${name.replace('_', ' ')}</span>
+                            <div class="process-meta">
+                                <span>${proc.uptime_str || '-'}</span>
+                                <span>PID: ${proc.pid || '-'}</span>
+                            </div>
+                        </div>
+                        <div class="process-controls">
+                            <button class="process-btn" onclick="startProc('${name}')" title="Start">▶</button>
+                            <button class="process-btn danger" onclick="stopProc('${name}')" title="Stop">⏹</button>
+                            <button class="process-btn" onclick="restartProc('${name}')" title="Restart">🔄</button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function updatePositionDisplay(pos) {
+            // Update position card if exists
+            const pnlClass = pos.pnl_pct >= 0 ? 'positive' : 'negative';
+            const pnlSign = pos.pnl_pct >= 0 ? '+' : '';
+            // Could update a dedicated position element here
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
         // INITIALIZATION
         // ═══════════════════════════════════════════════════════════════════
-        
+
         document.addEventListener('DOMContentLoaded', () => {
             refreshAll();
             refreshTrades();
             updateClock();
-            
+
+            // Start WebSocket for real-time updates
+            connectWebSocket();
+
             setInterval(updateClock, 1000);
-            setInterval(refreshProcesses, 10000);
-            setInterval(refreshSignals, 5000);
-            setInterval(refreshPrices, 10000);
+            // Fallback polling (WebSocket is primary)
+            setInterval(refreshSignals, 10000);
+            setInterval(refreshPrices, 15000);
         });
     </script>
 </body>

@@ -42,6 +42,13 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, asdict
 
+# Telegram alerts
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
+
 # Add project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -87,6 +94,21 @@ class SystemStatus:
     last_update: str
 
 
+# API Key for protected endpoints (from env or generate random)
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "hope2026")
+
+# Protected endpoints that require API key
+PROTECTED_ENDPOINTS = [
+    "/api/start/",
+    "/api/stop/",
+    "/api/restart/",
+    "/api/signal",
+    "/api/close",
+    "/api/stop",
+    "/api/allowlist"  # POST only
+]
+
+
 # Process configuration for watchdog
 PROCESS_CONFIG = {
     "autotrader": {
@@ -126,9 +148,40 @@ WHITELIST_CONFIG = {
 class DashboardServer:
     """Dashboard backend server."""
 
+    @staticmethod
+    def _create_auth_middleware():
+        """Create auth middleware factory."""
+        @web.middleware
+        async def auth_middleware(request, handler):
+            """Check API key for protected endpoints."""
+            path = request.path
+            method = request.method
+
+            # Check if this is a protected endpoint
+            is_protected = False
+            for endpoint in PROTECTED_ENDPOINTS:
+                if path.startswith(endpoint):
+                    # POST to /api/allowlist is protected, GET is not
+                    if endpoint == "/api/allowlist" and method == "GET":
+                        continue
+                    is_protected = True
+                    break
+
+            if is_protected:
+                api_key = request.headers.get("X-API-Key", "")
+                if api_key != DASHBOARD_API_KEY:
+                    logger.warning(f"Unauthorized access attempt to {path}")
+                    return web.json_response(
+                        {"error": "Unauthorized. Provide X-API-Key header."},
+                        status=401
+                    )
+
+            return await handler(request)
+        return auth_middleware
+
     def __init__(self, port: int = 8080):
         self.port = port
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self._create_auth_middleware()])
         self.clients: list = []
         self.start_time = time.time()
 
@@ -186,6 +239,7 @@ class DashboardServer:
         self.app.router.add_post('/api/close', self.close_position)
         self.app.router.add_post('/api/stop', self.emergency_stop)
         self.app.router.add_get('/ws/prices', self.websocket_handler)
+        self.app.router.add_get('/ws/updates', self.websocket_updates_handler)
 
         # Chart API endpoints
         self.app.router.add_get('/api/metrics', self.get_metrics)
@@ -202,6 +256,10 @@ class DashboardServer:
         self.app.router.add_get('/api/logs/{name}', self.get_logs)
         self.app.router.add_get('/api/allowlist', self.get_allowlist)
         self.app.router.add_post('/api/allowlist', self.update_allowlist)
+
+        # Trading integration
+        self.app.router.add_post('/api/signal', self.create_signal)
+        self.app.router.add_get('/api/trades', self.get_trades)
 
         # Static files
         self.app.router.add_static('/static/', Path(__file__).parent)
@@ -690,6 +748,92 @@ class DashboardServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def create_signal(self, request):
+        """Create a manual trading signal (integrates with trading cycle)."""
+        try:
+            data = await request.json()
+            symbol = data.get("symbol", "").upper()
+            action = data.get("action", "BUY").upper()
+            amount_usd = data.get("amount_usd", 20)
+            reason = data.get("reason", "manual_dashboard")
+
+            if not symbol or not symbol.endswith("USDT"):
+                return web.json_response({"error": "Invalid symbol"}, status=400)
+
+            if action not in ["BUY", "SELL"]:
+                return web.json_response({"error": "Action must be BUY or SELL"}, status=400)
+
+            # Check if symbol is in blacklist
+            if symbol.replace("USDT", "") in WHITELIST_CONFIG["blacklist"]:
+                return web.json_response({"error": f"{symbol} is blacklisted"}, status=400)
+
+            # Create signal file for auto_signal_loop to pick up
+            signal = {
+                "symbol": symbol,
+                "action": action,
+                "amount_usd": amount_usd,
+                "reason": reason,
+                "source": "dashboard",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "priority": "HIGH"
+            }
+
+            signals_dir = Path("state/ai/signals")
+            signals_dir.mkdir(parents=True, exist_ok=True)
+
+            # Write to pending signals
+            pending_file = signals_dir / "pending_signals.jsonl"
+            with open(pending_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(signal) + "\n")
+
+            logger.info(f"Created signal: {action} {symbol} ${amount_usd} ({reason})")
+            return web.json_response({"success": True, "signal": signal})
+
+        except Exception as e:
+            logger.error(f"Create signal failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def get_trades(self, request):
+        """Get recent trades from Binance."""
+        limit = int(request.query.get("limit", 20))
+
+        if not self.binance:
+            return web.json_response({"error": "Binance not connected"}, status=500)
+
+        try:
+            # Get recent trades from executor state
+            trades_file = Path("state/ai/autotrader/trade_history.jsonl")
+            trades = []
+
+            if trades_file.exists():
+                lines = trades_file.read_text().strip().split('\n')
+                for line in lines[-limit:]:
+                    if line.strip():
+                        try:
+                            trades.append(json.loads(line))
+                        except:
+                            pass
+
+            # If no local trades, get from Binance
+            if not trades:
+                # Get recent orders
+                orders = self.binance.get_all_orders(symbol="DOGEUSDT", limit=limit)
+                for o in orders[-limit:]:
+                    if o['status'] == 'FILLED':
+                        trades.append({
+                            "symbol": o['symbol'],
+                            "side": o['side'],
+                            "price": float(o['price']) if float(o['price']) > 0 else float(o['cummulativeQuoteQty']) / float(o['executedQty']),
+                            "qty": float(o['executedQty']),
+                            "time": datetime.fromtimestamp(o['time']/1000, timezone.utc).isoformat(),
+                            "status": "FILLED"
+                        })
+
+            return web.json_response({"trades": trades[-limit:]})
+        except Exception as e:
+            logger.error(f"Get trades failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
     async def close_position(self, request):
         """Close active position."""
         if not self.binance or not self.position:
@@ -709,27 +853,98 @@ class DashboardServer:
             return web.json_response({"error": str(e)}, status=500)
 
     async def emergency_stop(self, request):
-        """Emergency stop - close all and halt."""
-        logger.warning("EMERGENCY STOP triggered!")
+        """Emergency stop - close ALL positions and halt ALL trading processes."""
+        logger.warning("🚨 EMERGENCY STOP triggered!")
 
-        # Close all positions
-        if self.binance and self.position:
+        results = {
+            "positions_closed": [],
+            "positions_failed": [],
+            "processes_stopped": [],
+            "errors": []
+        }
+
+        # 1. Close ALL open positions from Binance
+        if self.binance:
             try:
-                order = self.binance.create_order(
-                    symbol=self.position.symbol,
-                    side="SELL",
-                    type="MARKET",
-                    quantity=self.position.qty
-                )
-                logger.info(f"Emergency close: {order}")
+                account = self.binance.get_account()
+                for balance in account['balances']:
+                    asset = balance['asset']
+                    free = float(balance['free'])
+
+                    # Skip stablecoins and dust
+                    if asset in ['USDT', 'USDC', 'BUSD', 'FDUSD', 'AUD'] or free < 0.0001:
+                        continue
+
+                    # Try to sell all of this asset
+                    symbol = f"{asset}USDT"
+                    try:
+                        # Get lot size
+                        info = self.binance.get_symbol_info(symbol)
+                        if not info:
+                            continue
+
+                        lot_size = None
+                        for f in info['filters']:
+                            if f['filterType'] == 'LOT_SIZE':
+                                lot_size = float(f['stepSize'])
+                                min_qty = float(f['minQty'])
+                                break
+
+                        if lot_size and free >= min_qty:
+                            # Round to step size
+                            qty = (free // lot_size) * lot_size
+                            if qty >= min_qty:
+                                order = self.binance.create_order(
+                                    symbol=symbol,
+                                    side="SELL",
+                                    type="MARKET",
+                                    quantity=qty
+                                )
+                                results["positions_closed"].append({
+                                    "symbol": symbol,
+                                    "qty": qty,
+                                    "order_id": order.get("orderId")
+                                })
+                                logger.info(f"Emergency close {symbol}: {qty}")
+                    except Exception as e:
+                        results["positions_failed"].append({
+                            "symbol": symbol,
+                            "error": str(e)
+                        })
+                        logger.error(f"Failed to close {symbol}: {e}")
             except Exception as e:
-                logger.error(f"Emergency close failed: {e}")
+                results["errors"].append(f"Failed to get account: {e}")
+                logger.error(f"Emergency stop - account error: {e}")
 
-        # Signal AutoTrader to stop
+        # 2. Stop all trading processes
+        for name in ["autotrader", "auto_signal_loop", "pump_detector"]:
+            try:
+                config = PROCESS_CONFIG.get(name)
+                if config:
+                    proc = await asyncio.create_subprocess_exec(
+                        "pkill", "-f", config["pattern"],
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await proc.communicate()
+                    results["processes_stopped"].append(name)
+                    logger.info(f"Stopped {name}")
+            except Exception as e:
+                results["errors"].append(f"Failed to stop {name}: {e}")
+
+        # 3. Create emergency stop flag
         stop_file = Path("state/emergency_stop.flag")
-        stop_file.write_text(datetime.now(timezone.utc).isoformat())
+        stop_file.parent.mkdir(parents=True, exist_ok=True)
+        stop_file.write_text(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "results": results
+        }, indent=2))
 
-        return web.json_response({"success": True, "message": "Emergency stop executed"})
+        # 4. Clear position state
+        self.position = None
+
+        logger.warning(f"🛑 EMERGENCY STOP COMPLETE: {len(results['positions_closed'])} closed, {len(results['processes_stopped'])} processes stopped")
+        return web.json_response({"success": True, "results": results})
 
     async def websocket_handler(self, request):
         """WebSocket for real-time updates."""
@@ -764,9 +979,148 @@ class DashboardServer:
 
         return ws
 
+    async def websocket_updates_handler(self, request):
+        """WebSocket for real-time dashboard updates (processes + balances every 5s)."""
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+
+        self.clients.append(ws)
+        logger.info(f"WS Updates client connected. Total: {len(self.clients)}")
+
+        try:
+            while not ws.closed:
+                # Gather all data
+                update = {
+                    "type": "dashboard_update",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "processes": {},
+                    "balances": {},
+                    "position": None
+                }
+
+                # Get process statuses
+                for name in PROCESS_CONFIG:
+                    update["processes"][name] = await self._get_process_status(name)
+
+                # Get balances
+                if self.binance:
+                    try:
+                        account = self.binance.get_account()
+                        update["balances"] = {
+                            b['asset']: round(float(b['free']), 4)
+                            for b in account['balances']
+                            if float(b['free']) > 0.01
+                        }
+                    except Exception as e:
+                        update["balances_error"] = str(e)
+
+                # Get position
+                self.load_position()
+                if self.position:
+                    if self.binance:
+                        try:
+                            ticker = self.binance.get_symbol_ticker(symbol=self.position.symbol)
+                            self.position.current = float(ticker['price'])
+                            self.position.pnl_pct = round(
+                                (self.position.current - self.position.entry) / self.position.entry * 100, 2
+                            )
+                            self.position.pnl_usd = round(
+                                (self.position.current - self.position.entry) * self.position.qty, 4
+                            )
+                            self.position.value = round(self.position.current * self.position.qty, 2)
+                        except:
+                            pass
+                    update["position"] = asdict(self.position)
+
+                # Send update
+                await ws.send_json(update)
+
+                # Wait 5 seconds
+                await asyncio.sleep(5)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"WS Updates error: {e}")
+        finally:
+            if ws in self.clients:
+                self.clients.remove(ws)
+            logger.info(f"WS Updates client disconnected. Total: {len(self.clients)}")
+
+        return ws
+
+    async def _send_telegram_alert(self, message: str):
+        """Send alert to Telegram."""
+        if not HTTPX_AVAILABLE:
+            logger.warning("httpx not available, skipping Telegram alert")
+            return
+
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID") or os.getenv("TG_ADMIN_CHAT_ID")
+
+        if not bot_token or not chat_id:
+            logger.warning("Telegram credentials not configured")
+            return
+
+        try:
+            async with httpx.AsyncClient() as client:
+                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                await client.post(url, json={
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": "HTML"
+                }, timeout=10)
+                logger.info(f"Telegram alert sent: {message[:50]}...")
+        except Exception as e:
+            logger.error(f"Failed to send Telegram alert: {e}")
+
+    async def _process_watchdog(self):
+        """Background task to monitor processes and send alerts."""
+        logger.info("Process watchdog started")
+        last_states = {}
+
+        while True:
+            try:
+                for name in PROCESS_CONFIG:
+                    status = await self._get_process_status(name)
+                    current_state = status["state"]
+                    prev_state = last_states.get(name)
+
+                    # Check for state change: running -> stopped/crashed
+                    if prev_state == "running" and current_state != "running":
+                        alert_msg = f"🚨 <b>PROCESS DOWN</b>\n\n" \
+                                   f"Process: <code>{name}</code>\n" \
+                                   f"Previous: {prev_state}\n" \
+                                   f"Current: {current_state}\n" \
+                                   f"Time: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
+                        await self._send_telegram_alert(alert_msg)
+                        logger.warning(f"Process {name} went DOWN: {prev_state} -> {current_state}")
+
+                    # Check for recovery: stopped -> running
+                    elif prev_state and prev_state != "running" and current_state == "running":
+                        alert_msg = f"✅ <b>PROCESS RECOVERED</b>\n\n" \
+                                   f"Process: <code>{name}</code>\n" \
+                                   f"PID: {status.get('pid', 'N/A')}\n" \
+                                   f"Time: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
+                        await self._send_telegram_alert(alert_msg)
+                        logger.info(f"Process {name} RECOVERED: {prev_state} -> {current_state}")
+
+                    last_states[name] = current_state
+
+                await asyncio.sleep(30)  # Check every 30 seconds
+            except Exception as e:
+                logger.error(f"Watchdog error: {e}")
+                await asyncio.sleep(60)
+
     def run(self):
-        """Start server."""
+        """Start server with watchdog."""
         logger.info(f"Starting Dashboard Server on http://localhost:{self.port}")
+
+        async def start_with_watchdog():
+            # Start watchdog as background task
+            asyncio.create_task(self._process_watchdog())
+
+        self.app.on_startup.append(lambda app: start_with_watchdog())
         web.run_app(self.app, port=self.port)
 
 
