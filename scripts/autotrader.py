@@ -3,9 +3,9 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-02-04 10:25:00 UTC
+# Modified at: 2026-02-04 11:30:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# Changes: FIX import path for eye_of_god_v3 (scripts dir added to sys.path)
+# Changes: ADD _emit_heartbeat() for Event Bus monitoring (P0 production)
 # === END SIGNATURE ===
 """
 HOPE AI - AutoTrader v1.0
@@ -550,6 +550,9 @@ class AutoTrader:
 
         logger.info(f"AutoTrader initialized in {config.mode} mode")
 
+        # === STARTUP VALIDATION (P0 - PRODUCTION REQUIREMENT) ===
+        self._validate_startup()
+
     def _init_binance_client(self):
         """Initialize Binance client for position verification."""
         if not BINANCE_AVAILABLE:
@@ -566,6 +569,58 @@ class AutoTrader:
                 logger.warning("Binance API keys not found")
         except Exception as e:
             logger.error(f"Failed to init Binance client: {e}")
+
+    def _validate_startup(self):
+        """
+        STARTUP VALIDATION - P0 PRODUCTION REQUIREMENT
+
+        Warns if critical modules are not loaded. Fail-closed principle:
+        - Missing EyeOfGodV3 = degraded decision making
+        - Missing Executor = cannot trade
+        - Missing Binance sync = stale positions
+        """
+        warnings = []
+        criticals = []
+
+        # Check EyeOfGodV3 - CRITICAL for two-chamber decisions
+        if self.eye_of_god is None:
+            criticals.append("EyeOfGodV3 NOT LOADED - using fallback SignalProcessor")
+            logger.critical("🚨 CRITICAL: EyeOfGodV3 not loaded! Decisions will be suboptimal.")
+        else:
+            logger.info("✅ EyeOfGodV3 loaded - two-chamber decisions active")
+
+        # Check OrderExecutor
+        if self.executor is None:
+            criticals.append("OrderExecutor NOT LOADED - trading disabled")
+            logger.critical("🚨 CRITICAL: OrderExecutor not loaded! Cannot execute trades.")
+        else:
+            logger.info(f"✅ OrderExecutor loaded - mode: {self.mode.value}")
+
+        # Check Binance client
+        if self.binance_client is None:
+            warnings.append("Binance client not available - position sync disabled")
+            logger.warning("⚠️ WARNING: Binance client not available")
+        else:
+            logger.info("✅ Binance client initialized")
+
+        # Check Event Bus
+        if not EVENT_BUS_AVAILABLE:
+            warnings.append("Event Bus not available - no event tracing")
+            logger.warning("⚠️ WARNING: Event Bus not available")
+        else:
+            logger.info("✅ Event Bus available")
+
+        # Summary
+        if criticals:
+            logger.critical(f"🚨 STARTUP VALIDATION: {len(criticals)} CRITICAL issues")
+            for c in criticals:
+                logger.critical(f"   - {c}")
+        if warnings:
+            logger.warning(f"⚠️ STARTUP VALIDATION: {len(warnings)} warnings")
+            for w in warnings:
+                logger.warning(f"   - {w}")
+        if not criticals and not warnings:
+            logger.info("✅ STARTUP VALIDATION: All systems OK")
 
     def _sync_with_binance(self):
         """
@@ -1128,8 +1183,10 @@ class AutoTrader:
         
         sync_counter = 0
         protocol_counter = 0
+        heartbeat_counter = 0
         SYNC_INTERVAL = 60  # Sync with Binance every 60 loops (~1 min at 1s interval)
         PROTOCOL_INTERVAL = 300  # Protocol check every 300 loops (~5 min)
+        HEARTBEAT_INTERVAL = 60  # Heartbeat every 60 loops (~1 min)
 
         try:
             while self.running:
@@ -1147,6 +1204,12 @@ class AutoTrader:
                     if protocol_counter >= PROTOCOL_INTERVAL:
                         self._run_protocol_check()
                         protocol_counter = 0
+
+                    # === HEARTBEAT for monitoring (P0 PRODUCTION) ===
+                    heartbeat_counter += 1
+                    if heartbeat_counter >= HEARTBEAT_INTERVAL:
+                        self._emit_heartbeat()
+                        heartbeat_counter = 0
 
                 except Exception as e:
                     logger.error(f"Loop error: {e}")
@@ -1170,6 +1233,42 @@ class AutoTrader:
         print(f"  Positions Closed: {self.stats['positions_closed']}")
         print(f"  Total PnL:        {self.stats['total_pnl']:+.2f}%")
         print("=" * 60 + "\n")
+
+    def _emit_heartbeat(self):
+        """
+        HEARTBEAT - Event Bus monitoring (P0 PRODUCTION REQUIREMENT)
+
+        Emits HEARTBEAT event every ~60 seconds for external monitoring.
+        Allows watchdog systems to detect if autotrader is alive.
+        """
+        if not EVENT_BUS_AVAILABLE or not get_publisher:
+            logger.debug("Heartbeat skip: Event Bus not available")
+            return
+
+        try:
+            publisher = get_publisher()
+            heartbeat_data = {
+                "service": "autotrader",
+                "mode": self.config.mode,
+                "running": self.running,
+                "circuit_breaker_ok": not self.circuit_breaker.is_open,
+                "open_positions": len(self.open_positions),
+                "positions": list(self.open_positions)[:10],  # Max 10 to avoid bloat
+                "stats": {
+                    "signals_received": self.stats["signals_received"],
+                    "signals_traded": self.stats["signals_traded"],
+                    "positions_opened": self.stats["positions_opened"],
+                    "positions_closed": self.stats["positions_closed"],
+                    "total_pnl": self.stats["total_pnl"],
+                },
+                "eye_of_god_active": self.eye_of_god is not None,
+                "binance_synced": self.binance_client is not None,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            publisher.heartbeat(component="autotrader", data=heartbeat_data)
+            logger.debug(f"Heartbeat emitted: positions={len(self.open_positions)}")
+        except Exception as e:
+            logger.warning(f"Heartbeat emit failed: {e}")
     
     def get_status(self) -> Dict:
         """Get current status - uses Binance-synced open_positions"""
@@ -1235,7 +1334,31 @@ def create_api(autotrader: AutoTrader):
     async def reset_circuit_breaker():
         autotrader.circuit_breaker.reset()
         return {"status": "reset"}
-    
+
+    @app.get("/api/health")
+    async def health_check():
+        """Health check endpoint for monitoring - P0 PRODUCTION REQUIREMENT"""
+        from datetime import datetime, timezone
+
+        checks = {
+            "eye_of_god_loaded": autotrader.eye_of_god is not None,
+            "executor_loaded": autotrader.executor is not None,
+            "binance_synced": autotrader.binance_client is not None,
+            "circuit_breaker_ok": not autotrader.circuit_breaker.is_open,
+            "running": autotrader.running,
+        }
+
+        all_ok = all(checks.values())
+
+        return {
+            "status": "healthy" if all_ok else "degraded",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "mode": autotrader.config.mode,
+            "checks": checks,
+            "stats": autotrader.stats,
+            "open_positions": len(autotrader.open_positions),
+        }
+
     return app
 
 
