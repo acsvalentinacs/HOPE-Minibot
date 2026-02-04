@@ -1270,7 +1270,7 @@
                         <span class="chip">ETH</span>
                         <span class="chip">BNB</span>
                         <span class="chip">SOL</span>
-                        <span class="chip">XRP</span>
+                        <span class="chip">AVAX</span>
                     </div>
                 </div>
             </div>
@@ -1454,7 +1454,8 @@
         // ═══════════════════════════════════════════════════════════════════
         // CONFIGURATION
         // ═══════════════════════════════════════════════════════════════════
-        const WATCHDOG_API = 'http://localhost:8080';
+        // Use current host for API calls (works both locally and remotely)
+        const API_BASE = window.location.origin;
         const AUTOTRADER_API = 'http://localhost:8200';
         const AI_GATEWAY_API = 'http://localhost:8100';
         
@@ -1466,8 +1467,8 @@
             if (!confirm('⚠️ EMERGENCY STOP: Остановить ВСЕ процессы?')) return;
             
             try {
-                await fetch(`${WATCHDOG_API}/api/stop/pump_detector`, {method: 'POST'});
-                await fetch(`${WATCHDOG_API}/api/stop/autotrader`, {method: 'POST'});
+                await fetch(`${API_BASE}/api/stop/pump_detector`, {method: 'POST'});
+                await fetch(`${API_BASE}/api/stop/autotrader`, {method: 'POST'});
                 alert('✅ Все торговые процессы остановлены');
                 refreshProcesses();
             } catch (e) {
@@ -1476,18 +1477,18 @@
         }
         
         async function startTrading() {
-            await fetch(`${WATCHDOG_API}/api/start/pump_detector`, {method: 'POST'});
-            await fetch(`${WATCHDOG_API}/api/start/autotrader`, {method: 'POST'});
+            await fetch(`${API_BASE}/api/start/pump_detector`, {method: 'POST'});
+            await fetch(`${API_BASE}/api/start/autotrader`, {method: 'POST'});
             refreshProcesses();
         }
         
         async function pauseTrading() {
-            await fetch(`${WATCHDOG_API}/api/stop/pump_detector`, {method: 'POST'});
+            await fetch(`${API_BASE}/api/stop/pump_detector`, {method: 'POST'});
             refreshProcesses();
         }
         
         async function restartPump() {
-            await fetch(`${WATCHDOG_API}/api/restart/pump_detector`, {method: 'POST'});
+            await fetch(`${API_BASE}/api/restart/pump_detector`, {method: 'POST'});
             refreshProcesses();
         }
         
@@ -1502,16 +1503,51 @@
             fetch('/api/update-allowlist', {method: 'POST'}).then(refreshAllowList);
         }
         
-        function showLogs() {
-            window.open(`${WATCHDOG_API}/api/logs/pump_detector?lines=200`, '_blank');
+        async function showLogs() {
+            const process = prompt('Enter process name (autotrader, auto_signal_loop, ai_gateway, pump_detector):', 'autotrader');
+            if (!process) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/logs/${process}?lines=100`);
+                const data = await resp.json();
+
+                if (data.error) {
+                    alert(`Error: ${data.error}`);
+                    return;
+                }
+
+                // Open in new window with formatted logs
+                const logWindow = window.open('', '_blank', 'width=1000,height=700');
+                logWindow.document.write(`
+                    <html>
+                    <head>
+                        <title>Logs: ${process}</title>
+                        <style>
+                            body { background: #0a0f1a; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; padding: 20px; margin: 0; }
+                            h1 { color: #00d4ff; margin-bottom: 10px; }
+                            pre { background: #111827; padding: 15px; border-radius: 8px; overflow: auto; font-size: 12px; line-height: 1.5; }
+                            .refresh { background: #00d4ff; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-bottom: 10px; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>📜 ${process} logs</h1>
+                        <p style="color:#64748b;">File: ${data.log_file}</p>
+                        <button class="refresh" onclick="location.reload()">🔄 Refresh</button>
+                        <pre>${data.lines.join('\\n')}</pre>
+                    </body>
+                    </html>
+                `);
+            } catch (e) {
+                alert(`Error loading logs: ${e.message}`);
+            }
         }
-        
+
         function showAnalytics() {
-            alert('Analytics panel - TODO');
+            alert('Analytics panel - Coming soon!');
         }
-        
+
         function openSettings() {
-            alert('Settings panel - TODO');
+            alert('Settings panel - Coming soon!');
         }
         
         // ═══════════════════════════════════════════════════════════════════
@@ -1520,62 +1556,122 @@
         
         async function refreshProcesses() {
             try {
-                const resp = await fetch(`${WATCHDOG_API}/api/status`);
+                const resp = await fetch(`${API_BASE}/api/processes`);
                 const data = await resp.json();
-                
+
                 const list = document.getElementById('process-list');
                 list.innerHTML = '';
-                
-                const order = ['ai_gateway', 'pump_detector', 'autotrader', 'friend_bridge', 'tradingview_allowlist', 'tg_bot'];
-                
+
+                const order = ['autotrader', 'auto_signal_loop', 'ai_gateway', 'pump_detector'];
+
                 for (const name of order) {
                     const proc = data[name];
                     if (!proc) continue;
-                    
+
+                    const stateClass = proc.state === 'running' ? 'running' :
+                                      proc.state === 'stopped' ? 'stopped' : 'crashed';
+
                     list.innerHTML += `
-                        <div class="process-item ${proc.state}">
+                        <div class="process-item ${stateClass}">
                             <div class="process-info">
-                                <span class="process-name">${name}</span>
+                                <span class="process-name">${name.replace('_', ' ')}</span>
                                 <div class="process-meta">
-                                    <span>${proc.uptime_str}</span>
+                                    <span>${proc.uptime_str || '-'}</span>
                                     <span>PID: ${proc.pid || '-'}</span>
                                 </div>
                             </div>
                             <div class="process-controls">
-                                <button class="process-btn" onclick="fetch('${WATCHDOG_API}/api/start/${name}',{method:'POST'}).then(refreshProcesses)">▶</button>
-                                <button class="process-btn danger" onclick="fetch('${WATCHDOG_API}/api/stop/${name}',{method:'POST'}).then(refreshProcesses)">⏹</button>
-                                <button class="process-btn" onclick="fetch('${WATCHDOG_API}/api/restart/${name}',{method:'POST'}).then(refreshProcesses)">🔄</button>
+                                <button class="process-btn" onclick="startProc('${name}')" title="Start">▶</button>
+                                <button class="process-btn danger" onclick="stopProc('${name}')" title="Stop">⏹</button>
+                                <button class="process-btn" onclick="restartProc('${name}')" title="Restart">🔄</button>
                             </div>
                         </div>
                     `;
                 }
             } catch (e) {
                 console.error('Process refresh failed:', e);
+                document.getElementById('process-list').innerHTML = '<div style="color:red;padding:10px;">Failed to load processes</div>';
+            }
+        }
+
+        async function startProc(name) {
+            try {
+                const resp = await fetch(`${API_BASE}/api/start/${name}`, {method: 'POST'});
+                const data = await resp.json();
+                if (data.success) {
+                    console.log(`Started ${name}: PID ${data.pid}`);
+                } else {
+                    alert(`Failed to start ${name}: ${data.error}`);
+                }
+                refreshProcesses();
+            } catch (e) {
+                alert(`Error: ${e.message}`);
+            }
+        }
+
+        async function stopProc(name) {
+            try {
+                const resp = await fetch(`${API_BASE}/api/stop/${name}`, {method: 'POST'});
+                const data = await resp.json();
+                if (data.success) {
+                    console.log(`Stopped ${name}`);
+                } else {
+                    alert(`Failed to stop ${name}: ${data.error}`);
+                }
+                refreshProcesses();
+            } catch (e) {
+                alert(`Error: ${e.message}`);
+            }
+        }
+
+        async function restartProc(name) {
+            try {
+                const resp = await fetch(`${API_BASE}/api/restart/${name}`, {method: 'POST'});
+                const data = await resp.json();
+                if (data.success) {
+                    console.log(`Restarted ${name}: PID ${data.pid}`);
+                }
+                refreshProcesses();
+            } catch (e) {
+                alert(`Error: ${e.message}`);
             }
         }
         
-        function refreshAllowList() {
-            // Core (static)
-            const core = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA', 'AVAX', 'LINK', 'TRX'];
-            document.getElementById('core-chips').innerHTML = 
-                core.map(s => `<span class="chip">${s}</span>`).join('');
-            
-            // Dynamic & Hot from API
-            fetch('/api/allowlist')
-                .then(r => r.json())
-                .then(data => {
-                    if (data.dynamic) {
-                        document.getElementById('dynamic-chips').innerHTML = 
-                            data.dynamic.slice(0, 10).map(s => `<span class="chip">${s.replace('USDT','')}</span>`).join('');
-                        document.getElementById('dynamic-count').textContent = `${data.dynamic.length} coins`;
-                    }
-                    if (data.hot) {
-                        document.getElementById('hot-chips').innerHTML = 
-                            data.hot.map(s => `<span class="chip hot">${s.replace('USDT','')}</span>`).join('');
-                        document.getElementById('hot-count').textContent = `${data.hot.length} coins`;
-                    }
-                })
-                .catch(() => {});
+        async function refreshAllowList() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/allowlist`);
+                const data = await resp.json();
+
+                // Core chips
+                if (data.core) {
+                    document.getElementById('core-chips').innerHTML =
+                        data.core.map(s => `<span class="chip">${s}</span>`).join('');
+                }
+
+                // Dynamic chips
+                if (data.dynamic && data.dynamic.length > 0) {
+                    document.getElementById('dynamic-chips').innerHTML =
+                        data.dynamic.slice(0, 15).map(s => `<span class="chip">${s.replace('USDT','')}</span>`).join('');
+                    document.getElementById('dynamic-count').textContent = `${data.dynamic.length} coins`;
+                } else if (data.extended) {
+                    // Show extended as fallback
+                    document.getElementById('dynamic-chips').innerHTML =
+                        data.extended.map(s => `<span class="chip">${s}</span>`).join('');
+                    document.getElementById('dynamic-count').textContent = `${data.extended.length} coins`;
+                }
+
+                // Hot chips
+                if (data.hot && data.hot.length > 0) {
+                    document.getElementById('hot-chips').innerHTML =
+                        data.hot.map(s => `<span class="chip hot">${s.replace('USDT','')}</span>`).join('');
+                    document.getElementById('hot-count').textContent = `${data.hot.length} coins`;
+                } else {
+                    document.getElementById('hot-chips').innerHTML = '<span style="color:var(--text-muted)">No hot coins</span>';
+                    document.getElementById('hot-count').textContent = '0';
+                }
+            } catch (e) {
+                console.error('AllowList refresh failed:', e);
+            }
         }
         
         function refreshPrices() {

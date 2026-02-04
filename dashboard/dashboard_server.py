@@ -3,7 +3,7 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-31 04:20:00 UTC
 # Modified by: Claude (opus-4)
-# Modified at: 2026-01-31 10:15:00 UTC
+# Modified at: 2026-02-04 01:00:00 UTC
 # Purpose: HOPE AI Dashboard Backend Server + Chart APIs
 # === END SIGNATURE ===
 """
@@ -35,16 +35,22 @@ import json
 import time
 import asyncio
 import logging
+import subprocess
+import signal
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, asdict
 
 # Add project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
-load_dotenv(Path("C:/secrets/hope.env"))
+# Cross-platform secrets loading
+if sys.platform == 'win32':
+    load_dotenv(Path("C:/secrets/hope.env"))
+else:
+    load_dotenv(Path("/opt/hope/secrets/hope.env"))
 
 from aiohttp import web
 import aiohttp_cors
@@ -81,6 +87,42 @@ class SystemStatus:
     last_update: str
 
 
+# Process configuration for watchdog
+PROCESS_CONFIG = {
+    "autotrader": {
+        "cmd": "/opt/hope/venv/bin/python scripts/autotrader.py --mode LIVE --api-port 8200 --confirm",
+        "cwd": "/opt/hope/minibot",
+        "log": "logs/autotrader_live.log",
+        "pattern": "autotrader.py.*--mode LIVE"
+    },
+    "auto_signal_loop": {
+        "cmd": "/opt/hope/venv/bin/python scripts/auto_signal_loop.py --mode LIVE",
+        "cwd": "/opt/hope/minibot",
+        "log": "logs/auto_signal.log",
+        "pattern": "auto_signal_loop.py.*--mode LIVE"
+    },
+    "ai_gateway": {
+        "cmd": "/opt/hope/venv/bin/python -m ai_gateway --port 8100",
+        "cwd": "/opt/hope/minibot",
+        "log": "logs/ai_gateway.log",
+        "pattern": "ai_gateway.*--port 8100"
+    },
+    "pump_detector": {
+        "cmd": "/opt/hope/venv/bin/python scripts/signal_watcher.py --watch",
+        "cwd": "/opt/hope/minibot",
+        "log": "logs/signal_watcher.log",
+        "pattern": "signal_watcher.py.*--watch"
+    },
+}
+
+# Whitelist configuration
+WHITELIST_CONFIG = {
+    "core": ["DOGE", "PEPE", "SHIB", "SUI", "SEI", "APT", "ARB", "XRP", "LINK", "ADA"],
+    "extended": ["OP", "INJ", "NEAR", "DOT", "ATOM", "UNI", "LTC", "JUP", "TIA", "RENDER"],
+    "blacklist": ["BTC", "ETH", "BNB", "SOL", "AVAX"]
+}
+
+
 class DashboardServer:
     """Dashboard backend server."""
 
@@ -93,8 +135,8 @@ class DashboardServer:
         # Binance client
         try:
             from binance.client import Client
-            api_key = os.getenv('BINANCE_MAINNET_API_KEY')
-            api_secret = os.getenv('BINANCE_MAINNET_API_SECRET')
+            api_key = os.getenv('BINANCE_API_KEY')
+            api_secret = os.getenv('BINANCE_API_SECRET')
             self.binance = Client(api_key, api_secret)
             logger.info("Binance client initialized")
         except Exception as e:
@@ -151,6 +193,15 @@ class DashboardServer:
         self.app.router.add_get('/api/chart/winrate', self.get_chart_winrate)
         self.app.router.add_get('/api/chart/confidence', self.get_chart_confidence)
         self.app.router.add_get('/api/chart/model', self.get_chart_model)
+
+        # Process management endpoints (Watchdog API)
+        self.app.router.add_get('/api/processes', self.get_processes)
+        self.app.router.add_post('/api/start/{name}', self.start_process)
+        self.app.router.add_post('/api/stop/{name}', self.stop_process)
+        self.app.router.add_post('/api/restart/{name}', self.restart_process)
+        self.app.router.add_get('/api/logs/{name}', self.get_logs)
+        self.app.router.add_get('/api/allowlist', self.get_allowlist)
+        self.app.router.add_post('/api/allowlist', self.update_allowlist)
 
         # Static files
         self.app.router.add_static('/static/', Path(__file__).parent)
@@ -419,6 +470,225 @@ class DashboardServer:
                 pass
 
         return web.json_response({"current": metrics, "history": history})
+
+    # === PROCESS MANAGEMENT (WATCHDOG) ===
+
+    async def _get_process_status(self, name: str) -> Dict[str, Any]:
+        """Get status of a single process."""
+        config = PROCESS_CONFIG.get(name)
+        if not config:
+            return {"name": name, "state": "unknown", "pid": None}
+
+        try:
+            # Use pgrep to find process
+            proc = await asyncio.create_subprocess_exec(
+                "pgrep", "-f", config["pattern"],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+
+            if proc.returncode == 0 and stdout.strip():
+                pids = stdout.decode().strip().split('\n')
+                pid = int(pids[0])
+
+                # Get uptime using ps
+                ps_proc = await asyncio.create_subprocess_exec(
+                    "ps", "-o", "etimes=", "-p", str(pid),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                ps_out, _ = await ps_proc.communicate()
+                uptime_sec = int(ps_out.decode().strip()) if ps_out.strip() else 0
+
+                # Format uptime
+                hours, remainder = divmod(uptime_sec, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                uptime_str = f"{hours}h {minutes}m" if hours else f"{minutes}m {seconds}s"
+
+                return {
+                    "name": name,
+                    "state": "running",
+                    "pid": pid,
+                    "uptime": uptime_sec,
+                    "uptime_str": uptime_str
+                }
+            else:
+                return {"name": name, "state": "stopped", "pid": None, "uptime_str": "-"}
+        except Exception as e:
+            logger.error(f"Failed to get status for {name}: {e}")
+            return {"name": name, "state": "error", "pid": None, "error": str(e)}
+
+    async def get_processes(self, request):
+        """Get status of all managed processes."""
+        statuses = {}
+        for name in PROCESS_CONFIG:
+            statuses[name] = await self._get_process_status(name)
+        return web.json_response(statuses)
+
+    async def start_process(self, request):
+        """Start a process."""
+        name = request.match_info.get('name')
+        config = PROCESS_CONFIG.get(name)
+
+        if not config:
+            return web.json_response({"error": f"Unknown process: {name}"}, status=400)
+
+        # Check if already running
+        status = await self._get_process_status(name)
+        if status["state"] == "running":
+            return web.json_response({"error": f"{name} is already running", "pid": status["pid"]}, status=400)
+
+        try:
+            # Start process with nohup
+            log_path = Path(config["cwd"]) / config["log"]
+            cmd = f"cd {config['cwd']} && nohup {config['cmd']} >> {log_path} 2>&1 &"
+
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
+
+            # Wait a bit and check if started
+            await asyncio.sleep(2)
+            status = await self._get_process_status(name)
+
+            if status["state"] == "running":
+                logger.info(f"Started {name} with PID {status['pid']}")
+                return web.json_response({"success": True, "name": name, "pid": status["pid"]})
+            else:
+                return web.json_response({"error": f"Failed to start {name}"}, status=500)
+        except Exception as e:
+            logger.error(f"Failed to start {name}: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def stop_process(self, request):
+        """Stop a process."""
+        name = request.match_info.get('name')
+        config = PROCESS_CONFIG.get(name)
+
+        if not config:
+            return web.json_response({"error": f"Unknown process: {name}"}, status=400)
+
+        status = await self._get_process_status(name)
+        if status["state"] != "running":
+            return web.json_response({"error": f"{name} is not running"}, status=400)
+
+        try:
+            # Kill process
+            proc = await asyncio.create_subprocess_exec(
+                "pkill", "-f", config["pattern"],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
+
+            await asyncio.sleep(1)
+            status = await self._get_process_status(name)
+
+            if status["state"] == "stopped":
+                logger.info(f"Stopped {name}")
+                return web.json_response({"success": True, "name": name})
+            else:
+                # Force kill
+                await asyncio.create_subprocess_exec("pkill", "-9", "-f", config["pattern"])
+                return web.json_response({"success": True, "name": name, "force": True})
+        except Exception as e:
+            logger.error(f"Failed to stop {name}: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def restart_process(self, request):
+        """Restart a process."""
+        name = request.match_info.get('name')
+
+        # Stop first
+        stop_resp = await self.stop_process(request)
+        if stop_resp.status >= 400:
+            # If not running, just start
+            pass
+
+        await asyncio.sleep(1)
+
+        # Start
+        return await self.start_process(request)
+
+    async def get_logs(self, request):
+        """Get logs for a process."""
+        name = request.match_info.get('name')
+        lines = int(request.query.get('lines', 100))
+        config = PROCESS_CONFIG.get(name)
+
+        if not config:
+            return web.json_response({"error": f"Unknown process: {name}"}, status=400)
+
+        try:
+            log_path = Path(config["cwd"]) / config["log"]
+
+            proc = await asyncio.create_subprocess_exec(
+                "tail", "-n", str(lines), str(log_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode == 0:
+                return web.json_response({
+                    "name": name,
+                    "log_file": str(log_path),
+                    "lines": stdout.decode('utf-8', errors='replace').split('\n')
+                })
+            else:
+                return web.json_response({
+                    "error": stderr.decode('utf-8', errors='replace'),
+                    "log_file": str(log_path)
+                }, status=404)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def get_allowlist(self, request):
+        """Get current allowlist configuration."""
+        # Try to load dynamic allowlist from file
+        dynamic = []
+        hot = []
+
+        allowlist_file = Path("config/allowlist_dynamic.json")
+        if allowlist_file.exists():
+            try:
+                data = json.loads(allowlist_file.read_text())
+                dynamic = data.get("symbols", [])
+                hot = data.get("hot", [])
+            except:
+                pass
+
+        return web.json_response({
+            "core": WHITELIST_CONFIG["core"],
+            "extended": WHITELIST_CONFIG["extended"],
+            "dynamic": dynamic,
+            "hot": hot,
+            "blacklist": WHITELIST_CONFIG["blacklist"]
+        })
+
+    async def update_allowlist(self, request):
+        """Update dynamic allowlist."""
+        try:
+            data = await request.json()
+            symbols = data.get("symbols", [])
+            hot = data.get("hot", [])
+
+            allowlist_file = Path("config/allowlist_dynamic.json")
+            allowlist_file.parent.mkdir(parents=True, exist_ok=True)
+            allowlist_file.write_text(json.dumps({
+                "symbols": symbols,
+                "hot": hot,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }, indent=2))
+
+            logger.info(f"Updated allowlist: {len(symbols)} symbols, {len(hot)} hot")
+            return web.json_response({"success": True, "count": len(symbols)})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
 
     async def close_position(self, request):
         """Close active position."""
