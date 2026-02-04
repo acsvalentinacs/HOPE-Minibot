@@ -3,9 +3,13 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-29 14:20:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-02-04 11:30:00 UTC
+# Modified at: 2026-02-04 21:15:00 UTC
 # Purpose: HOPE AI AutoTrader - Complete autonomous trading loop
-# Changes: ADD _emit_heartbeat() for Event Bus monitoring (P0 production)
+# Changes: INTEGRATE AdaptiveTrader for intelligent position sizing (P0 production)
+#          - Adaptive Position Sizing (confidence-based)
+#          - Time-Based Strategy Switching
+#          - Loss Recovery Mode
+#          - Cascade Detection
 # === END SIGNATURE ===
 """
 HOPE AI - AutoTrader v1.0
@@ -151,6 +155,21 @@ except ImportError:
     JOURNAL_AVAILABLE = False
     init_journal = None
     logging.warning("Event Journal not available")
+
+# Import Adaptive Trading for intelligent parameter optimization
+try:
+    from core.adaptive_trading import (
+        get_adaptive_trader,
+        init_adaptive_trader,
+        AdaptiveTrader,
+        TradingStrategy,
+        AdaptiveTradeParams,
+    )
+    ADAPTIVE_TRADING_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_TRADING_AVAILABLE = False
+    get_adaptive_trader = None
+    logging.warning("Adaptive Trading not available")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -545,6 +564,21 @@ class AutoTrader:
         # Signal queue
         self.signal_queue: deque = deque(maxlen=100)
 
+        # === ADAPTIVE TRADING (NEW - P0 PRODUCTION) ===
+        self.adaptive_trader = None
+        if ADAPTIVE_TRADING_AVAILABLE:
+            try:
+                self.adaptive_trader = init_adaptive_trader(
+                    base_position_usdt=config.default_position_usdt,
+                    min_position_usdt=5.0,
+                    max_position_usdt=config.max_position_usdt,
+                    loss_recovery_threshold=-20.0,  # Enter recovery at -$20 daily
+                    cascade_threshold=3,  # Detect cascade at 3+ concurrent signals
+                )
+                logger.info("AdaptiveTrader initialized - intelligent position sizing active")
+            except Exception as e:
+                logger.warning(f"AdaptiveTrader init failed: {e}, using fixed sizes")
+
         # === COOLDOWN TRACKING (NEW - FIX #4) ===
         # Maps symbol -> timestamp when it was last closed
         self.symbol_cooldown: Dict[str, datetime] = {}
@@ -621,6 +655,13 @@ class AutoTrader:
             logger.warning("⚠️ WARNING: Event Bus not available")
         else:
             logger.info("✅ Event Bus available")
+
+        # Check Adaptive Trading (NEW - P0)
+        if self.adaptive_trader is None:
+            warnings.append("Adaptive Trading not available - using fixed position sizes")
+            logger.warning("⚠️ WARNING: Adaptive Trading not available")
+        else:
+            logger.info("✅ Adaptive Trading initialized - intelligent sizing active")
 
         # Summary
         if criticals:
@@ -931,7 +972,7 @@ class AutoTrader:
         return decision
 
     def _execute_trade_from_eye(self, decision):
-        """Execute trade based on Eye of God decision."""
+        """Execute trade based on Eye of God decision with Adaptive Trading."""
         # === COOLDOWN CHECK (FIX #4) ===
         is_blocked, block_reason = self._is_symbol_blocked(decision.symbol)
         if is_blocked:
@@ -939,7 +980,45 @@ class AutoTrader:
             self.stats["signals_skipped"] += 1
             return
 
-        logger.info(f"🔥 EYE DECISION: BUY {decision.symbol} | ${decision.position_size_usdt}")
+        # === ADAPTIVE TRADING PARAMETERS (NEW - P0) ===
+        position_size = decision.position_size_usdt
+        target_pct = decision.target_pct
+        stop_pct = decision.stop_pct
+        trailing_activation = 0.5  # Default
+        trailing_delta = 0.3       # Default
+        adaptive_adjustments = []
+
+        if self.adaptive_trader is not None:
+            try:
+                # Calculate daily PnL from circuit breaker tracking
+                daily_pnl = self.circuit_breaker.daily_loss
+
+                # Get adaptive parameters
+                adaptive_params = self.adaptive_trader.get_trade_params(
+                    symbol=decision.symbol,
+                    confidence=decision.confidence,
+                    open_positions=self.open_positions,
+                    daily_pnl=daily_pnl,
+                )
+
+                # Use adaptive values
+                position_size = adaptive_params.position_size_usdt
+                target_pct = adaptive_params.target_pct
+                stop_pct = adaptive_params.stop_pct
+                trailing_activation = adaptive_params.trailing_activation_pct
+                trailing_delta = adaptive_params.trailing_delta_pct
+                adaptive_adjustments = adaptive_params.adjustments
+
+                logger.info(
+                    f"📊 ADAPTIVE: {decision.symbol} | "
+                    f"${position_size:.2f} | {adaptive_params.strategy.value} | "
+                    f"T:{target_pct}%/S:{stop_pct}% | {', '.join(adaptive_adjustments[:2])}"
+                )
+
+            except Exception as e:
+                logger.warning(f"Adaptive trading failed: {e}, using Eye of God defaults")
+
+        logger.info(f"🔥 EYE DECISION: BUY {decision.symbol} | ${position_size:.2f}")
 
         # Subscribe to price feed
         self.watch_symbols.add(decision.symbol)
@@ -948,11 +1027,11 @@ class AutoTrader:
         # === FEE-ADJUSTED TARGETS ===
         # Binance VIP0: 0.1% taker fee per side = 0.2% round-trip
         TAKER_FEE_PCT = 0.10
-        fee_adjusted_target = decision.target_pct + (TAKER_FEE_PCT * 2)  # Add RT fee to target
-        fee_adjusted_stop = decision.stop_pct - TAKER_FEE_PCT  # Subtract exit fee from stop
+        fee_adjusted_target = target_pct + (TAKER_FEE_PCT * 2)  # Add RT fee to target
+        fee_adjusted_stop = stop_pct - TAKER_FEE_PCT  # Subtract exit fee from stop
 
         logger.info(
-            f"  Targets: raw={decision.target_pct:+.2f}%/{decision.stop_pct:+.2f}% | "
+            f"  Targets: raw={target_pct:+.2f}%/{stop_pct:+.2f}% | "
             f"fee-adj={fee_adjusted_target:+.2f}%/{fee_adjusted_stop:+.2f}%"
         )
 
@@ -981,12 +1060,12 @@ class AutoTrader:
         if self.executor:
             result = self.executor.market_buy(
                 symbol=decision.symbol,
-                quote_amount=decision.position_size_usdt,
-                target_pct=fee_adjusted_target,  # Use decision target + fee adjustment
-                stop_pct=fee_adjusted_stop,       # Use decision stop - fee adjustment
+                quote_amount=position_size,  # Use ADAPTIVE position size
+                target_pct=fee_adjusted_target,  # Use adaptive target + fee adjustment
+                stop_pct=fee_adjusted_stop,       # Use adaptive stop - fee adjustment
                 timeout_seconds=decision.timeout_sec,
-                trailing_activation_pct=0.5,      # Activate trailing at +0.5%
-                trailing_delta_pct=0.3,           # Trail by 0.3%
+                trailing_activation_pct=trailing_activation,  # Use ADAPTIVE trailing
+                trailing_delta_pct=trailing_delta,            # Use ADAPTIVE trailing delta
             )
 
             if result.success:
@@ -1039,8 +1118,8 @@ class AutoTrader:
             else:
                 logger.error(f"  ❌ Order failed: {result.error}")
         else:
-            # DRY mode
-            logger.info(f"  [DRY] Would buy ${decision.position_size_usdt} of {decision.symbol}")
+            # DRY mode - use ADAPTIVE position size
+            logger.info(f"  [DRY] Would buy ${position_size:.2f} of {decision.symbol}")
             self._record_trade_open(decision.symbol)  # Track even in DRY mode
             self.stats["signals_traded"] += 1
     
