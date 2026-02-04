@@ -1115,6 +1115,197 @@
         ::-webkit-scrollbar-thumb:hover {
             background: var(--text-muted);
         }
+
+        /* ═══════════════════════════════════════════════════════════════════
+           MODAL STYLES
+           ═══════════════════════════════════════════════════════════════════ */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-xl);
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg);
+            width: 95%;
+            max-width: 1400px;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-lg);
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+        }
+
+        .modal-title {
+            font-size: calc(20px * var(--scale));
+            font-weight: 700;
+            color: var(--accent-cyan);
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: calc(24px * var(--scale));
+            cursor: pointer;
+            padding: var(--space-sm);
+        }
+
+        .modal-close:hover {
+            color: var(--accent-red);
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: var(--space-lg);
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: var(--space-md);
+            padding: var(--space-lg);
+            border-top: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+        }
+
+        /* Report Summary */
+        .report-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: var(--space-md);
+            margin-bottom: var(--space-xl);
+            padding: var(--space-lg);
+            background: var(--bg-card);
+            border-radius: var(--radius-md);
+        }
+
+        .summary-item {
+            text-align: center;
+        }
+
+        .summary-value {
+            font-size: calc(24px * var(--scale));
+            font-weight: 700;
+            font-family: var(--font-mono);
+        }
+
+        .summary-value.positive { color: var(--accent-green); }
+        .summary-value.negative { color: var(--accent-red); }
+
+        .summary-label {
+            font-size: calc(11px * var(--scale));
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-top: var(--space-xs);
+        }
+
+        /* Report Table */
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: var(--font-mono);
+            font-size: calc(12px * var(--scale));
+        }
+
+        .report-table th {
+            background: var(--bg-card);
+            padding: var(--space-sm) var(--space-md);
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            font-size: calc(10px * var(--scale));
+            letter-spacing: 0.5px;
+            position: sticky;
+            top: 0;
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .report-table td {
+            padding: var(--space-sm) var(--space-md);
+            border-bottom: 1px solid var(--border-subtle);
+            white-space: nowrap;
+        }
+
+        .report-table tr:hover {
+            background: var(--bg-elevated);
+        }
+
+        .report-table .profit-positive {
+            color: var(--accent-green);
+        }
+
+        .report-table .profit-negative {
+            color: var(--accent-red);
+        }
+
+        .report-table .status-open {
+            background: var(--accent-yellow);
+            color: var(--bg-deep);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: calc(10px * var(--scale));
+        }
+
+        .report-table .status-closed {
+            background: var(--accent-green);
+            color: var(--bg-deep);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: calc(10px * var(--scale));
+        }
+
+        .report-filters {
+            display: flex;
+            gap: var(--space-md);
+            margin-bottom: var(--space-lg);
+            flex-wrap: wrap;
+        }
+
+        .report-filter {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+
+        .report-filter select,
+        .report-filter input {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            padding: var(--space-sm) var(--space-md);
+            font-family: var(--font-mono);
+            font-size: calc(12px * var(--scale));
+        }
+
+        .report-filter label {
+            color: var(--text-secondary);
+            font-size: calc(12px * var(--scale));
+        }
     </style>
 </head>
 <body>
@@ -1187,11 +1378,14 @@
         
         <!-- Group 3: Analysis (Periodic) -->
         <div class="action-group">
+            <button class="btn btn-primary" onclick="showReport()">
+                <span class="btn-icon">📊</span> Отчет
+            </button>
             <button class="btn btn-ghost" onclick="showLogs()">
                 <span class="btn-icon">📜</span> Logs
             </button>
             <button class="btn btn-ghost" onclick="showAnalytics()">
-                <span class="btn-icon">📊</span> Analytics
+                <span class="btn-icon">📈</span> Analytics
             </button>
             <button class="btn btn-ghost" onclick="openSettings()">
                 <span class="btn-icon">⚙️</span> Settings
@@ -1449,7 +1643,92 @@
             </div>
         </div>
     </div>
-    
+
+    <!-- REPORT MODAL -->
+    <div class="modal-overlay" id="report-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title">📊 Binance Trading Report</span>
+                <button class="modal-close" onclick="closeReport()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Filters -->
+                <div class="report-filters">
+                    <div class="report-filter">
+                        <label>Период:</label>
+                        <select id="report-days" onchange="loadReport()">
+                            <option value="7">7 дней</option>
+                            <option value="30" selected>30 дней</option>
+                            <option value="90">90 дней</option>
+                            <option value="365">1 год</option>
+                        </select>
+                    </div>
+                    <div class="report-filter">
+                        <label>Coin:</label>
+                        <input type="text" id="report-symbol" placeholder="Все" style="width: 100px;">
+                    </div>
+                    <button class="btn btn-secondary" onclick="loadReport()">🔄 Обновить</button>
+                </div>
+
+                <!-- Summary -->
+                <div class="report-summary" id="report-summary">
+                    <div class="summary-item">
+                        <div class="summary-value" id="summary-trades">-</div>
+                        <div class="summary-label">Trades</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="summary-winrate">-</div>
+                        <div class="summary-label">Win Rate</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="summary-profit">-</div>
+                        <div class="summary-label">Total P&L</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="summary-volume">-</div>
+                        <div class="summary-label">Volume</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="summary-avg">-</div>
+                        <div class="summary-label">Avg Trade</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="summary-open">-</div>
+                        <div class="summary-label">Open</div>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div style="overflow-x: auto;">
+                    <table class="report-table" id="report-table">
+                        <thead>
+                            <tr>
+                                <th>Coin</th>
+                                <th>Buy Date</th>
+                                <th>Buy Price</th>
+                                <th>Sell Date</th>
+                                <th>Sell Price</th>
+                                <th>Qty</th>
+                                <th>Spent $</th>
+                                <th>Gained $</th>
+                                <th>Profit $</th>
+                                <th>%</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="report-tbody">
+                            <tr><td colspan="11" style="text-align:center;padding:40px;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="exportReport()">📥 Export CSV</button>
+                <button class="btn btn-ghost" onclick="closeReport()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // ═══════════════════════════════════════════════════════════════════
         // CONFIGURATION
@@ -1510,7 +1789,133 @@
             await authFetch(`${API_BASE}/api/restart/pump_detector`, {method: 'POST'});
             refreshProcesses();
         }
-        
+
+        // ═══════════════════════════════════════════════════════════════════
+        // REPORT FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════════
+        let reportData = null;
+
+        function showReport() {
+            document.getElementById('report-modal').classList.add('active');
+            loadReport();
+        }
+
+        function closeReport() {
+            document.getElementById('report-modal').classList.remove('active');
+        }
+
+        async function loadReport() {
+            const days = document.getElementById('report-days').value;
+            const symbol = document.getElementById('report-symbol').value.trim();
+
+            const tbody = document.getElementById('report-tbody');
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;">⏳ Loading...</td></tr>';
+
+            try {
+                let url = `${API_BASE}/api/report?days=${days}`;
+                if (symbol) {
+                    url += `&symbol=${symbol.toUpperCase()}USDT`;
+                }
+
+                const resp = await fetch(url);
+                const data = await resp.json();
+
+                if (data.error) {
+                    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--accent-red);">Error: ${data.error}</td></tr>`;
+                    return;
+                }
+
+                reportData = data;
+
+                // Update summary
+                const s = data.summary;
+                document.getElementById('summary-trades').textContent = s.total_trades;
+                document.getElementById('summary-winrate').textContent = s.winrate + '%';
+                document.getElementById('summary-winrate').className = 'summary-value ' + (s.winrate >= 50 ? 'positive' : 'negative');
+
+                const profitEl = document.getElementById('summary-profit');
+                profitEl.textContent = (s.total_profit_usd >= 0 ? '+' : '') + '$' + s.total_profit_usd.toFixed(2);
+                profitEl.className = 'summary-value ' + (s.total_profit_usd >= 0 ? 'positive' : 'negative');
+
+                document.getElementById('summary-volume').textContent = '$' + s.total_volume_usd.toFixed(0);
+                document.getElementById('summary-avg').textContent = (s.avg_profit_pct >= 0 ? '+' : '') + s.avg_profit_pct + '%';
+                document.getElementById('summary-avg').className = 'summary-value ' + (s.avg_profit_pct >= 0 ? 'positive' : 'negative');
+                document.getElementById('summary-open').textContent = s.open_positions;
+
+                // Build table
+                if (!data.trades || data.trades.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;">No trades found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = '';
+                for (const t of data.trades) {
+                    const profitClass = t.profit_usd >= 0 ? 'profit-positive' : 'profit-negative';
+                    const statusClass = t.status === 'OPEN' ? 'status-open' : 'status-closed';
+                    const sellDate = t.sell_date ? t.sell_date.slice(0, 10) : '-';
+                    const sellPrice = t.sell_price ? t.sell_price.toFixed(6) : '-';
+
+                    tbody.innerHTML += `
+                        <tr>
+                            <td><strong>${t.coin}</strong></td>
+                            <td>${t.buy_date.slice(0, 10)}</td>
+                            <td>${t.buy_price.toFixed(6)}</td>
+                            <td>${sellDate}</td>
+                            <td>${sellPrice}</td>
+                            <td>${t.qty.toFixed(4)}</td>
+                            <td>$${t.spent_usd.toFixed(2)}</td>
+                            <td>$${t.gained_usd.toFixed(2)}</td>
+                            <td class="${profitClass}">${t.profit_usd >= 0 ? '+' : ''}$${t.profit_usd.toFixed(2)}</td>
+                            <td class="${profitClass}">${t.profit_pct >= 0 ? '+' : ''}${t.profit_pct}%</td>
+                            <td><span class="${statusClass}">${t.status}</span></td>
+                        </tr>
+                    `;
+                }
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--accent-red);">Error: ${err.message}</td></tr>`;
+            }
+        }
+
+        function exportReport() {
+            if (!reportData || !reportData.trades) {
+                alert('No data to export');
+                return;
+            }
+
+            const headers = ['Coin', 'Buy Date', 'Buy Price', 'Sell Date', 'Sell Price', 'Qty', 'Spent USD', 'Gained USD', 'Profit USD', 'Profit %', 'Status'];
+            const rows = reportData.trades.map(t => [
+                t.coin,
+                t.buy_date,
+                t.buy_price,
+                t.sell_date || '',
+                t.sell_price || '',
+                t.qty,
+                t.spent_usd,
+                t.gained_usd,
+                t.profit_usd,
+                t.profit_pct,
+                t.status
+            ]);
+
+            let csv = headers.join(',') + '\n';
+            csv += rows.map(r => r.join(',')).join('\n');
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `hope_report_${new Date().toISOString().slice(0,10)}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeReport();
+            }
+        });
+
         function refreshAll() {
             refreshProcesses();
             refreshAllowList();

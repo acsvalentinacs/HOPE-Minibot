@@ -260,6 +260,7 @@ class DashboardServer:
         # Trading integration
         self.app.router.add_post('/api/signal', self.create_signal)
         self.app.router.add_get('/api/trades', self.get_trades)
+        self.app.router.add_get('/api/report', self.get_report)
 
         # Static files
         self.app.router.add_static('/static/', Path(__file__).parent)
@@ -832,6 +833,168 @@ class DashboardServer:
             return web.json_response({"trades": trades[-limit:]})
         except Exception as e:
             logger.error(f"Get trades failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def get_report(self, request):
+        """Get full trading report from Binance - all filled orders with P&L."""
+        if not self.binance:
+            return web.json_response({"error": "Binance not connected"}, status=500)
+
+        try:
+            # Get parameters
+            symbol = request.query.get("symbol", "")  # Empty = all symbols
+            days = int(request.query.get("days", 30))
+
+            # Calculate time range
+            end_time = int(time.time() * 1000)
+            start_time = end_time - (days * 24 * 60 * 60 * 1000)
+
+            # Get account info
+            account = self.binance.get_account()
+
+            # Get all traded symbols from balances or use provided
+            if symbol:
+                symbols = [symbol.upper()]
+            else:
+                # Get symbols from recent trades + current balances
+                symbols = set()
+                for b in account['balances']:
+                    if float(b['free']) > 0 or float(b['locked']) > 0:
+                        if b['asset'] not in ['USDT', 'USDC', 'BUSD', 'FDUSD', 'AUD']:
+                            symbols.add(f"{b['asset']}USDT")
+                # Add common trading pairs
+                symbols.update(['DOGEUSDT', 'PEPEUSDT', 'SHIBUSDT', 'XRPUSDT', 'ADAUSDT'])
+                symbols = list(symbols)[:20]  # Limit to 20 pairs
+
+            # Collect all orders
+            all_orders = []
+            for sym in symbols:
+                try:
+                    orders = self.binance.get_all_orders(
+                        symbol=sym,
+                        startTime=start_time,
+                        endTime=end_time,
+                        limit=100
+                    )
+                    for o in orders:
+                        if o['status'] == 'FILLED':
+                            qty = float(o['executedQty'])
+                            quote_qty = float(o['cummulativeQuoteQty'])
+                            price = quote_qty / qty if qty > 0 else 0
+
+                            all_orders.append({
+                                "symbol": o['symbol'],
+                                "coin": o['symbol'].replace('USDT', ''),
+                                "side": o['side'],
+                                "type": o['type'],
+                                "qty": round(qty, 6),
+                                "price": round(price, 8),
+                                "quote_qty": round(quote_qty, 4),  # Spent/Gained USD
+                                "time": datetime.fromtimestamp(o['time']/1000, timezone.utc).isoformat(),
+                                "order_id": o['orderId'],
+                                "status": o['status']
+                            })
+                except Exception as e:
+                    logger.warning(f"Failed to get orders for {sym}: {e}")
+                    continue
+
+            # Sort by time descending
+            all_orders.sort(key=lambda x: x['time'], reverse=True)
+
+            # Calculate P&L by matching BUY/SELL pairs
+            trades_with_pnl = []
+            buy_orders = {}  # symbol -> list of buys
+
+            for order in sorted(all_orders, key=lambda x: x['time']):
+                sym = order['symbol']
+                if order['side'] == 'BUY':
+                    if sym not in buy_orders:
+                        buy_orders[sym] = []
+                    buy_orders[sym].append(order)
+                elif order['side'] == 'SELL' and sym in buy_orders and buy_orders[sym]:
+                    # Match with oldest buy (FIFO)
+                    buy = buy_orders[sym].pop(0)
+
+                    spent_usd = buy['quote_qty']
+                    gained_usd = order['quote_qty']
+                    profit_usd = round(gained_usd - spent_usd, 4)
+                    profit_pct = round((gained_usd / spent_usd - 1) * 100, 2) if spent_usd > 0 else 0
+
+                    trades_with_pnl.append({
+                        "symbol": sym,
+                        "coin": sym.replace('USDT', ''),
+                        "buy_date": buy['time'],
+                        "buy_price": buy['price'],
+                        "sell_date": order['time'],
+                        "sell_price": order['price'],
+                        "qty": order['qty'],
+                        "spent_usd": round(spent_usd, 2),
+                        "gained_usd": round(gained_usd, 2),
+                        "profit_usd": profit_usd,
+                        "profit_pct": profit_pct,
+                        "status": "CLOSED"
+                    })
+
+            # Add unmatched buys as open positions
+            for sym, buys in buy_orders.items():
+                for buy in buys:
+                    # Get current price
+                    try:
+                        ticker = self.binance.get_symbol_ticker(symbol=sym)
+                        current_price = float(ticker['price'])
+                        current_value = buy['qty'] * current_price
+                        profit_usd = round(current_value - buy['quote_qty'], 4)
+                        profit_pct = round((current_value / buy['quote_qty'] - 1) * 100, 2) if buy['quote_qty'] > 0 else 0
+                    except:
+                        current_price = 0
+                        current_value = 0
+                        profit_usd = 0
+                        profit_pct = 0
+
+                    trades_with_pnl.append({
+                        "symbol": sym,
+                        "coin": sym.replace('USDT', ''),
+                        "buy_date": buy['time'],
+                        "buy_price": buy['price'],
+                        "sell_date": None,
+                        "sell_price": current_price,
+                        "qty": buy['qty'],
+                        "spent_usd": round(buy['quote_qty'], 2),
+                        "gained_usd": round(current_value, 2),
+                        "profit_usd": profit_usd,
+                        "profit_pct": profit_pct,
+                        "status": "OPEN"
+                    })
+
+            # Sort by buy_date descending
+            trades_with_pnl.sort(key=lambda x: x['buy_date'], reverse=True)
+
+            # Summary stats
+            closed_trades = [t for t in trades_with_pnl if t['status'] == 'CLOSED']
+            total_profit = sum(t['profit_usd'] for t in closed_trades)
+            total_volume = sum(t['spent_usd'] for t in closed_trades)
+            wins = sum(1 for t in closed_trades if t['profit_usd'] > 0)
+            losses = sum(1 for t in closed_trades if t['profit_usd'] < 0)
+            winrate = round(wins / len(closed_trades) * 100, 1) if closed_trades else 0
+            avg_profit_pct = round(sum(t['profit_pct'] for t in closed_trades) / len(closed_trades), 2) if closed_trades else 0
+
+            return web.json_response({
+                "trades": trades_with_pnl[:100],  # Limit to 100
+                "raw_orders": all_orders[:50],  # Also return raw orders
+                "summary": {
+                    "total_trades": len(closed_trades),
+                    "open_positions": len([t for t in trades_with_pnl if t['status'] == 'OPEN']),
+                    "wins": wins,
+                    "losses": losses,
+                    "winrate": winrate,
+                    "total_profit_usd": round(total_profit, 2),
+                    "total_volume_usd": round(total_volume, 2),
+                    "avg_profit_pct": avg_profit_pct,
+                    "period_days": days
+                }
+            })
+        except Exception as e:
+            logger.error(f"Get report failed: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
     async def close_position(self, request):
