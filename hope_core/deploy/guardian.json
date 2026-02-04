@@ -1,0 +1,29 @@
+{
+    "_comment": "HOPE Guardian Configuration - AI SIGNATURE: Claude (opus-4.5) 2026-02-04",
+    
+    "heartbeat_interval_sec": 10,
+    "heartbeat_timeout_sec": 30,
+    "health_check_interval_sec": 30,
+    "max_consecutive_failures": 3,
+    
+    "max_restarts_per_hour": 5,
+    "restart_delay_sec": 5,
+    "restart_backoff_multiplier": 2.0,
+    "max_restart_delay_sec": 300,
+    
+    "core_command": [
+        "/opt/hope/venv/bin/python", "-m", "hope_core.api_server",
+        "--mode", "LIVE",
+        "--host", "127.0.0.1",
+        "--port", "8200"
+    ],
+    "core_working_dir": "/opt/hope/minibot",
+    
+    "telegram_enabled": true,
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+    
+    "state_file": "state/guardian_state.json",
+    "memory_limit_mb": 500,
+    "health_endpoint": "http://127.0.0.1:8200/api/health"
+}

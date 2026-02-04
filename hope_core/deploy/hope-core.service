@@ -1,0 +1,56 @@
+# === AI SIGNATURE ===
+# File: hope_core/deploy/hope-core.service
+# Created by: Claude (opus-4.5)
+# Purpose: Systemd service for HOPE Core v2.0 main process
+# === END SIGNATURE ===
+
+[Unit]
+Description=HOPE Core v2.0 - AI Trading System
+Documentation=https://github.com/hope-trading/hope-core
+After=network.target
+Wants=hope-guardian.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/hope/minibot
+
+# Environment
+EnvironmentFile=/opt/hope/secrets/hope.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/hope/minibot:/opt/hope/minibot/scripts
+
+# Main command
+ExecStart=/opt/hope/venv/bin/python -m hope_core.api_server \
+    --mode LIVE \
+    --host 127.0.0.1 \
+    --port 8200
+
+# Graceful shutdown
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=50%
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/hope/minibot/state /opt/hope/minibot/logs
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hope-core
+
+[Install]
+WantedBy=multi-user.target

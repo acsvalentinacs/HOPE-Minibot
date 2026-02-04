@@ -1,0 +1,53 @@
+# === AI SIGNATURE ===
+# File: hope_core/deploy/hope-guardian.service
+# Created by: Claude (opus-4.5)
+# Purpose: Systemd service for HOPE Guardian watchdog
+# === END SIGNATURE ===
+
+[Unit]
+Description=HOPE Guardian - Watchdog for HOPE Core
+Documentation=https://github.com/hope-trading/hope-core
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/hope/minibot
+
+# Environment
+EnvironmentFile=/opt/hope/secrets/hope.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/hope/minibot:/opt/hope/minibot/scripts
+
+# Main command - Guardian monitors HOPE Core
+ExecStart=/opt/hope/venv/bin/python -m hope_core.guardian.watchdog \
+    --config /opt/hope/minibot/config/guardian.json
+
+# Graceful shutdown
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=10
+
+# Restart policy - Guardian should ALWAYS run
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+# Resource limits - Guardian is lightweight
+MemoryMax=128M
+CPUQuota=10%
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/hope/minibot/state
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hope-guardian
+
+[Install]
+WantedBy=multi-user.target
