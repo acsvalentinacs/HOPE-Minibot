@@ -177,7 +177,7 @@ class AutoTraderConfig:
 
     # === COOLDOWN SETTINGS (NEW - FIX #4) ===
     symbol_cooldown_sec: int = 300         # 5 min cooldown after closing position
-    max_same_symbol_per_hour: int = 2      # Max trades per symbol per hour
+    max_same_symbol_per_hour: int = 2000   # Max trades per symbol per hour (increased per user request)
 
     # State
     state_dir: str = "state/ai/autotrader"
@@ -582,19 +582,40 @@ class AutoTrader:
             account = self.binance_client.get_account()
             real_positions = set()
 
-            # Assets to IGNORE (not trading positions, just holdings)
-            IGNORE_ASSETS = {'USDT', 'USDC', 'BNB', 'AUD', 'SLF', 'FDUSD', 'BUSD', 'EUR', 'GBP', 'RUB'}
+            # Assets to IGNORE (not trading positions, just holdings/stablecoins/fiat)
+            # BLACKLIST: BTC, ETH, BNB, SOL, AVAX - per user request 2026-02-04
+            IGNORE_ASSETS = {
+                # Stablecoins & Fiat
+                'USDT', 'USDC', 'FDUSD', 'BUSD', 'AUD', 'EUR', 'GBP', 'RUB', 'TUSD', 'DAI',
+                # Blacklisted (heavy/problematic coins)
+                'BTC', 'ETH', 'BNB', 'SOL', 'AVAX',
+                # Other holdings not for trading
+                'SLF',
+            }
+
+            # Get prices for USD value calculation
+            try:
+                prices = {t['symbol']: float(t['price']) for t in self.binance_client.client.get_all_tickers()}
+            except Exception:
+                prices = {}
 
             for balance in account['balances']:
                 asset = balance['asset']
                 free = float(balance['free'])
                 locked = float(balance['locked'])
+                total = free + locked
 
-                # Only consider assets that are NOT in ignore list
-                # and have meaningful balance (> 0.001)
-                if asset not in IGNORE_ASSETS and (free > 0.001 or locked > 0.001):
+                # Skip if in ignore list
+                if asset in IGNORE_ASSETS:
+                    continue
+
+                # Only consider meaningful balance (> 0.001 qty AND > $5 USD value)
+                if total > 0.001:
                     symbol = f"{asset}USDT"
-                    real_positions.add(symbol)
+                    # Check USD value - ignore dust < $5
+                    usd_value = total * prices.get(symbol, 0)
+                    if usd_value >= 5.0:  # Binance NOTIONAL minimum
+                        real_positions.add(symbol)
 
             # Compare with internal state
             internal_positions = self.open_positions.copy()
