@@ -3,8 +3,8 @@
 # Created by: Claude (opus-4)
 # Created at: 2026-01-23 22:00:00 UTC
 # Modified by: Claude (opus-4.5)
-# Modified at: 2026-02-05T09:30:00Z
-# v2.8.0: Added /sauce command + panel button for Secret Sauce monitoring
+# Modified at: 2026-02-05T12:36:00Z
+# v2.8.1: Added /sauce with Reset buttons + Secret Sauce brief in morning report
 # === END SIGNATURE ===
 r"""
 HOPEminiBOT — tg_bot_simple (v2.1.0 — Valuation Policy)
@@ -1180,7 +1180,7 @@ class ActionSpec:
 
 
 class HopeMiniBot:
-    VERSION = "tgbot-v2.8.0-secret-sauce"
+    VERSION = "tgbot-v2.8.1-sauce-controls"
 
     def __init__(self) -> None:
         self.log = logging.getLogger("tg_bot")
@@ -2948,14 +2948,33 @@ class HopeMiniBot:
 
         await self._reply(update, msg, self._chat_keyboard())
 
+    async def _get_sauce_brief(self) -> str:
+        """Get brief Secret Sauce status for morning report."""
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://127.0.0.1:8201/api/secret-sauce", timeout=3) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        panic = data.get("panic", {})
+                        status = "🔴 PANIC" if panic.get("panic_mode") else "🟢 OK"
+                        threshold = data.get("threshold", 0.35)
+                        daily_pnl = panic.get("daily_pnl", 0)
+                        return f"🧠 Sauce: {status} | Thr: {threshold:.0%} | PnL: ${daily_pnl:.2f}"
+        except Exception:
+            pass
+        return "🧠 Sauce: ⚪ N/A"
+
     async def cmd_morning(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         if not await self._guard_admin(update):
             return
         async with self._action_lock:
+            # Get Secret Sauce status first
+            sauce_brief = await self._get_sauce_brief()
             await self._reply(
-                update, "🌅 УТРО — запуск стека\n⏳ Запускаю... (timeout 180s)"
+                update, f"🌅 УТРО — запуск стека\n{sauce_brief}\n⏳ Запускаю... (timeout 180s)"
             )
             spec = ActionSpec(
                 "morning",
@@ -3224,6 +3243,20 @@ class HopeMiniBot:
             return
         if data == "hope_sauce":
             await self.cmd_sauce(update, context)
+            return
+
+        # Secret Sauce reset callbacks
+        if data == "sauce_refresh":
+            await self.cmd_sauce(update, context)
+            return
+        if data == "sauce_reset_panic":
+            await self._sauce_reset(update, "panic")
+            return
+        if data == "sauce_reset_threshold":
+            await self._sauce_reset(update, "threshold")
+            return
+        if data == "sauce_reset_learning":
+            await self._sauce_reset(update, "learning")
             return
 
         # AllowList callbacks
@@ -3926,11 +3959,44 @@ class HopeMiniBot:
                             lines.append("👻 <b>Shadow Mode:</b>")
                             lines.append(f'  Trades: {shadow.get("total_trades")} | WR: {shadow.get("win_rate", 0):.0%} | PnL: ${shadow.get("total_pnl", 0):.2f}')
 
-                        await self._reply(update, "\n".join(lines), parse_mode="HTML")
+                        # Add reset keyboard
+                        keyboard = InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("🔃 Refresh", callback_data="sauce_refresh"),
+                            ],
+                            [
+                                InlineKeyboardButton("🔄 Reset Panic", callback_data="sauce_reset_panic"),
+                                InlineKeyboardButton("📊 Reset Threshold", callback_data="sauce_reset_threshold"),
+                            ],
+                            [
+                                InlineKeyboardButton("🧹 Clear Learning", callback_data="sauce_reset_learning"),
+                            ],
+                        ])
+                        await self._reply(update, "\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
                     else:
                         await self._reply(update, "❌ HOPE Core не отвечает")
         except Exception as e:
             await self._reply(update, f"❌ Ошибка: {e}")
+
+    async def _sauce_reset(self, update: Update, reset_type: str) -> None:
+        """Execute Secret Sauce reset action."""
+        try:
+            import aiohttp
+            url = f"http://127.0.0.1:8201/api/secret-sauce/reset/{reset_type}"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("success"):
+                            await self._reply(update, f"✅ {data.get('message', 'Reset OK')}")
+                            # Refresh sauce view
+                            await self.cmd_sauce(update, None)
+                        else:
+                            await self._reply(update, f"❌ {data.get('error', 'Reset failed')}")
+                    else:
+                        await self._reply(update, f"❌ Reset failed: HTTP {resp.status}")
+        except Exception as e:
+            await self._reply(update, f"❌ Reset error: {e}")
 
     async def _post_init(self, app: Application) -> None:
         cmds = [
