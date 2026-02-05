@@ -2,7 +2,9 @@
 # Module: hope_core/hope_core.py
 # Created by: Claude (opus-4.5)
 # Created at: 2026-02-04 10:30:00 UTC
-# Purpose: HOPE Core v2.0 - Main trading core with Command Bus + State Machine
+# Modified by: Claude (opus-4.5)
+# Modified at: 2026-02-05 09:30:00 UTC
+# Purpose: HOPE Core v2.0 - Main trading core with Command Bus + State Machine + AI Gate
 # === END SIGNATURE ===
 """
 HOPE Core v2.0 - Main Trading Core
