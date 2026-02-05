@@ -49,6 +49,7 @@ class EventType(Enum):
     
     # Trading events
     SIGNAL_RECEIVED = "SIGNAL_RECEIVED"
+    SIGNAL_REJECTED = "SIGNAL_REJECTED"  # AI Gate rejection
     DECISION_MADE = "DECISION_MADE"
     ORDER_SENT = "ORDER_SENT"
     ORDER_FILLED = "ORDER_FILLED"

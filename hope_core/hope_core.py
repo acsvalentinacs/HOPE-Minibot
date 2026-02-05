@@ -78,6 +78,18 @@ except ImportError:
         SecretSauce = None
 
 
+# AI Gate Integration
+try:
+    from hope_core.ai_integration import get_ai_gate, ai_signal_filter, ai_record_fill
+except ImportError:
+    try:
+        from ai_integration import get_ai_gate, ai_signal_filter, ai_record_fill
+    except ImportError:
+        get_ai_gate = None
+        ai_signal_filter = None
+        ai_record_fill = None
+
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -236,6 +248,7 @@ class HopeCore:
     def _init_integrations(self):
         """Initialize external integrations."""
         self.eye_of_god = None
+        self.ai_gate = None  # AI Gate for Command Bus filtering
         self.order_executor = None
         self.binance_client = None
         self.alert_manager = None
@@ -262,7 +275,15 @@ class HopeCore:
                     print("[HOPE CORE] Mock Eye of God loaded (BALANCED mode)")
                 except ImportError as e:
                     print(f"[HOPE CORE] Eye of God not available: {e}")
-        
+
+        # Initialize AI Gate for Command Bus filtering
+        if get_ai_gate is not None:
+            try:
+                self.ai_gate = get_ai_gate()
+                print("[HOPE CORE] AI Gate loaded for Command Bus filtering")
+            except Exception as e:
+                print(f"[HOPE CORE] AI Gate not available: {e}")
+
         # Try to load Order Executor
         if self.config.binance_enabled:
             try:
@@ -379,7 +400,29 @@ class HopeCore:
         source = payload["source"]
         
         self._stats["signals_received"] += 1
-        
+
+        # === AI GATE CHECK ===
+        if ai_signal_filter is not None and self.ai_gate is not None:
+            try:
+                ai_passed, ai_reason = await ai_signal_filter({
+                    "symbol": symbol,
+                    "confidence": score,
+                    "price": payload.get("price", 0.0),
+                    "signal_type": source,
+                })
+                if not ai_passed:
+                    self._stats["signals_skipped"] = self._stats.get("signals_skipped", 0) + 1
+                    print(f"[AI_GATE] Signal {symbol} rejected: {ai_reason}")
+                    self.journal.append(
+                        EventType.SIGNAL_REJECTED,
+                        payload={"symbol": symbol, "reason": ai_reason},
+                        correlation_id=command.correlation_id,
+                    )
+                    return {"status": "REJECTED", "reason": ai_reason, "ai_gate": True}
+            except Exception as e:
+                print(f"[AI_GATE] Error checking signal: {e}")
+        # === END AI GATE CHECK ===
+
         # Log signal
         self.journal.append(
             EventType.SIGNAL_RECEIVED,
