@@ -100,7 +100,7 @@ class AIGate:
 
         # 1. Observation Mode (WR-based stop)
         if self._observation:
-            obs_ok, obs_reason = self._observation.can_trade()
+            obs_ok, obs_reason = self._observation.should_trade()
             if not obs_ok:
                 return False, f"[OBSERVATION] {obs_reason}"
             checks_passed.append("observation")
@@ -123,9 +123,10 @@ class AIGate:
 
         # 4. Anti-Chase Filter (price movement)
         if self._anti_chase and price > 0:
-            chase_ok, chase_reason = self._anti_chase.should_enter(symbol, price, signal_type)
-            if not chase_ok:
-                return False, f"[ANTI_CHASE] {chase_reason}"
+            # New API: analyze() returns ChaseAnalysis object
+            analysis = self._anti_chase.analyze(symbol, price)
+            if not analysis.should_enter:
+                return False, f"[ANTI_CHASE] {analysis.reason}"
             checks_passed.append("anti_chase")
 
         reason = f"PASSED: {', '.join(checks_passed)}"
@@ -142,9 +143,8 @@ class AIGate:
         if self._learner:
             self._learner.record_outcome(symbol, profit_pct, **kwargs)
 
-        if self._observation:
-            self._observation.record_trade(is_win)
-
+        # Note: ObservationMode uses WR from AdaptiveConfidence, not direct tracking
+        # After adding trade to AdaptiveConfidence, check if observation mode should change
         if self._adaptive:
             from core.adaptive_confidence import TradeResult
             trade = TradeResult(
@@ -154,6 +154,19 @@ class AIGate:
                 is_win=is_win,
             )
             self._adaptive.add_trade(trade)
+
+            # Check if observation mode should activate/deactivate based on new WR
+            if self._observation:
+                win_rate = self._adaptive.get_win_rate() * 100  # Convert to %
+                loss_streak = 0  # TODO: track loss streak in adaptive
+                should_change, reason = self._observation.check_triggers(win_rate, loss_streak)
+                if should_change:
+                    if self._observation.is_active:
+                        self._observation.deactivate()
+                        logger.info(f"[OBSERVATION] Deactivated: {reason}")
+                    else:
+                        self._observation.activate(reason)
+                        logger.warning(f"[OBSERVATION] Activated: {reason}")
 
         logger.info(f"Outcome recorded: {symbol} {'WIN' if is_win else 'LOSS'} {profit_pct:+.2f}%")
 
@@ -174,7 +187,7 @@ class AIGate:
 
         if self._observation:
             stats["modules_loaded"].append("observation")
-            stats["observation"] = self._observation.get_stats()
+            stats["observation"] = self._observation.get_status()
 
         if self._adaptive:
             stats["modules_loaded"].append("adaptive")

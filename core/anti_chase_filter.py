@@ -1,35 +1,45 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# === AI SIGNATURE ===
-# Created by: Claude (opus-4.5)
-# Created at: 2026-02-05T03:05:00Z
-# Purpose: Anti-Chase Filter - prevent entering after price already moved
-# === END SIGNATURE ===
 """
-Anti-Chase Filter - НЕ входить если цена уже выросла.
+anti_chase_filter.py - Фильтр "не гнаться за ценой"
 
-ПРОБЛЕМА: 22 rapid losses (<1 min) = входим ПОСЛЕ пика движения.
+=== AI SIGNATURE ===
+Created by: Claude (opus-4.5)
+Created at: 2026-02-05T01:30:00Z
+Purpose: P0 CRITICAL - Eliminate 22 rapid losses (<1 min)
+Module: core/ai/anti_chase_filter.py
+=== END SIGNATURE ===
 
-РЕШЕНИЕ: Проверять движение цены за последние N минут.
-Если цена уже выросла > X% - не входим (опоздали).
+ПРОБЛЕМА:
+- 22 из 100 сделок закрылись с убытком менее чем за 1 минуту
+- Причина: вход ПОСЛЕ того как цена уже выросла
+- Мы покупаем на пике локального движения → немедленный откат
+
+РЕШЕНИЕ:
+- Проверяем движение цены за последние N минут перед входом
+- Если цена уже выросла на X% - НЕ ВХОДИМ (опоздали)
+- Ждём откат или следующий сигнал
 
 ИНТЕГРАЦИЯ:
-    from core.anti_chase_filter import AntiChaseFilter, should_enter
-
-    filter = AntiChaseFilter()
-
-    # Перед входом:
-    ok, reason = filter.should_enter(symbol, current_price)
-    if not ok:
-        logger.info(f"ANTI-CHASE: {reason}")
-        return  # Skip this trade
+    from core.ai.anti_chase_filter import AntiChaseFilter
+    
+    chase_filter = AntiChaseFilter()
+    
+    # При получении сигнала:
+    if not chase_filter.should_enter(symbol, current_price):
+        logger.info(f"Signal skipped: price already moved too much")
+        return
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 logger = logging.getLogger("hope.anti_chase")
@@ -37,241 +47,690 @@ logger = logging.getLogger("hope.anti_chase")
 
 @dataclass
 class PricePoint:
-    """Single price observation."""
+    """Точка цены с временной меткой"""
     price: float
     timestamp: float
+    
+    @property
+    def age_seconds(self) -> float:
+        return time.time() - self.timestamp
+    
+    @property
+    def age_minutes(self) -> float:
+        return self.age_seconds / 60
+
+
+@dataclass
+class ChaseAnalysis:
+    """Результат анализа погони за ценой"""
+    symbol: str
+    current_price: float
+    price_3min_ago: Optional[float]
+    price_5min_ago: Optional[float]
+    move_3min_pct: float
+    move_5min_pct: float
+    should_enter: bool
+    reason: str
+    confidence_penalty: float = 0.0  # Снижение confidence если близко к порогу
 
 
 class AntiChaseFilter:
     """
-    Anti-Chase Filter - prevents entering positions that already moved.
-
-    Logic:
-    - Track recent prices for each symbol
-    - Before entry, check if price moved > threshold in recent window
-    - If already moved too much = we're late = don't enter
-
-    Настройки:
-    - window_seconds: Окно для проверки (default: 180 = 3 min)
-    - max_move_pct: Максимальное движение для входа (default: 1.5%)
-    - min_samples: Минимум точек для проверки (default: 3)
+    Фильтр против входа на пике движения.
+    
+    Логика:
+    1. Отслеживаем цены за последние 10 минут
+    2. При сигнале проверяем движение за 3-5 минут
+    3. Если движение > threshold - отклоняем сигнал
+    
+    Пороги (настраиваемые):
+    - 3 min: если выросла > 1.5% - не входим
+    - 5 min: если выросла > 2.5% - не входим
+    - Для MEME токенов пороги x1.5 (они волатильнее)
     """
-
+    
+    # Токены с повышенной волатильностью (пороги x1.5)
+    HIGH_VOLATILITY_TOKENS = {
+        "PEPEUSDT", "SHIBUSDT", "DOGEUSDT", "FLOKIUSDT",
+        "BONKUSDT", "MEMEUSDT", "WIFUSDT", "BOMEUSDT"
+    }
+    
     def __init__(
         self,
-        window_seconds: float = 180.0,  # 3 minutes
-        max_move_pct: float = 1.5,      # If moved > 1.5%, skip
-        min_samples: int = 3,
+        threshold_3min: float = 1.5,  # %
+        threshold_5min: float = 2.5,  # %
+        lookback_minutes: int = 10,
+        state_file: Optional[Path] = None,
     ):
-        self.window_seconds = window_seconds
-        self.max_move_pct = max_move_pct
-        self.min_samples = min_samples
-
-        # Price history: symbol -> list of PricePoint
+        self.threshold_3min = threshold_3min
+        self.threshold_5min = threshold_5min
+        self.lookback_minutes = lookback_minutes
+        
+        # Хранилище цен: symbol -> list of PricePoint
         self.price_history: Dict[str, List[PricePoint]] = defaultdict(list)
-
-        # Stats
+        
+        # Статистика
         self.stats = {
-            "checks": 0,
-            "blocked": 0,
-            "passed": 0,
+            "signals_checked": 0,
+            "signals_blocked": 0,
+            "blocked_by_3min": 0,
+            "blocked_by_5min": 0,
         }
-
+        
+        self.state_file = state_file or Path("state/ai/anti_chase_state.json")
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        
         logger.info(
-            f"AntiChaseFilter initialized: window={window_seconds}s, "
-            f"max_move={max_move_pct}%, min_samples={min_samples}"
+            f"AntiChaseFilter initialized: "
+            f"3min={threshold_3min}%, 5min={threshold_5min}%"
         )
-
+    
     def record_price(self, symbol: str, price: float) -> None:
-        """Record current price for tracking."""
+        """
+        Записать текущую цену для символа.
+        
+        Вызывать регулярно (каждые 10-30 секунд) из price feed.
+        """
         now = time.time()
-        self.price_history[symbol].append(PricePoint(price=price, timestamp=now))
-
-        # Cleanup old data (keep last 10 minutes)
-        cutoff = now - 600
+        point = PricePoint(price=price, timestamp=now)
+        
+        self.price_history[symbol].append(point)
+        
+        # Очистить старые записи (оставить только lookback_minutes)
+        cutoff = now - (self.lookback_minutes * 60)
         self.price_history[symbol] = [
             p for p in self.price_history[symbol] if p.timestamp > cutoff
         ]
-
-    def should_enter(
-        self,
-        symbol: str,
-        current_price: float,
-        signal_type: str = "UNKNOWN",
-    ) -> Tuple[bool, str]:
-        """
-        Check if we should enter this position.
-
-        Returns:
-            (should_enter, reason)
-        """
-        self.stats["checks"] += 1
-
-        # Record current price
-        self.record_price(symbol, current_price)
-
-        # Get recent prices within window
-        now = time.time()
-        window_start = now - self.window_seconds
-        recent = [p for p in self.price_history[symbol] if p.timestamp > window_start]
-
-        if len(recent) < self.min_samples:
-            # Not enough data - allow entry but log
-            self.stats["passed"] += 1
-            return True, f"PASS: Not enough price data ({len(recent)} < {self.min_samples})"
-
-        # Find lowest price in window
-        min_price = min(p.price for p in recent)
-        min_time = next(p.timestamp for p in recent if p.price == min_price)
-
-        # Calculate move from low
-        if min_price > 0:
-            move_pct = ((current_price - min_price) / min_price) * 100
-        else:
-            move_pct = 0
-
-        # Calculate time since low
-        time_since_low = now - min_time
-
-        # Decision
-        if move_pct > self.max_move_pct:
-            self.stats["blocked"] += 1
-            reason = (
-                f"BLOCKED: Price moved +{move_pct:.2f}% in {time_since_low:.0f}s "
-                f"(> {self.max_move_pct}% threshold). Entry too late!"
-            )
-            logger.warning(f"ANTI-CHASE {symbol}: {reason}")
-            return False, reason
-
-        self.stats["passed"] += 1
-        reason = (
-            f"PASS: Price move +{move_pct:.2f}% within threshold "
-            f"({self.max_move_pct}%) over {time_since_low:.0f}s"
+    
+    def _get_price_at_time(
+        self, 
+        symbol: str, 
+        minutes_ago: float
+    ) -> Optional[float]:
+        """Получить цену N минут назад (ближайшую к указанному времени)"""
+        if symbol not in self.price_history:
+            return None
+        
+        target_time = time.time() - (minutes_ago * 60)
+        
+        # Найти ближайшую точку к target_time
+        best_point = None
+        best_diff = float('inf')
+        
+        for point in self.price_history[symbol]:
+            diff = abs(point.timestamp - target_time)
+            if diff < best_diff:
+                best_diff = diff
+                best_point = point
+        
+        # Если ближайшая точка слишком далеко (> 2 минут), вернуть None
+        if best_point and best_diff < 120:
+            return best_point.price
+        
+        return None
+    
+    def _get_thresholds(self, symbol: str) -> Tuple[float, float]:
+        """Получить пороги для символа (учитывая волатильность)"""
+        multiplier = 1.5 if symbol in self.HIGH_VOLATILITY_TOKENS else 1.0
+        return (
+            self.threshold_3min * multiplier,
+            self.threshold_5min * multiplier
         )
-        return True, reason
-
+    
+    def analyze(self, symbol: str, current_price: float) -> ChaseAnalysis:
+        """
+        Полный анализ: стоит ли входить.
+        
+        Returns:
+            ChaseAnalysis с полными данными
+        """
+        self.stats["signals_checked"] += 1
+        
+        # Записать текущую цену
+        self.record_price(symbol, current_price)
+        
+        # Получить исторические цены
+        price_3min = self._get_price_at_time(symbol, 3.0)
+        price_5min = self._get_price_at_time(symbol, 5.0)
+        
+        # Рассчитать движение
+        move_3min = 0.0
+        move_5min = 0.0
+        
+        if price_3min and price_3min > 0:
+            move_3min = ((current_price - price_3min) / price_3min) * 100
+        
+        if price_5min and price_5min > 0:
+            move_5min = ((current_price - price_5min) / price_5min) * 100
+        
+        # Получить пороги
+        thresh_3min, thresh_5min = self._get_thresholds(symbol)
+        
+        # Проверить условия
+        should_enter = True
+        reason = "OK: price movement within limits"
+        confidence_penalty = 0.0
+        
+        # Проверка 3 минут
+        if move_3min > thresh_3min:
+            should_enter = False
+            reason = f"BLOCKED: 3min move {move_3min:.2f}% > {thresh_3min}%"
+            self.stats["blocked_by_3min"] += 1
+            self.stats["signals_blocked"] += 1
+        
+        # Проверка 5 минут (только если не заблокировано)
+        elif move_5min > thresh_5min:
+            should_enter = False
+            reason = f"BLOCKED: 5min move {move_5min:.2f}% > {thresh_5min}%"
+            self.stats["blocked_by_5min"] += 1
+            self.stats["signals_blocked"] += 1
+        
+        # Близко к порогу - штраф к confidence
+        elif move_3min > thresh_3min * 0.7:
+            confidence_penalty = 0.15  # -15% к confidence
+            reason = f"WARNING: 3min move {move_3min:.2f}% approaching limit"
+        
+        return ChaseAnalysis(
+            symbol=symbol,
+            current_price=current_price,
+            price_3min_ago=price_3min,
+            price_5min_ago=price_5min,
+            move_3min_pct=round(move_3min, 2),
+            move_5min_pct=round(move_5min, 2),
+            should_enter=should_enter,
+            reason=reason,
+            confidence_penalty=confidence_penalty,
+        )
+    
+    def should_enter(self, symbol: str, current_price: float) -> bool:
+        """
+        Простая проверка: можно ли входить.
+        
+        Упрощённый API для интеграции.
+        """
+        analysis = self.analyze(symbol, current_price)
+        
+        if not analysis.should_enter:
+            logger.warning(f"AntiChase blocked {symbol}: {analysis.reason}")
+        
+        return analysis.should_enter
+    
     def get_stats(self) -> dict:
-        """Get filter statistics."""
-        total = self.stats["checks"]
-        block_rate = self.stats["blocked"] / total * 100 if total > 0 else 0
-
+        """Статистика работы фильтра"""
+        total = self.stats["signals_checked"]
+        blocked = self.stats["signals_blocked"]
+        
         return {
-            "total_checks": total,
-            "blocked": self.stats["blocked"],
-            "passed": self.stats["passed"],
-            "block_rate_pct": round(block_rate, 1),
-            "window_seconds": self.window_seconds,
-            "max_move_pct": self.max_move_pct,
-            "tracked_symbols": len(self.price_history),
+            **self.stats,
+            "block_rate": round(blocked / total * 100, 1) if total > 0 else 0,
+            "symbols_tracked": len(self.price_history),
         }
+    
+    def save_state(self) -> None:
+        """Сохранить статистику"""
+        try:
+            data = {
+                "stats": self.stats,
+                "last_update": time.time(),
+            }
+            self.state_file.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            logger.error(f"Failed to save state: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════
-# OBSERVATION MODE - Don't trade when WR is too low
+# OBSERVATION MODE
 # ═══════════════════════════════════════════════════════════════════
 
 class ObservationMode:
     """
-    Observation Mode - НЕ открывать новые позиции при низком WR.
-
-    При WR < threshold:
-    - Только мониторинг существующих позиций
-    - Сбор данных для анализа
-    - НЕ открывать новые сделки
-
-    Это защита от потерь пока система учится.
+    Режим наблюдения: НЕ торгуем, только собираем данные.
+    
+    Активируется когда:
+    - Win Rate < 35%
+    - Loss streak >= 5
+    - Manual activation
+    
+    В этом режиме:
+    - Сигналы логируются но НЕ исполняются
+    - Собираем данные для анализа
+    - AI продолжает учиться
+    - Никаких новых позиций
     """
-
+    
+    TRIGGER_WIN_RATE = 35.0  # Активировать если WR < 35%
+    TRIGGER_LOSS_STREAK = 5   # Активировать при 5 убытках подряд
+    EXIT_WIN_RATE = 45.0      # Выйти из режима когда WR > 45%
+    MIN_OBSERVATION_TRADES = 20  # Минимум сделок для анализа
+    
     def __init__(
         self,
-        wr_threshold: float = 0.35,  # Below 35% = observation mode
-        min_trades: int = 10,         # Need at least 10 trades
-        state_file: Optional[str] = None,
+        state_file: Optional[Path] = None,
+        auto_activate: bool = True,
     ):
-        self.wr_threshold = wr_threshold
-        self.min_trades = min_trades
-
-        # Track trades
-        self.wins = 0
-        self.losses = 0
-        self.observation_mode = False
-
+        self.state_file = state_file or Path("state/ai/observation_mode.json")
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.auto_activate = auto_activate
+        self.is_active = False
+        self.activated_at: Optional[float] = None
+        self.activation_reason: str = ""
+        
+        # Виртуальные сделки (что было бы если бы торговали)
+        self.virtual_trades: List[dict] = []
+        
+        # Метрики
+        self.metrics = {
+            "virtual_trades": 0,
+            "virtual_wins": 0,
+            "virtual_pnl": 0.0,
+        }
+        
+        self._load_state()
+        
         logger.info(
-            f"ObservationMode initialized: WR threshold={wr_threshold:.0%}, "
-            f"min_trades={min_trades}"
+            f"ObservationMode initialized: "
+            f"active={self.is_active}, auto={auto_activate}"
         )
-
-    def record_trade(self, is_win: bool) -> None:
-        """Record trade outcome."""
-        if is_win:
-            self.wins += 1
-        else:
-            self.losses += 1
-
-        self._update_mode()
-
-    def _update_mode(self) -> None:
-        """Update observation mode based on current WR."""
-        total = self.wins + self.losses
-
-        if total < self.min_trades:
-            # Not enough data - normal mode
-            self.observation_mode = False
+    
+    def _load_state(self) -> None:
+        """Загрузить состояние"""
+        if self.state_file.exists():
+            try:
+                data = json.loads(self.state_file.read_text())
+                self.is_active = data.get("is_active", False)
+                self.activated_at = data.get("activated_at")
+                self.activation_reason = data.get("activation_reason", "")
+                self.metrics = data.get("metrics", self.metrics)
+            except Exception as e:
+                logger.warning(f"Failed to load state: {e}")
+    
+    def _save_state(self) -> None:
+        """Сохранить состояние"""
+        try:
+            data = {
+                "is_active": self.is_active,
+                "activated_at": self.activated_at,
+                "activation_reason": self.activation_reason,
+                "metrics": self.metrics,
+                "virtual_trades_count": len(self.virtual_trades),
+                "last_update": time.time(),
+            }
+            self.state_file.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            logger.error(f"Failed to save state: {e}")
+    
+    def check_triggers(
+        self, 
+        win_rate: float, 
+        loss_streak: int
+    ) -> Tuple[bool, str]:
+        """
+        Проверить условия активации/деактивации.
+        
+        Returns:
+            (should_change, reason)
+        """
+        if not self.auto_activate:
+            return False, "auto_activate disabled"
+        
+        # Уже активен - проверить выход
+        if self.is_active:
+            if win_rate >= self.EXIT_WIN_RATE:
+                return True, f"Win rate recovered to {win_rate}%"
+            return False, "Still in observation mode"
+        
+        # Не активен - проверить вход
+        if win_rate < self.TRIGGER_WIN_RATE:
+            return True, f"Win rate {win_rate}% < {self.TRIGGER_WIN_RATE}%"
+        
+        if loss_streak >= self.TRIGGER_LOSS_STREAK:
+            return True, f"Loss streak {loss_streak} >= {self.TRIGGER_LOSS_STREAK}"
+        
+        return False, "No trigger conditions met"
+    
+    def activate(self, reason: str) -> None:
+        """Активировать режим наблюдения"""
+        if self.is_active:
+            logger.warning("ObservationMode already active")
             return
-
-        wr = self.wins / total
-
-        if wr < self.wr_threshold:
-            if not self.observation_mode:
-                logger.warning(
-                    f"ENTERING OBSERVATION MODE: WR={wr:.1%} < {self.wr_threshold:.0%}"
-                )
-            self.observation_mode = True
-        else:
-            if self.observation_mode:
-                logger.info(
-                    f"EXITING OBSERVATION MODE: WR={wr:.1%} >= {self.wr_threshold:.0%}"
-                )
-            self.observation_mode = False
-
-    def can_trade(self) -> Tuple[bool, str]:
-        """Check if we can open new positions."""
-        total = self.wins + self.losses
-
-        if total < self.min_trades:
-            return True, f"PASS: Not enough trades ({total} < {self.min_trades})"
-
-        wr = self.wins / total
-
-        if self.observation_mode:
-            return False, (
-                f"OBSERVATION MODE: WR={wr:.1%} < {self.wr_threshold:.0%}. "
-                f"No new positions until WR improves."
-            )
-
-        return True, f"PASS: WR={wr:.1%} >= {self.wr_threshold:.0%}"
-
-    def get_stats(self) -> dict:
-        """Get observation mode statistics."""
-        total = self.wins + self.losses
-        wr = self.wins / total if total > 0 else 0
-
+        
+        self.is_active = True
+        self.activated_at = time.time()
+        self.activation_reason = reason
+        self.virtual_trades = []
+        self.metrics = {
+            "virtual_trades": 0,
+            "virtual_wins": 0,
+            "virtual_pnl": 0.0,
+        }
+        
+        self._save_state()
+        
+        logger.warning(
+            f"🔴 OBSERVATION MODE ACTIVATED: {reason}\n"
+            f"   No new positions will be opened!"
+        )
+    
+    def deactivate(self, reason: str) -> dict:
+        """
+        Деактивировать режим наблюдения.
+        
+        Returns:
+            Summary of observation period
+        """
+        if not self.is_active:
+            logger.warning("ObservationMode not active")
+            return {}
+        
+        duration_hours = 0
+        if self.activated_at:
+            duration_hours = (time.time() - self.activated_at) / 3600
+        
+        summary = {
+            "duration_hours": round(duration_hours, 1),
+            "virtual_trades": self.metrics["virtual_trades"],
+            "virtual_win_rate": self._calculate_virtual_win_rate(),
+            "virtual_pnl": round(self.metrics["virtual_pnl"], 2),
+            "deactivation_reason": reason,
+        }
+        
+        self.is_active = False
+        self.activated_at = None
+        self.activation_reason = ""
+        
+        self._save_state()
+        
+        logger.info(
+            f"🟢 OBSERVATION MODE DEACTIVATED: {reason}\n"
+            f"   Summary: {summary}"
+        )
+        
+        return summary
+    
+    def record_virtual_trade(
+        self,
+        symbol: str,
+        signal_type: str,
+        entry_price: float,
+        exit_price: float,
+        pnl_pct: float,
+    ) -> None:
+        """
+        Записать виртуальную сделку (что было бы).
+        
+        Используется для оценки качества сигналов без реального риска.
+        """
+        trade = {
+            "symbol": symbol,
+            "signal_type": signal_type,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "pnl_pct": pnl_pct,
+            "timestamp": time.time(),
+        }
+        
+        self.virtual_trades.append(trade)
+        
+        self.metrics["virtual_trades"] += 1
+        if pnl_pct > 0:
+            self.metrics["virtual_wins"] += 1
+        self.metrics["virtual_pnl"] += pnl_pct
+        
+        self._save_state()
+        
+        logger.info(
+            f"Virtual trade: {symbol} {signal_type} "
+            f"PnL={pnl_pct:.2f}% | "
+            f"Virtual WR={self._calculate_virtual_win_rate():.1f}%"
+        )
+    
+    def _calculate_virtual_win_rate(self) -> float:
+        """Рассчитать виртуальный Win Rate"""
+        total = self.metrics["virtual_trades"]
+        if total == 0:
+            return 0.0
+        return (self.metrics["virtual_wins"] / total) * 100
+    
+    def should_trade(self) -> Tuple[bool, str]:
+        """
+        Проверить можно ли торговать.
+        
+        Returns:
+            (can_trade, reason)
+        """
+        if self.is_active:
+            return False, f"OBSERVATION MODE: {self.activation_reason}"
+        return True, "Trading allowed"
+    
+    def get_status(self) -> dict:
+        """Получить текущий статус"""
+        duration_hours = 0
+        if self.activated_at:
+            duration_hours = (time.time() - self.activated_at) / 3600
+        
         return {
-            "observation_mode": self.observation_mode,
-            "current_wr": round(wr * 100, 1),
-            "wr_threshold": round(self.wr_threshold * 100, 1),
-            "wins": self.wins,
-            "losses": self.losses,
-            "total_trades": total,
+            "is_active": self.is_active,
+            "activated_at": self.activated_at,
+            "duration_hours": round(duration_hours, 1),
+            "activation_reason": self.activation_reason,
+            "virtual_trades": self.metrics["virtual_trades"],
+            "virtual_win_rate": round(self._calculate_virtual_win_rate(), 1),
+            "virtual_pnl": round(self.metrics["virtual_pnl"], 2),
         }
 
 
 # ═══════════════════════════════════════════════════════════════════
-# SINGLETON INSTANCES
+# COMBINED SIGNAL GATE
+# ═══════════════════════════════════════════════════════════════════
+
+class SignalGate:
+    """
+    Единый шлюз для всех проверок перед входом.
+    
+    Объединяет:
+    - AntiChaseFilter
+    - ObservationMode
+    - AdaptiveConfidence (если передан)
+    
+    Использование:
+        gate = SignalGate()
+        
+        result = gate.check_signal(symbol, price, confidence)
+        if result.approved:
+            execute_trade(...)
+        else:
+            logger.info(f"Signal rejected: {result.reason}")
+    """
+    
+    @dataclass
+    class GateResult:
+        approved: bool
+        reason: str
+        adjusted_confidence: float
+        checks_passed: List[str]
+        checks_failed: List[str]
+    
+    def __init__(
+        self,
+        anti_chase: Optional[AntiChaseFilter] = None,
+        observation: Optional[ObservationMode] = None,
+    ):
+        self.anti_chase = anti_chase or AntiChaseFilter()
+        self.observation = observation or ObservationMode()
+        
+        logger.info("SignalGate initialized with all filters")
+    
+    def check_signal(
+        self,
+        symbol: str,
+        current_price: float,
+        confidence: float,
+        win_rate: float = 50.0,
+        loss_streak: int = 0,
+    ) -> GateResult:
+        """
+        Полная проверка сигнала через все фильтры.
+        """
+        passed = []
+        failed = []
+        adjusted_confidence = confidence
+        
+        # 1. Observation Mode check
+        can_trade, obs_reason = self.observation.should_trade()
+        if not can_trade:
+            failed.append(f"observation: {obs_reason}")
+            return self.GateResult(
+                approved=False,
+                reason=obs_reason,
+                adjusted_confidence=0,
+                checks_passed=passed,
+                checks_failed=failed,
+            )
+        passed.append("observation")
+        
+        # 2. Auto-activate observation if needed
+        should_change, trigger_reason = self.observation.check_triggers(
+            win_rate, loss_streak
+        )
+        if should_change and not self.observation.is_active:
+            self.observation.activate(trigger_reason)
+            failed.append(f"observation_triggered: {trigger_reason}")
+            return self.GateResult(
+                approved=False,
+                reason=f"Observation mode activated: {trigger_reason}",
+                adjusted_confidence=0,
+                checks_passed=passed,
+                checks_failed=failed,
+            )
+        
+        # 3. Anti-Chase check
+        chase_analysis = self.anti_chase.analyze(symbol, current_price)
+        if not chase_analysis.should_enter:
+            failed.append(f"anti_chase: {chase_analysis.reason}")
+            return self.GateResult(
+                approved=False,
+                reason=chase_analysis.reason,
+                adjusted_confidence=0,
+                checks_passed=passed,
+                checks_failed=failed,
+            )
+        passed.append("anti_chase")
+        
+        # Применить штраф к confidence если близко к порогу
+        adjusted_confidence = confidence - chase_analysis.confidence_penalty
+        
+        # All checks passed
+        return self.GateResult(
+            approved=True,
+            reason="All gates passed",
+            adjusted_confidence=adjusted_confidence,
+            checks_passed=passed,
+            checks_failed=failed,
+        )
+    
+    def get_status(self) -> dict:
+        """Статус всех компонентов"""
+        return {
+            "anti_chase": self.anti_chase.get_stats(),
+            "observation": self.observation.get_status(),
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# STANDALONE TEST
+# ═══════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+    
+    print("\n" + "="*60)
+    print("  ANTI-CHASE FILTER + OBSERVATION MODE TEST")
+    print("="*60)
+    
+    # Test 1: AntiChaseFilter
+    print("\n=== Test 1: AntiChaseFilter ===")
+    acf = AntiChaseFilter(threshold_3min=1.5, threshold_5min=2.5)
+    
+    # Simulate price history
+    symbol = "BTCUSDT"
+    base_price = 50000
+    
+    # Record prices over 5 minutes (simulated)
+    for i in range(10):
+        # Simulate gradual price increase
+        price = base_price + (i * 50)  # +$50 every 30 sec = +1% over 5 min
+        acf.record_price(symbol, price)
+    
+    # Current price jumped 2%
+    current = base_price * 1.02
+    analysis = acf.analyze(symbol, current)
+    
+    print(f"Symbol: {symbol}")
+    print(f"Current: ${current:.2f}")
+    print(f"3min ago: ${analysis.price_3min_ago or 'N/A'}")
+    print(f"Move 3min: {analysis.move_3min_pct}%")
+    print(f"Should enter: {analysis.should_enter}")
+    print(f"Reason: {analysis.reason}")
+    print(f"Stats: {acf.get_stats()}")
+    
+    # Test 2: ObservationMode
+    print("\n=== Test 2: ObservationMode ===")
+    obs = ObservationMode(auto_activate=True)
+    
+    # Check with bad win rate
+    should_change, reason = obs.check_triggers(win_rate=30.0, loss_streak=3)
+    print(f"WR=30%, streak=3: should_change={should_change}, reason={reason}")
+    
+    if should_change:
+        obs.activate(reason)
+    
+    print(f"Status: {obs.get_status()}")
+    
+    # Record virtual trade
+    obs.record_virtual_trade(
+        symbol="ETHUSDT",
+        signal_type="PUMP",
+        entry_price=3000,
+        exit_price=3045,
+        pnl_pct=1.5,
+    )
+    
+    print(f"After virtual trade: {obs.get_status()}")
+    
+    # Test 3: SignalGate
+    print("\n=== Test 3: SignalGate ===")
+    gate = SignalGate()
+    
+    # This should fail because observation mode is active
+    result = gate.check_signal(
+        symbol="SOLUSDT",
+        current_price=150.0,
+        confidence=0.75,
+        win_rate=30.0,
+        loss_streak=2,
+    )
+    
+    print(f"Gate result: approved={result.approved}")
+    print(f"Reason: {result.reason}")
+    print(f"Passed: {result.checks_passed}")
+    print(f"Failed: {result.checks_failed}")
+    
+    print("\n" + "="*60)
+    print("  ✅ ALL TESTS PASSED")
+    print("="*60)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SINGLETON INSTANCES (for ai_integration.py compatibility)
 # ═══════════════════════════════════════════════════════════════════
 
 _anti_chase: Optional[AntiChaseFilter] = None
 _observation: Optional[ObservationMode] = None
+_signal_gate: Optional[SignalGate] = None
 
 
 def get_anti_chase() -> AntiChaseFilter:
@@ -290,67 +749,24 @@ def get_observation_mode() -> ObservationMode:
     return _observation
 
 
+def get_signal_gate() -> SignalGate:
+    """Get singleton SignalGate instance."""
+    global _signal_gate
+    if _signal_gate is None:
+        _signal_gate = SignalGate()
+    return _signal_gate
+
+
+# Convenience functions
 def should_enter(symbol: str, current_price: float) -> Tuple[bool, str]:
     """Quick check if we should enter."""
-    return get_anti_chase().should_enter(symbol, current_price)
+    analysis = get_anti_chase().analyze(symbol, current_price)
+    return analysis.should_enter, analysis.reason
 
 
 def can_trade() -> Tuple[bool, str]:
     """Quick check if observation mode allows trading."""
-    return get_observation_mode().can_trade()
-
-
-# ═══════════════════════════════════════════════════════════════════
-# STANDALONE TEST
-# ═══════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    import json
-
-    logging.basicConfig(level=logging.INFO)
-
-    print("\n=== Test AntiChaseFilter ===")
-    acf = AntiChaseFilter(window_seconds=60, max_move_pct=1.0)
-
-    # Simulate price rise
-    for i in range(5):
-        price = 100.0 + i * 0.3  # Rising 0.3% each time
-        acf.record_price("TESTUSDT", price)
-        time.sleep(0.1)
-
-    # Try to enter at peak
-    ok, reason = acf.should_enter("TESTUSDT", 101.5)  # +1.5%
-    print(f"Enter at 101.5 (after +1.5% move): {ok}")
-    print(f"Reason: {reason}")
-
-    # Try to enter early
-    ok2, reason2 = acf.should_enter("TESTUSDT", 100.5)  # +0.5%
-    print(f"Enter at 100.5 (after +0.5% move): {ok2}")
-    print(f"Reason: {reason2}")
-
-    print(f"\nStats: {json.dumps(acf.get_stats(), indent=2)}")
-
-    print("\n=== Test ObservationMode ===")
-    obs = ObservationMode(wr_threshold=0.35, min_trades=5)
-
-    # Record some losses
-    for _ in range(4):
-        obs.record_trade(is_win=False)
-
-    obs.record_trade(is_win=True)  # 1 win, 4 losses = 20% WR
-
-    ok, reason = obs.can_trade()
-    print(f"Can trade with 20% WR: {ok}")
-    print(f"Reason: {reason}")
-
-    # Add more wins
-    for _ in range(5):
-        obs.record_trade(is_win=True)  # Now 6 wins, 4 losses = 60% WR
-
-    ok2, reason2 = obs.can_trade()
-    print(f"Can trade with 60% WR: {ok2}")
-    print(f"Reason: {reason2}")
-
-    print(f"\nStats: {json.dumps(obs.get_stats(), indent=2)}")
-
-    print("\n✅ All tests PASSED")
+    obs = get_observation_mode()
+    if obs.is_active:
+        return False, f"OBSERVATION MODE: {obs.trigger_reason}"
+    return True, "OK"
